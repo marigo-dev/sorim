@@ -1,0 +1,22 @@
+{
+  "name": "marigobot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "check": "node --check bot.js && node --check logger.js && node --check llm.js && node --check skillTree.js && node --check skills/mine.js && node --check skills/craft.js && node --check skills/movement.js && node --check skills/stone.js && node --check skills/tools.js && node --check skills/shelter.js && node --check skills/survival.js && node --check skills/food.js && node --check skills/storage.js && node --check skills/memory.js",
+    "test": "npm run check"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.18.0",
+    "minecraft-data": "^3.110.2",
+    "mineflayer": "^4.37.1",
+    "mineflayer-pathfinder": "^2.4.5",
+    "vec3": "^0.2.0"
+  }
+}

@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Runtime logs
+*.log
+*.err.log
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local runtime state
+data/
+*.bak
+
+# Minecraft server/runtime files
+mc-server/server.jar
+mc-server/libraries/
+mc-server/versions/
+mc-server/logs/
+mc-server/world/
+mc-server/world_nether/
+mc-server/world_the_end/
+mc-server/cache/
+mc-server/plugins/
+mc-server/*.log
+mc-server/*.log.gz
+mc-server/usercache.json
+mc-server/ops.json
+mc-server/whitelist.json
+mc-server/banned-players.json
+mc-server/banned-ips.json
+
+# Nested experimental bot copy inside local server folder
+mc-server/bot/node_modules/
+mc-server/bot/data/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.agents/
+.codex/
