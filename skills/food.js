@@ -34,7 +34,7 @@ let foodUnavailableUntil = 0;
 
 async function eatBestFood(bot) {
     const food = bestFoodItem(bot);
-    if (!food) throw new Error('Yenecek yemek yok');
+    if (!food) throw new Error('No edible food available');
 
     console.log(`[FOOD] yeniyor ${food.name}`);
     await bot.equip(food, 'hand');
@@ -43,7 +43,7 @@ async function eatBestFood(bot) {
 
 async function findFood(bot) {
     if (Date.now() < foodUnavailableUntil) {
-        console.log('[FOOD] yakin yemek kaynagi yok; gecici olarak sonraki hedefe geciliyor.');
+        console.log('[FOOD] no nearby food source; temporarily moving to the next goal.');
         return;
     }
 
@@ -54,7 +54,7 @@ async function findFood(bot) {
     }
 
     const startDistance = animal.position.distanceTo(bot.entity.position);
-    console.log(`[FOOD] av hedefi ${animal.name} mesafe=${startDistance.toFixed(1)}`);
+    console.log(`[FOOD] hunting target ${animal.name} distance=${startDistance.toFixed(1)}`);
     if (startDistance > 18) {
         await searchForFood(bot);
         return;
@@ -64,7 +64,7 @@ async function findFood(bot) {
     try {
         await movement.moveNear(bot, animal.position, 1, 12000);
     } catch (error) {
-        console.log(`[FOOD] hedefe gidilemedi: ${error.message}`);
+        console.log(`[FOOD] could not reach target: ${error.message}`);
         await markFailedSearch(bot);
         return;
     }
@@ -152,11 +152,11 @@ async function searchForFood(bot) {
 
 async function markFailedSearch(bot) {
     failedSearches++;
-    console.log(`[FOOD] arama basarisiz sayisi=${failedSearches}`);
+    console.log(`[FOOD] failed searches=${failedSearches}`);
     if (failedSearches >= 3) {
         foodUnavailableUntil = Date.now() + 5 * 60 * 1000;
         failedSearches = 0;
-        console.log('[FOOD] mob/crop bulunamadi; 5 dakika ertelendi.');
+        console.log('[FOOD] no mob/crop found; delaying for 5 minutes.');
     }
     await movement.sleep(500);
 }

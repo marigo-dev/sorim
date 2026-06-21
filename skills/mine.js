@@ -26,7 +26,7 @@ async function mineBlock(bot, action) {
             await digStaircaseForStone(bot);
             return;
         }
-        throw new Error(`${targetName} icin erisilebilir blok bulunamadi`);
+        throw new Error(`No reachable block found for ${targetName}`);
     }
 
     if (LOGS.has(block.name)) {
@@ -40,10 +40,10 @@ async function mineBlock(bot, action) {
 
     const current = bot.blockAt(block.position);
     if (!current || current.name !== block.name) {
-        throw new Error(`${targetName} hedefi kayboldu`);
+        throw new Error(`${targetName} target disappeared`);
     }
     if (!bot.canDigBlock(current)) {
-        throw new Error(`${targetName} kirilamiyor`);
+        throw new Error(`${targetName} cannot be dug`);
     }
 
     console.log(`[MINE] ${current.name} ${current.position.toString()}`);
@@ -54,9 +54,9 @@ async function mineBlock(bot, action) {
 async function chopTree(bot, baseBlock, expectedDrop) {
     const base = lowestLogInTrunk(bot, baseBlock);
     const initialTrunk = findTrunkBlocks(bot, base);
-    if (initialTrunk.length === 0) throw new Error(`${baseBlock.name} icin govde yok`);
+    if (initialTrunk.length === 0) throw new Error(`No trunk found for ${baseBlock.name}`);
 
-    console.log(`[TREE] ${baseBlock.name} govde=${initialTrunk.length} base=${base.position.toString()}`);
+    console.log(`[TREE] ${baseBlock.name} trunk=${initialTrunk.length} base=${base.position.toString()}`);
     let before = countItem(bot, expectedDrop);
     let mined = 0;
     const skipped = new Set();
@@ -73,7 +73,7 @@ async function chopTree(bot, baseBlock, expectedDrop) {
         }
 
         if (!bot.canDigBlock(current)) {
-            console.log(`[TREE] atlandi, kirilamiyor ${current.position.toString()}`);
+            console.log(`[TREE] skipped, cannot dig ${current.position.toString()}`);
             skipped.add(positionKey(current.position));
             continue;
         }
@@ -89,7 +89,7 @@ async function chopTree(bot, baseBlock, expectedDrop) {
         }
     }
 
-    if (mined === 0) throw new Error(`${baseBlock.name} govdesinden blok kirilamadi`);
+    if (mined === 0) throw new Error(`Could not dig any block from ${baseBlock.name} trunk`);
     await patrolTreeDrops(bot, expectedDrop, before, base.position);
 }
 
@@ -206,7 +206,7 @@ async function approachBlock(bot, block) {
         await movement.withTimeout(
             bot.pathfinder.goto(new goals.GoalNear(work.x, work.y, work.z, 1)),
             18000,
-            'Kazma noktasina yurume zaman asimi'
+            'Timed out walking to mining position'
         );
     } else {
         await movement.moveNear(bot, block.position, 3, 18000);
@@ -250,7 +250,7 @@ async function collectDrop(bot, itemName, before, origin) {
     }
 
     if (countItem(bot, itemName) <= before) {
-        throw new Error(`${itemName} kirildi ama envantere girmedi`);
+        throw new Error(`${itemName} was broken but did not enter inventory`);
     }
 }
 
@@ -305,7 +305,7 @@ async function digStaircaseForStone(bot) {
     const stepX = dx || 1;
     const stepZ = dz || 0;
 
-    console.log('[MINE] Erisilebilir stone yok; kucuk merdiven kaziliyor.');
+    console.log('[MINE] No reachable stone; digging a small staircase.');
     for (let step = 1; step <= 24; step++) {
         const base = bot.entity.position.floored();
         const front = base.offset(stepX, 0, stepZ);
@@ -341,7 +341,7 @@ async function digStaircaseForStone(bot) {
         }
     }
 
-    throw new Error('Merdiven kazildi ama stone bulunamadi');
+    throw new Error('Staircase was dug but no stone was found');
 }
 
 async function clearBlock(bot, blockOrPosition) {

@@ -29,35 +29,35 @@ function chooseImmediateAction(bot, observation, level = null) {
         return {
             action: 'fight_mob',
             entityId: hostile.id,
-            reason: `Tehdit yakin: ${hostile.name}`
+            reason: `Threat nearby: ${hostile.name}`
         };
     }
 
     if (observation.food <= 14 && food.foodScore(observation.inventory) > 0) {
         return {
             action: 'eat_food',
-            reason: 'Aclik dustu; once yemek ye'
+            reason: 'Hunger dropped; eat first'
         };
     }
 
     if (observation.food <= 8 && food.foodScore(observation.inventory) === 0) {
         return {
             action: 'find_food',
-            reason: 'Yemek yok ve aclik kritik'
+            reason: 'No food and hunger is critical'
         };
     }
 
     if (shouldReachSurfaceForWork(bot, observation, level)) {
         return {
             action: 'escape_pit',
-            reason: 'Yuzey isi icin once yukari cik'
+            reason: 'Return upward before surface work'
         };
     }
 
     if (shouldEscapePit(bot, observation)) {
         return {
             action: 'escape_pit',
-            reason: 'Cukurda kaldi; once cik'
+            reason: 'Trapped in a pit; get out first'
         };
     }
 
@@ -65,7 +65,7 @@ function chooseImmediateAction(bot, observation, level = null) {
         if (findNearbyBed(bot, 8)) {
             return {
                 action: 'sleep_bed',
-                reason: 'Gece ve yatak bulundu; uyu'
+                reason: 'Night and bed found; sleep'
             };
         }
 
@@ -73,7 +73,7 @@ function chooseImmediateAction(bot, observation, level = null) {
             if (!isNearBase(bot, 5)) {
                 return {
                     action: 'return_base',
-                    reason: 'Gece yuzeyde; base guvenli'
+                    reason: 'Night on surface; return to base'
                 };
             }
 
@@ -81,14 +81,14 @@ function chooseImmediateAction(bot, observation, level = null) {
                 return {
                     action: 'wait_safe',
                     ms: 3000,
-                    reason: 'Gece ve yatak yok; riskli dis gorev sabaha ertelendi'
+                    reason: 'Night and no bed; risky outside task delayed until morning'
                 };
             }
         } else if (shouldPauseForNight(level)) {
             return {
                 action: 'wait_safe',
                 ms: 2000,
-                reason: 'Gece ve base yok; hareket azaltildi'
+                reason: 'Night and no base; reducing movement'
             };
         }
     }
@@ -135,7 +135,7 @@ async function fightMob(bot, entityId) {
     const entity = bot.entities[entityId] || nearestHostile(bot, 10)?.entity;
     if (!entity) return;
 
-    console.log(`[SURVIVAL] savas ${entity.name}`);
+    console.log(`[SURVIVAL] fighting ${entity.name}`);
     await tools.equipBestWeapon(bot);
     for (let i = 0; i < 10 && entity.isValid !== false && bot.health > 0; i++) {
         const distance = entity.position.distanceTo(bot.entity.position);
@@ -153,7 +153,7 @@ async function fightMob(bot, entityId) {
 
 async function escapePit(bot) {
     const origin = bot.entity.position.floored();
-    console.log(`[SURVIVAL] cukurdan cikis ${origin.toString()}`);
+    console.log(`[SURVIVAL] escaping pit ${origin.toString()}`);
 
     const exits = findNearbyExits(bot, origin);
     for (const exit of exits) {
@@ -185,18 +185,18 @@ async function sleepInBed(bot) {
     try {
         await movement.moveNear(bot, bed.position, 2, 8000);
     } catch (error) {
-        console.log(`[SURVIVAL] yataga yurunemedi: ${error.message}`);
+        console.log(`[SURVIVAL] could not walk to bed: ${error.message}`);
     }
 
     try {
-        console.log(`[SURVIVAL] yatakta uyunuyor ${bed.position.toString()}`);
+        console.log(`[SURVIVAL] sleeping in bed ${bed.position.toString()}`);
         await bot.sleep(bed);
         await movement.sleep(1000);
         while (isNight(bot) && bot.isSleeping) {
             await movement.sleep(1000);
         }
     } catch (error) {
-        console.log(`[SURVIVAL] yatakta uyunamadi: ${error.message}`);
+        console.log(`[SURVIVAL] could not sleep in bed: ${error.message}`);
         await waitSafe(bot, 3000);
     }
 }

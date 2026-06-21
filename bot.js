@@ -38,7 +38,7 @@ let busy = false;
 let lastError = null;
 
 bot.once('spawn', async () => {
-    console.log(`[BOOT] ${BOT_NAME} oyuna girdi. Yeni sade skill tree basladi.`);
+    console.log(`[BOOT] ${BOT_NAME} spawned. Clean skill tree started.`);
     movement.configure(bot);
     loop().catch(error => {
         console.log('[FATAL]', error.message);
@@ -54,18 +54,18 @@ bot.on('chat', async (username, message) => {
     const observation = observe();
     if (lower.includes('status') || lower.includes('durum')) {
         const pos = observation.position;
-        bot.chat(`Seviye:${skillTree.getLevel(observation).id} xyz:${pos.x},${pos.y},${pos.z} can:${bot.health.toFixed(1)} aclik:${bot.food} inv:${observation.inventoryText}`);
+        bot.chat(`Level:${skillTree.getLevel(observation).id} xyz:${pos.x},${pos.y},${pos.z} health:${bot.health.toFixed(1)} food:${bot.food} inv:${observation.inventoryText}`);
         return;
     }
-    bot.chat('Buradayim. Su an sade skill tree ile temel hayatta kalma ve odun/alet dongusunu ogreniyorum.');
+    bot.chat('I am here. I am currently learning basic survival and the wood/tool loop with a clean skill tree.');
 });
 
 bot.on('kicked', reason => console.log('[KICKED]', reason));
 bot.on('error', error => console.log('[BOT_ERROR]', error.message));
-bot.on('death', () => console.log('[DEATH] Bot oldu; otomatik respawn bekleniyor.'));
+bot.on('death', () => console.log('[DEATH] Bot died; waiting for automatic respawn.'));
 bot.on('end', () => {
     running = false;
-    console.log('[END] Bot baglantisi kapandi.');
+    console.log('[END] Bot connection closed.');
 });
 
 process.on('SIGINT', shutdown);
@@ -196,7 +196,7 @@ async function executeAction(action) {
         return;
     }
 
-    throw new Error(`Bilinmeyen action: ${action.action}`);
+    throw new Error(`Unknown action: ${action.action}`);
 }
 
 function observe() {
@@ -244,7 +244,7 @@ function inventoryText(inventory) {
     const text = Object.entries(inventory)
         .map(([name, count]) => `${name}:${count}`)
         .join(', ');
-    return text || 'bos';
+    return text || 'empty';
 }
 
 function scanUsefulBlocks(maxDistance) {
@@ -275,9 +275,9 @@ function scanUsefulBlocks(maxDistance) {
 function shutdown() {
     if (!running) return;
     running = false;
-    console.log('[SHUTDOWN] Bot kapatiliyor.');
+    console.log('[SHUTDOWN] Stopping bot.');
     try {
-        bot.quit('Gorusuruz');
+        bot.quit('Goodbye');
     } catch {
         // Bot was already gone.
     }

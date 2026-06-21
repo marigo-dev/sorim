@@ -16,7 +16,7 @@ async function buildSafeShelter(bot) {
     const base = new Vec3(origin.x, origin.y, origin.z);
     memory.setBase(base);
 
-    console.log(`[SHELTER] ilk ev insa ediliyor base=${base.toString()}`);
+    console.log(`[SHELTER] building first shelter base=${base.toString()}`);
     await ensureDoor(bot);
 
     for (let y = 0; y <= 2; y++) {
@@ -69,7 +69,7 @@ async function placeDoor(bot, position) {
         await bot.placeBlock(below, new Vec3(0, 1, 0));
         await movement.sleep(400);
     } catch (error) {
-        console.log(`[SHELTER] door atlandi: ${error.message}`);
+        console.log(`[SHELTER] skipped door: ${error.message}`);
     }
 }
 
@@ -111,7 +111,7 @@ async function placeSpecificItem(bot, item, position) {
         await bot.placeBlock(reference.block, reference.face);
         await movement.sleep(200);
     } catch (error) {
-        console.log(`[SHELTER] place ${item.name} ${position.toString()} atlandi: ${error.message}`);
+        console.log(`[SHELTER] skipped placing ${item.name} ${position.toString()}: ${error.message}`);
     }
 }
 

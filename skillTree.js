@@ -30,19 +30,19 @@ const FOOD_VALUES = {
 const LEVELS = [
     {
         id: 'L1_COLLECT_WOOD',
-        goal: 'En az 6 adet odun topla. Sadece agac ara ve govdenin alt loglarini kir.',
+        goal: 'Collect at least 6 logs. Search for trees and cut trunk logs.',
         allowedActions: ['mine', 'explore', 'idle'],
         complete: (observation, tree) => tree.progress.maxWoodUnits >= 6
     },
     {
         id: 'L2_CRAFT_PLANKS',
-        goal: 'Odunlardan en az 24 plank uret; alet, ev ve sandik icin yedek birak.',
+        goal: 'Craft at least 24 planks from logs; reserve enough for tools, shelter, and storage.',
         allowedActions: ['craft', 'idle'],
         complete: (observation, tree) => tree.progress.maxPlanks >= 24
     },
     {
         id: 'L3_CRAFT_TABLE',
-        goal: 'Bir crafting table uret ve yere koy.',
+        goal: 'Craft and place one crafting table.',
         allowedActions: ['craft', 'place', 'idle'],
         complete: (observation, tree) =>
             tree.progress.hasCraftingTable ||
@@ -50,13 +50,13 @@ const LEVELS = [
     },
     {
         id: 'L4_CRAFT_WOODEN_PICKAXE',
-        goal: 'Wooden pickaxe uret.',
+        goal: 'Craft a wooden pickaxe.',
         allowedActions: ['craft', 'place', 'idle'],
         complete: observation => (observation.inventory.wooden_pickaxe || 0) >= 1
     },
     {
         id: 'L5_COLLECT_STONE',
-        goal: 'Guvenli merdiven ac, stone bul, 16 cobblestone topla, sonra yuzeye don.',
+        goal: 'Dig a safe staircase, find stone, collect 16 cobblestone, then return upward.',
         allowedActions: ['collect_stone', 'idle'],
         complete: (observation, tree) =>
             (observation.inventory.cobblestone || 0) >= 16 ||
@@ -64,25 +64,25 @@ const LEVELS = [
     },
     {
         id: 'L6_CRAFT_STONE_TOOLS',
-        goal: 'Stone pickaxe, stone axe ve stone sword uret.',
+        goal: 'Craft a stone pickaxe, stone axe, and stone sword.',
         allowedActions: ['craft_stone_tools', 'craft', 'idle'],
         complete: observation => hasStoneTools(observation.inventory)
     },
     {
         id: 'L7_BUILD_SAFE_SHELTER',
-        goal: 'Kapali ve guvenli ilk evi kur, base koordinatini hafizaya yaz.',
+        goal: 'Build the first enclosed safe shelter and store its base coordinates.',
         allowedActions: ['build_shelter', 'idle'],
         complete: observation => Boolean(observation.base)
     },
     {
         id: 'L8_SURVIVAL_MANAGER',
-        goal: 'Survival manager ana dongu oncesi aktif olsun.',
+        goal: 'Ensure the survival manager runs before the main loop.',
         allowedActions: ['idle'],
         complete: observation => observation.survivalReady === true
     },
     {
         id: 'L9_FOOD_LOOP',
-        goal: 'Yaninda en az 16 puanlik yemek stogu tut; yakin yemek yoksa gecici olarak sonraki ise gec.',
+        goal: 'Keep at least 16 food points in reserve; if no food is nearby, temporarily move on.',
         allowedActions: ['eat_food', 'find_food', 'idle'],
         complete: observation =>
             foodScore(observation.inventory) >= 16 ||
@@ -90,7 +90,7 @@ const LEVELS = [
     },
     {
         id: 'L10_STORAGE_AND_BASE_MEMORY',
-        goal: 'Base yakininda sandik kur ve envanter fazlaliklarini duzenle.',
+        goal: 'Place a chest near the base and organize excess inventory.',
         allowedActions: ['organize_storage', 'idle'],
         complete: observation => observation.hasUsableChest === true
     }
@@ -111,7 +111,7 @@ class SkillTree {
         return LEVELS.find(level => !level.complete(observation, this)) ||
             {
                 id: 'L11_STABLE_SURVIVAL',
-                goal: 'Temel dongu tamam. Yemek, odun, plank ve sandik duzenini surdur.',
+                goal: 'Core loop complete. Maintain food, wood, planks, and storage.',
                 allowedActions: [
                     'mine',
                     'explore',
@@ -134,13 +134,13 @@ class SkillTree {
                 return {
                     action: 'mine',
                     target: visibleLog.name,
-                    reason: 'Seviye 1: gorunen agac govdesini kir'
+                    reason: 'Level 1: cut the visible tree trunk'
                 };
             }
             return {
                 action: 'explore',
                 target: 'wood',
-                reason: 'Seviye 1: odun bul'
+                reason: 'Level 1: find wood'
             };
         }
 
@@ -150,7 +150,7 @@ class SkillTree {
                 action: 'craft',
                 item: plankForLog(logName || 'oak_log'),
                 count: 24 - totalPlanks(inventory),
-                reason: 'Seviye 2: plank uret'
+                reason: 'Level 2: craft planks'
             };
         }
 
@@ -159,14 +159,14 @@ class SkillTree {
                 return {
                     action: 'place',
                     item: 'crafting_table',
-                    reason: 'Seviye 3: crafting table yere koy'
+                    reason: 'Level 3: place crafting table'
                 };
             }
             return {
                 action: 'craft',
                 item: 'crafting_table',
                 count: 1,
-                reason: 'Seviye 3: crafting table uret'
+                reason: 'Level 3: craft crafting table'
             };
         }
 
@@ -176,14 +176,14 @@ class SkillTree {
                     action: 'craft',
                     item: 'stick',
                     count: 2,
-                    reason: 'Seviye 4: pickaxe icin stick uret'
+                    reason: 'Level 4: craft sticks for pickaxe'
                 };
             }
             return {
                 action: 'craft',
                 item: 'wooden_pickaxe',
                 count: 1,
-                reason: 'Seviye 4: wooden pickaxe uret'
+                reason: 'Level 4: craft wooden pickaxe'
             };
         }
 
@@ -191,21 +191,21 @@ class SkillTree {
             return {
                 action: 'collect_stone',
                 count: Math.max(1, 16 - (inventory.cobblestone || 0)),
-                reason: 'Seviye 5: guvenli merdivenle cobblestone topla'
+                reason: 'Level 5: collect cobblestone with a safe staircase'
             };
         }
 
         if (level.id === 'L6_CRAFT_STONE_TOOLS') {
             return {
                 action: 'craft_stone_tools',
-                reason: 'Seviye 6: stone pickaxe, axe ve sword uret'
+                reason: 'Level 6: craft stone pickaxe, axe, and sword'
             };
         }
 
         if (level.id === 'L7_BUILD_SAFE_SHELTER') {
             return {
                 action: 'build_shelter',
-                reason: 'Seviye 7: ilk guvenli evi kur'
+                reason: 'Level 7: build first safe shelter'
             };
         }
 
@@ -213,19 +213,19 @@ class SkillTree {
             if (foodScore(inventory) > 0 && observation.food < 20) {
                 return {
                     action: 'eat_food',
-                    reason: 'Seviye 9: yemek stogunu kullan'
+                    reason: 'Level 9: use food reserve'
                 };
             }
             return {
                 action: 'find_food',
-                reason: 'Seviye 9: minimum yemek stogu topla'
+                reason: 'Level 9: collect minimum food reserve'
             };
         }
 
         if (level.id === 'L10_STORAGE_AND_BASE_MEMORY') {
             return {
                 action: 'organize_storage',
-                reason: 'Seviye 10: sandik kur ve envanteri duzenle'
+                reason: 'Level 10: place chest and organize inventory'
             };
         }
 
@@ -233,7 +233,7 @@ class SkillTree {
             if (foodScore(inventory) < 16 && !food.isTemporarilyUnavailable()) {
                 return {
                     action: 'find_food',
-                    reason: 'Rutin: yemek stogu dusuk'
+                    reason: 'Routine: food reserve is low'
                 };
             }
 
@@ -243,7 +243,7 @@ class SkillTree {
                     action: 'craft',
                     item: plankForLog(logName || 'oak_log'),
                     count: Math.max(4, 12 - totalPlanks(inventory)),
-                    reason: 'Rutin: plank stogunu yenile'
+                    reason: 'Routine: refill plank reserve'
                 };
             }
 
@@ -253,27 +253,27 @@ class SkillTree {
                     return {
                         action: 'mine',
                         target: visibleLog.name,
-                        reason: 'Rutin: odun stogunu yenile'
+                        reason: 'Routine: refill wood reserve'
                     };
                 }
                 return {
                     action: 'mine',
                     target: 'any_log',
-                    reason: 'Rutin: erisilebilir agac ara ve kes'
+                    reason: 'Routine: find and cut a reachable tree'
                 };
             }
 
             if (shouldOrganizeInventory(inventory, observation)) {
                 return {
                     action: 'organize_storage',
-                    reason: 'Rutin: envanteri sandiga duzenle'
+                    reason: 'Routine: organize inventory into chest'
                 };
             }
 
             return {
                 action: 'idle',
                 ms: 3000,
-                reason: 'Rutin: temel stoklar iyi, guvenli bekle'
+                reason: 'Routine: core supplies are stable, wait safely'
             };
         }
 
@@ -306,7 +306,7 @@ class SkillTree {
         return this.getForcedAction(observation, level) || {
             action: 'idle',
             ms: 1000,
-            reason: 'Gecerli aksiyon yok'
+            reason: 'No valid action available'
         };
     }
 

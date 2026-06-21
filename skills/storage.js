@@ -42,16 +42,16 @@ let storageRetryAfter = 0;
 
 async function organizeStorage(bot) {
     const chestBlock = await ensureChest(bot);
-    if (!chestBlock) throw new Error('Sandik kurulamadi');
+    if (!chestBlock) throw new Error('Could not place chest');
 
     try {
         await movement.moveNear(bot, chestBlock.position, 3, 10000);
     } catch (error) {
-        console.log(`[STORAGE] sandiga yurunemedi: ${error.message}`);
+        console.log(`[STORAGE] could not walk to chest: ${error.message}`);
     }
     const chest = await openUsableChest(bot, chestBlock);
     if (!chest) {
-        console.log('[STORAGE] sandik var ama acilamadi; sonraki donguye birakiliyor.');
+        console.log('[STORAGE] chest exists but could not be opened; leaving it for a later loop.');
         storageRetryAfter = Date.now() + 60000;
         return;
     }
@@ -61,7 +61,7 @@ async function organizeStorage(bot) {
             const keepCount = keepCountFor(item.name);
             const excess = item.count - keepCount;
             if (excess <= 0) continue;
-            console.log(`[STORAGE] sandiga ${item.name} x${excess}`);
+            console.log(`[STORAGE] depositing ${item.name} x${excess}`);
             await chest.deposit(item.type, null, excess);
             await movement.sleep(150);
         }
@@ -102,7 +102,7 @@ async function findReachableChest(bot, maxDistance) {
             await movement.moveNear(bot, chest.position, 3, 5000);
             return chest;
         } catch (error) {
-            console.log(`[STORAGE] yakin sandik erisilemiyor: ${error.message}`);
+            console.log(`[STORAGE] nearby chest is unreachable: ${error.message}`);
         }
     }
     return null;
@@ -118,7 +118,7 @@ async function placeChest(bot) {
     await bot.equip(item, 'hand');
 
     for (const placement of placements.slice(0, 20)) {
-        console.log(`[STORAGE] sandik denemesi target=${placement.target.toString()}`);
+        console.log(`[STORAGE] trying chest target=${placement.target.toString()}`);
         try {
             await movement.moveNear(bot, placement.target, 4, 8000);
             await clearOpeningSpace(bot, placement.target);
@@ -132,7 +132,7 @@ async function placeChest(bot) {
             const nearby = findNearbyBlock(bot, 'chest', 4);
             if (nearby && hasOpeningSpace(bot, nearby.position)) return nearby;
         } catch (error) {
-            console.log(`[STORAGE] sandik adayi basarisiz: ${error.message}`);
+            console.log(`[STORAGE] chest candidate failed: ${error.message}`);
         }
     }
 
@@ -251,7 +251,7 @@ async function openUsableChest(bot, chestBlock) {
         await bot.lookAt(chestBlock.position.offset(0.5, 0.5, 0.5), true);
         return await bot.openChest(chestBlock);
     } catch (error) {
-        console.log(`[STORAGE] sandik acilamadi: ${error.message}`);
+        console.log(`[STORAGE] could not open chest: ${error.message}`);
         return null;
     }
 }
@@ -268,7 +268,7 @@ function canClearOpeningSpace(bot, position) {
 async function clearOpeningSpace(bot, position) {
     const top = bot.blockAt(position.offset(0, 1, 0));
     if (!top || isAir(top)) return;
-    if (!bot.canDigBlock(top)) throw new Error(`Sandik ustu acilamiyor: ${top.name}`);
+    if (!bot.canDigBlock(top)) throw new Error(`Cannot clear chest top: ${top.name}`);
     await bot.lookAt(top.position.offset(0.5, 0.5, 0.5), true);
     await bot.dig(top);
     await movement.sleep(250);

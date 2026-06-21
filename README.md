@@ -1,20 +1,20 @@
 # MarigoBot
 
-Mineflayer tabanli, skill-tree/state-machine mantigiyla ilerleyen otonom Minecraft botu.
+An autonomous Minecraft bot built with Mineflayer and a deterministic skill-tree/state-machine loop.
 
-## Kurulum
+## Installation
 
 ```bash
 npm install
 ```
 
-## Calistirma
+## Run
 
 ```bash
 npm start
 ```
 
-Varsayilan ayarlar:
+Default settings:
 
 - `MC_HOST=localhost`
 - `MC_PORT=25565`
@@ -23,7 +23,7 @@ Varsayilan ayarlar:
 - `USE_LLM=true`
 - `OLLAMA_MODEL=qwen3:4b`
 
-LLM kullanmadan deterministik skill tree ile test etmek icin:
+To test with the deterministic skill tree and no LLM:
 
 ```bash
 USE_LLM=false npm start
@@ -35,11 +35,11 @@ Windows PowerShell:
 $env:USE_LLM='false'; npm start
 ```
 
-## Log Seviyesi
+## Log Level
 
-Varsayilan log seviyesi `info` olarak ayarlandi. Bu seviyede sadece onemli olaylar ve hatalar gorunur.
+The default log level is `info`. At this level, only important events and warnings are printed.
 
-Ayrintili kazma, craft, hareket ve state loglari icin:
+For detailed mining, crafting, movement, and state logs:
 
 ```bash
 LOG_LEVEL=debug npm start
@@ -57,7 +57,7 @@ $env:LOG_LEVEL='debug'; npm start
 npm test
 ```
 
-## Notlar
+## Notes
 
-- `mc-server/`, `data/`, `node_modules/` ve test loglari GitHub'a dahil edilmez.
-- Eski deneysel ajan kodu `legacy-old-agent/` altinda tutulabilir.
+- `mc-server/`, `data/`, `node_modules/`, and test logs are excluded from GitHub.
+- Older experimental agent code can remain under `legacy-old-agent/`.

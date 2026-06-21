@@ -25,7 +25,7 @@ async function ensureCraftingTable(bot) {
             await movement.moveNear(bot, nearby.position, 3, 6000);
             return;
         } catch (error) {
-            console.log(`[TOOLS] masa erisilemiyor, yenisi deneniyor: ${error.message}`);
+            console.log(`[TOOLS] table is unreachable, trying a new one: ${error.message}`);
         }
     }
 

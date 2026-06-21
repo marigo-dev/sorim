@@ -12,12 +12,12 @@ function configure(bot) {
 
 async function moveNear(bot, position, range = 2, timeoutMs = 20000) {
     const goal = new goals.GoalNear(position.x, position.y, position.z, range);
-    await withTimeout(bot.pathfinder.goto(goal), timeoutMs, 'Hedefe yurume zaman asimi');
+    await withTimeout(bot.pathfinder.goto(goal), timeoutMs, 'Timed out walking to target');
 }
 
 async function moveBlock(bot, position, timeoutMs = 12000) {
     const goal = new goals.GoalBlock(position.x, position.y, position.z);
-    await withTimeout(bot.pathfinder.goto(goal), timeoutMs, 'Blok hedefe yurume zaman asimi');
+    await withTimeout(bot.pathfinder.goto(goal), timeoutMs, 'Timed out walking to block target');
 }
 
 async function explore(bot, action = {}) {
@@ -31,15 +31,15 @@ async function explore(bot, action = {}) {
         Math.floor(origin.z + Math.sin(angle) * distance)
     );
 
-    console.log(`[MOVE] Kesif target=${target} x=${position.x} z=${position.z}`);
+    console.log(`[MOVE] Exploring target=${target} x=${position.x} z=${position.z}`);
     try {
         await withTimeout(
             bot.pathfinder.goto(new goals.GoalNearXZ(position.x, position.z, 3)),
             18000,
-            'Kesif zaman asimi'
+            'Exploration timed out'
         );
     } catch (error) {
-        console.log(`[MOVE] Kesif tamamlanamadi: ${error.message}`);
+        console.log(`[MOVE] Exploration could not complete: ${error.message}`);
         await manualNudge(bot, 1800);
     }
 }

@@ -18,7 +18,7 @@ async function collectStone(bot, count = 16) {
     let stuckSteps = 0;
     let noProgressMines = 0;
 
-    console.log(`[STONE] hedef cobblestone=${target}, baslangic=${start.toString()} yon=${direction.toString()}`);
+    console.log(`[STONE] target cobblestone=${target}, start=${start.toString()} direction=${direction.toString()}`);
     try {
         for (let step = 0; step < 32 && countItem(bot, 'cobblestone') < target; step++) {
             const exposed = findReachableStone(bot);
@@ -46,7 +46,7 @@ async function collectStone(bot, count = 16) {
     }
 
     if (countItem(bot, 'cobblestone') <= before) {
-        throw new Error('Guvenli merdiven acildi ama cobblestone toplanamadi');
+        throw new Error('Safe staircase was opened but no cobblestone was collected');
     }
 }
 
@@ -64,7 +64,7 @@ async function carveStep(bot, current, standAt) {
 
     const floorBlock = bot.blockAt(floor);
     if (!floorBlock || isAir(floorBlock) || floorBlock.boundingBox !== 'block') {
-        throw new Error(`Merdiven basamagi desteksiz: ${standAt.toString()} floor=${floorBlock?.name || 'unknown'}`);
+        throw new Error(`Stair step has no support: ${standAt.toString()} floor=${floorBlock?.name || 'unknown'}`);
     }
 }
 
@@ -86,14 +86,14 @@ async function stepTo(bot, position) {
         Math.abs(after.y - before.y) +
         Math.abs(after.z - before.z);
     console.log(
-        `[STONE] basamak hedef=${position.toString()} ` +
-        `konum=${after.floored().toString()} hareket=${moved.toFixed(2)}`
+        `[STONE] step target=${position.toString()} ` +
+        `position=${after.floored().toString()} movement=${moved.toFixed(2)}`
     );
     return moved;
 }
 
 async function returnToSurface(bot, start, shaft) {
-    console.log(`[STONE] yuzeye donuluyor ${start.toString()}`);
+    console.log(`[STONE] returning upward ${start.toString()}`);
     for (const point of [...shaft].reverse()) {
         try {
             await movement.moveBlock(bot, point, 7000);
@@ -114,7 +114,7 @@ async function returnToSurface(bot, start, shaft) {
 
 async function mineReachableStone(bot, block) {
     const before = countItem(bot, 'cobblestone');
-    console.log(`[STONE] gorunen ${block.name} kaziliyor ${block.position.toString()}`);
+    console.log(`[STONE] digging visible ${block.name} ${block.position.toString()}`);
     try {
         await movement.moveNear(bot, block.position, 3, 7000);
     } catch {

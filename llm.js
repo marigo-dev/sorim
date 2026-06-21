@@ -23,29 +23,29 @@ async function askForAction({ level, observation, allowedActions }) {
 
         return parseJson(response.data?.response || '');
     } catch (error) {
-        console.log(`[LLM] karar alinamadi, fallback kullanilacak: ${error.message}`);
+        console.log(`[LLM] Could not get a decision, using fallback: ${error.message}`);
         return null;
     }
 }
 
 function buildPrompt(level, observation, allowedActions) {
     return [
-        'Sen Minecraft botu icin karar secicisin.',
-        'Sadece JSON dondur. Aciklama yazma.',
-        `Seviye: ${level.id}`,
-        `Hedef: ${level.goal}`,
-        `Izinli actionlar: ${allowedActions.join(', ')}`,
-        `Can: ${observation.health}/20`,
-        `Aclik: ${observation.food}/20`,
-        `Konum: ${JSON.stringify(observation.position)}`,
-        `Envanter: ${observation.inventoryText}`,
-        `Yakin bloklar: ${JSON.stringify(observation.nearbyBlocks.slice(0, 8))}`,
-        'Format ornekleri:',
+        'You are the decision selector for a Minecraft bot.',
+        'Return only JSON. Do not write explanations.',
+        `Level: ${level.id}`,
+        `Goal: ${level.goal}`,
+        `Allowed actions: ${allowedActions.join(', ')}`,
+        `Health: ${observation.health}/20`,
+        `Food: ${observation.food}/20`,
+        `Position: ${JSON.stringify(observation.position)}`,
+        `Inventory: ${observation.inventoryText}`,
+        `Nearby blocks: ${JSON.stringify(observation.nearbyBlocks.slice(0, 8))}`,
+        'Format examples:',
         '{"action":"mine","target":"oak_log"}',
         '{"action":"explore","target":"wood"}',
         '{"action":"craft","item":"oak_planks","count":8}',
         '{"action":"place","item":"crafting_table"}',
-        'Karar JSON:'
+        'Decision JSON:'
     ].join('\n');
 }
 

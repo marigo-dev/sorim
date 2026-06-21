@@ -26,11 +26,11 @@ async function craftItem(bot, itemName, count = 1) {
         } catch (error) {
             await movement.sleep(500);
             if (countItem(bot, itemName) > before) {
-                console.log(`[CRAFT] ${itemName} timeout ama envanter artti, devam.`);
+                console.log(`[CRAFT] ${itemName} timed out but inventory increased; continuing.`);
                 continue;
             }
             if (isSlotTimeoutError(error)) {
-                console.log(`[CRAFT] ${itemName} slot timeout; kisa retry.`);
+                console.log(`[CRAFT] ${itemName} slot timeout; retrying shortly.`);
                 await movement.sleep(700);
                 if (countItem(bot, itemName) > before) continue;
                 try {
@@ -38,7 +38,7 @@ async function craftItem(bot, itemName, count = 1) {
                 } catch (retryError) {
                     await movement.sleep(700);
                     if (countItem(bot, itemName) > before) {
-                        console.log(`[CRAFT] ${itemName} retry timeout ama envanter artti, devam.`);
+                        console.log(`[CRAFT] ${itemName} retry timed out but inventory increased; continuing.`);
                         continue;
                     }
                     throw retryError;
@@ -46,7 +46,7 @@ async function craftItem(bot, itemName, count = 1) {
                 continue;
             }
             if (!table || !isWindowOpenError(error)) throw error;
-            console.log(`[CRAFT] masa kullanilamadi, yeni masa deneniyor: ${error.message}`);
+            console.log(`[CRAFT] crafting table was unusable, trying a fresh one: ${error.message}`);
             table = await placeFreshCraftingTable(bot);
             currentRecipe = bot.recipesFor(item.id, null, 1, table)[0];
             if (!currentRecipe) throw error;
@@ -61,7 +61,7 @@ async function placeBlock(bot, itemName) {
     if (!item) throw new Error(`${itemName} envanterde yok`);
 
     const placements = findPlacements(bot);
-    if (placements.length === 0) throw new Error(`${itemName} koymak icin uygun yer yok`);
+    if (placements.length === 0) throw new Error(`No suitable place to put ${itemName}`);
 
     await bot.equip(item, 'hand');
 
@@ -81,7 +81,7 @@ async function placeBlock(bot, itemName) {
             const direct = bot.blockAt(placement.target);
             const nearby = findNearbyBlock(bot, itemName, 4);
             if (direct?.name === itemName || nearby) {
-                console.log(`[PLACE] ${itemName} event timeout ama blok gorundu, devam.`);
+                console.log(`[PLACE] ${itemName} event timed out but block is visible; continuing.`);
                 return;
             }
             lastError = error;
@@ -89,7 +89,7 @@ async function placeBlock(bot, itemName) {
         }
     }
 
-    throw lastError || new Error(`${itemName} koyulamadi`);
+    throw lastError || new Error(`Could not place ${itemName}`);
 }
 
 async function ensureCraftingTable(bot) {
@@ -99,7 +99,7 @@ async function ensureCraftingTable(bot) {
             await movement.moveNear(bot, nearby.position, 3, 6000);
             return nearby;
         } catch (error) {
-            console.log(`[CRAFT] yakin masa erisilemiyor, yenisi deneniyor: ${error.message}`);
+            console.log(`[CRAFT] nearby table is unreachable, trying a new one: ${error.message}`);
         }
     }
 
@@ -137,7 +137,7 @@ async function placeFreshCraftingTable(bot) {
 
     const nearby = findNearbyBlock(bot, 'crafting_table', 8);
     if (nearby) return nearby;
-    throw new Error('Yeni crafting table koyulamadi');
+    throw new Error('Could not place a fresh crafting table');
 }
 
 function isWindowOpenError(error) {
