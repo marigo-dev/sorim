@@ -1,7 +1,7 @@
 {
   "name": "marigobot",
   "version": "1.0.0",
-  "description": "",
+  "description": "An autonomous Minecraft agent built with Mineflayer and a deterministic skill-tree loop.",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
