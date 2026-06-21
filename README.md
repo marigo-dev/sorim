@@ -1,10 +1,12 @@
 # Sorim
 
-Sorim is an autonomous Minecraft agent built with Node.js, Mineflayer, and a deterministic skill-tree/state-machine loop. The bot can run fully deterministic without an LLM, use a local Ollama model, or connect to an OpenAI-compatible API.
+Sorim is an AI-driven autonomous Minecraft agent built with Node.js and Mineflayer. The project goal is to make a bot that plays through Minecraft by combining an LLM decision layer with reliable low-level skills for movement, crafting, mining, combat, survival, and base management.
+
+The deterministic skill tree is not the end goal. It exists as the bot's safety layer: it validates AI decisions, provides fallback behavior when the model returns invalid JSON, and keeps early survival skills reliable while the AI layer becomes more capable.
 
 ## Current Status
 
-The current bot focuses on early survival:
+The current AI-agent foundation focuses on early survival:
 
 - collect wood
 - craft planks, sticks, crafting table, and wooden pickaxe
@@ -12,8 +14,10 @@ The current bot focuses on early survival:
 - craft stone pickaxe, stone axe, and stone sword
 - build a basic shelter
 - run simple survival checks for hunger, mobs, pits, night, and storage
+- ask an LLM for decisions when enabled
+- fall back to safe deterministic behavior when an AI response is invalid
 
-This is not yet a full human-level Minecraft player. The architecture is intentionally modular so each survival skill can be improved independently.
+This is not yet a full human-level Minecraft player. The architecture is intentionally modular so each survival skill and each AI decision layer can be improved independently.
 
 ## Requirements
 
@@ -21,7 +25,7 @@ This is not yet a full human-level Minecraft player. The architecture is intenti
 - Java 25 or a Java version supported by your Paper server build
 - A Minecraft Java Edition client
 - A local PaperMC server or another compatible Java server
-- Optional: Ollama or an OpenAI-compatible API key
+- An AI provider: local Ollama or an OpenAI-compatible API
 
 Official references:
 
@@ -126,31 +130,14 @@ If your Paper server is newer, install these plugins in `mc-server/plugins/`:
 
 Then restart the server. This lets the bot connect with an older supported protocol while the server runs a newer build.
 
-## 5. Run The Bot Without Any LLM
+## 5. Choose An AI Provider
 
-This is the best first test. The deterministic skill tree will make all early-game decisions.
+Sorim is designed to run with an AI model. You have two recommended options:
 
-PowerShell:
+- Local AI with Ollama
+- Remote AI with an OpenAI-compatible API
 
-```powershell
-$env:USE_LLM='false'
-npm start
-```
-
-Bash:
-
-```bash
-USE_LLM=false npm start
-```
-
-Expected behavior:
-
-- bot joins as `marigo`
-- searches for wood
-- crafts basic tools
-- collects cobblestone
-- builds a basic shelter
-- starts routine survival maintenance
+The deterministic mode exists only for diagnostics and regression testing.
 
 ## 6. Run With Local Ollama
 
@@ -181,6 +168,15 @@ Bash:
 ```bash
 LLM_PROVIDER=ollama OLLAMA_MODEL=qwen3:4b npm start
 ```
+
+Expected behavior:
+
+- bot joins as `marigo`
+- searches for wood
+- crafts basic tools
+- collects cobblestone
+- builds a basic shelter
+- starts routine survival maintenance
 
 Default Ollama endpoint:
 
@@ -247,8 +243,8 @@ LLM:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `USE_LLM` | `true` | Set to `false` to disable LLM calls |
-| `LLM_PROVIDER` | `ollama` | `none`, `ollama`, `openai`, or `openai-compatible` |
+| `USE_LLM` | `true` | Keep this enabled for normal AI-agent runs |
+| `LLM_PROVIDER` | `ollama` | `ollama`, `openai`, `openai-compatible`; `none` is only for diagnostics |
 | `LLM_TIMEOUT_MS` | `12000` | LLM request timeout |
 | `LLM_MODEL` | empty | Shared model override |
 | `OLLAMA_URL` | `http://127.0.0.1:11434/api/generate` | Ollama native generate endpoint |
@@ -314,11 +310,10 @@ After starting the server and bot, watch for this sequence:
 7. Bot checks food and storage routines.
 8. If night arrives and no bed exists, bot reduces risky outdoor tasks.
 
-If the bot gets stuck, restart with:
+If the bot gets stuck, restart with debug logs:
 
 ```powershell
 $env:LOG_LEVEL='debug'
-$env:USE_LLM='false'
 npm start
 ```
 
@@ -346,18 +341,20 @@ Use the default `LOG_LEVEL=info`. Only use `debug` while diagnosing behavior.
 
 ### Ollama is slow
 
-Use deterministic mode:
+Try a smaller local model, increase `LLM_TIMEOUT_MS`, or use an OpenAI-compatible API provider.
+
+For diagnostics only, you can temporarily disable AI calls:
 
 ```powershell
 $env:USE_LLM='false'
 npm start
 ```
 
-Or try a smaller local model.
+This mode is not the main project direction; it is useful for checking whether movement/crafting/mining skills work independently of the model.
 
 ### API provider returns invalid JSON
 
-The skill tree validates all LLM actions. If the model returns bad JSON, the bot falls back to deterministic behavior. Use a low temperature and a model that follows JSON instructions well.
+The skill tree validates all AI actions. If the model returns bad JSON, the bot falls back to safe behavior for that loop. Use a low temperature and a model that follows JSON instructions well.
 
 ## 13. Repository Notes
 
