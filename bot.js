@@ -2,20 +2,14 @@ require('./logger').installConsoleFilter();
 
 const mineflayer = require('mineflayer');
 const { pathfinder } = require('mineflayer-pathfinder');
-const { Vec3 } = require('vec3');
 
-const { askForAction } = require('./llm');
+const { askForToolCall } = require('./llm');
 const SkillTree = require('./skillTree');
-const mine = require('./skills/mine');
-const craft = require('./skills/craft');
 const movement = require('./skills/movement');
-const stone = require('./skills/stone');
-const tools = require('./skills/tools');
-const shelter = require('./skills/shelter');
 const survival = require('./skills/survival');
-const food = require('./skills/food');
 const storage = require('./skills/storage');
 const memory = require('./skills/memory');
+const toolRegistry = require('./toolRegistry');
 
 const BOT_NAME = process.env.MC_USERNAME || 'marigo';
 const HOST = process.env.MC_HOST || 'localhost';
@@ -38,7 +32,7 @@ let busy = false;
 let lastError = null;
 
 bot.once('spawn', async () => {
-    console.log(`[BOOT] ${BOT_NAME} spawned. Clean skill tree started.`);
+    console.log(`[BOOT] ${BOT_NAME} spawned. AI body runtime started.`);
     movement.configure(bot);
     loop().catch(error => {
         console.log('[FATAL]', error.message);
@@ -82,23 +76,26 @@ async function loop() {
             const level = skillTree.getLevel(observation);
             const immediate = survival.chooseImmediateAction(bot, observation, level);
             if (immediate) {
-                console.log(`[SURVIVAL_LOOP] action=${JSON.stringify(immediate)} inv=${observation.inventoryText}`);
-                await executeAction(immediate);
+                const safetyCall = toolRegistry.normalizeToolCall(immediate);
+                console.log(`[SAFETY] tool=${JSON.stringify(safetyCall)} inv=${observation.inventoryText}`);
+                await toolRegistry.executeToolCall(bot, safetyCall);
                 lastError = null;
                 continue;
             }
 
-            const forced = skillTree.getForcedAction(observation, level);
-            const action = forced || await askForAction({
+            const availableTools = toolRegistry.toolsForLevel(level);
+            const aiCall = await askForToolCall({
                 level,
                 observation,
-                allowedActions: level.allowedActions
+                tools: availableTools
             });
-            const safeAction = skillTree.validateAction(action, level) ||
-                skillTree.fallbackAction(observation, level);
+            const toolCall = toolRegistry.validateToolCall(
+                toolRegistry.normalizeToolCall(aiCall),
+                availableTools
+            ) || toolRegistry.fallbackToolCall(skillTree, observation, level);
 
-            console.log(`[LOOP] level=${level.id} action=${JSON.stringify(safeAction)} inv=${observation.inventoryText}`);
-            await executeAction(safeAction);
+            console.log(`[AI_LOOP] level=${level.id} tool=${JSON.stringify(toolCall)} inv=${observation.inventoryText}`);
+            await toolRegistry.executeToolCall(bot, toolCall);
             lastError = null;
         } catch (error) {
             lastError = error.message;
@@ -108,95 +105,6 @@ async function loop() {
             busy = false;
         }
     }
-}
-
-async function executeAction(action) {
-    if (!action || action.action === 'idle') {
-        await sleep(action?.ms || 1000);
-        return;
-    }
-
-    if (action.action === 'explore') {
-        await movement.explore(bot, action);
-        return;
-    }
-
-    if (action.action === 'mine') {
-        await mine.mineBlock(bot, action);
-        return;
-    }
-
-    if (action.action === 'craft') {
-        await craft.craftItem(bot, action.item, action.count || 1);
-        return;
-    }
-
-    if (action.action === 'place') {
-        await craft.placeBlock(bot, action.item);
-        return;
-    }
-
-    if (action.action === 'move_near') {
-        await movement.moveNear(bot, new Vec3(action.x, action.y, action.z), action.range || 2);
-        return;
-    }
-
-    if (action.action === 'collect_stone') {
-        await stone.collectStone(bot, action.count || 16);
-        return;
-    }
-
-    if (action.action === 'craft_stone_tools') {
-        await tools.craftStoneTools(bot);
-        return;
-    }
-
-    if (action.action === 'build_shelter') {
-        await shelter.buildSafeShelter(bot);
-        return;
-    }
-
-    if (action.action === 'eat_food') {
-        await food.eatBestFood(bot);
-        return;
-    }
-
-    if (action.action === 'find_food') {
-        await food.findFood(bot);
-        return;
-    }
-
-    if (action.action === 'fight_mob') {
-        await survival.fightMob(bot, action.entityId);
-        return;
-    }
-
-    if (action.action === 'escape_pit') {
-        await survival.escapePit(bot);
-        return;
-    }
-
-    if (action.action === 'return_base') {
-        await survival.returnBase(bot);
-        return;
-    }
-
-    if (action.action === 'wait_safe') {
-        await survival.waitSafe(bot, action.ms || 1500);
-        return;
-    }
-
-    if (action.action === 'sleep_bed') {
-        await survival.sleepInBed(bot);
-        return;
-    }
-
-    if (action.action === 'organize_storage') {
-        await storage.organizeStorage(bot);
-        return;
-    }
-
-    throw new Error(`Unknown action: ${action.action}`);
 }
 
 function observe() {

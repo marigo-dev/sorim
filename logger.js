@@ -12,6 +12,7 @@ const activeLevel = LEVELS[levelName] ?? LEVELS[DEFAULT_LEVEL];
 
 const DEBUG_PREFIXES = [
     '[LOOP]',
+    '[AI_LOOP]',
     '[SURVIVAL_LOOP]',
     '[MOVE]',
     '[MINE]',

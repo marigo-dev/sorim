@@ -4,6 +4,47 @@ Sorim is an AI-driven autonomous Minecraft agent built with Node.js and Mineflay
 
 The deterministic skill tree is not the end goal. It exists as the bot's safety layer: it validates AI decisions, provides fallback behavior when the model returns invalid JSON, and keeps early survival skills reliable while the AI layer becomes more capable.
 
+## Architecture
+
+Sorim is designed as an AI-controlled Minecraft body/runtime:
+
+```text
+Minecraft world -> perception -> AI brain -> tool call -> safety validation -> skill execution
+```
+
+Main parts:
+
+- `bot.js`: connects to Minecraft, observes the world, runs the agent loop, and executes tool calls.
+- `llm.js`: talks to Ollama or an OpenAI-compatible API and asks the AI brain for the next tool call.
+- `toolRegistry.js`: defines the body tools the AI is allowed to use and maps tool calls to Mineflayer skills.
+- `skillTree.js`: provides curriculum context and safe fallback decisions when AI output is invalid or unavailable.
+- `skills/`: low-level body abilities such as mining, crafting, movement, food, survival, shelter, and storage.
+
+The AI does not directly control Mineflayer APIs. It chooses from explicit tools such as:
+
+- `mine_block`
+- `craft_item`
+- `collect_stone`
+- `build_shelter`
+- `find_food`
+- `fight_mob`
+- `return_base`
+- `organize_storage`
+
+Example AI tool call:
+
+```json
+{
+  "tool": "mine_block",
+  "args": {
+    "target": "oak_log"
+  },
+  "reason": "wood is needed for early tools"
+}
+```
+
+The safety supervisor can override the AI when survival is urgent, for example when hunger is critical, a hostile mob is too close, or the bot is trapped.
+
 ## Current Status
 
 The current AI-agent foundation focuses on early survival:

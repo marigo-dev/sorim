@@ -10,10 +10,10 @@ const OPENAI_BASE_URL = stripTrailingSlash(process.env.OPENAI_BASE_URL || 'https
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_MODEL = process.env.OPENAI_MODEL || process.env.LLM_MODEL || 'gpt-4.1-mini';
 
-async function askForAction({ level, observation, allowedActions }) {
+async function askForToolCall({ level, observation, tools }) {
     if (!USE_LLM || LLM_PROVIDER === 'none') return null;
 
-    const prompt = buildPrompt(level, observation, allowedActions);
+    const prompt = buildPrompt(level, observation, tools);
     try {
         if (LLM_PROVIDER === 'ollama') {
             return await askOllama(prompt);
@@ -77,25 +77,38 @@ async function askOpenAiCompatible(prompt) {
     return parseJson(response.data?.choices?.[0]?.message?.content || '');
 }
 
-function buildPrompt(level, observation, allowedActions) {
+function buildPrompt(level, observation, tools) {
     return [
-        'You are the decision selector for a Minecraft bot.',
+        'You are the AI brain controlling a Minecraft bot body.',
+        'The body can only act through the listed tools.',
+        'Choose the single best next tool call for the current situation.',
         'Return only JSON. Do not write explanations.',
         `Level: ${level.id}`,
         `Goal: ${level.goal}`,
-        `Allowed actions: ${allowedActions.join(', ')}`,
+        `Available tools: ${JSON.stringify(tools.map(toPromptTool))}`,
         `Health: ${observation.health}/20`,
         `Food: ${observation.food}/20`,
         `Position: ${JSON.stringify(observation.position)}`,
         `Inventory: ${observation.inventoryText}`,
         `Nearby blocks: ${JSON.stringify(observation.nearbyBlocks.slice(0, 8))}`,
+        `Nearby mobs: ${JSON.stringify(observation.nearbyMobs.slice(0, 8))}`,
+        `Base: ${JSON.stringify(observation.base || null)}`,
+        `Last error: ${observation.lastError || 'none'}`,
         'Format examples:',
-        '{"action":"mine","target":"oak_log"}',
-        '{"action":"explore","target":"wood"}',
-        '{"action":"craft","item":"oak_planks","count":8}',
-        '{"action":"place","item":"crafting_table"}',
-        'Decision JSON:'
+        '{"tool":"mine_block","args":{"target":"oak_log"},"reason":"wood is needed"}',
+        '{"tool":"explore","args":{"target":"wood"},"reason":"no tree is visible"}',
+        '{"tool":"craft_item","args":{"item":"oak_planks","count":8},"reason":"planks are needed"}',
+        '{"tool":"place_block","args":{"item":"crafting_table"},"reason":"crafting table must be placed"}',
+        'Tool call JSON:'
     ].join('\n');
+}
+
+function toPromptTool(tool) {
+    return {
+        name: tool.name,
+        description: tool.description,
+        args: tool.args
+    };
 }
 
 function parseJson(text) {
@@ -113,5 +126,5 @@ function stripTrailingSlash(value) {
 }
 
 module.exports = {
-    askForAction
+    askForToolCall
 };
