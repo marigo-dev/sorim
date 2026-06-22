@@ -30,6 +30,8 @@ const skillTree = new SkillTree();
 let running = true;
 let busy = false;
 let chatBusy = false;
+let activeFollowUsername = null;
+let queuedUserCommand = null;
 let lastError = null;
 
 bot.once('spawn', async () => {
@@ -47,6 +49,13 @@ bot.on('chat', async (username, message) => {
     if (!lower.includes(BOT_NAME.toLowerCase()) && !lower.includes('marigo')) return;
 
     const observation = observe();
+    const command = parseUserCommand(username, lower);
+    if (command) {
+        applyUserCommand(command);
+        bot.chat(command.reply);
+        return;
+    }
+
     if (lower.includes('status') || lower.includes('durum')) {
         const pos = observation.position;
         bot.chat(`Level:${skillTree.getLevel(observation).id} xyz:${pos.x},${pos.y},${pos.z} health:${bot.health.toFixed(1)} food:${bot.food} inv:${observation.inventoryText}`);
@@ -108,6 +117,25 @@ async function loop() {
                 continue;
             }
 
+            if (queuedUserCommand) {
+                const commandCall = queuedUserCommand;
+                queuedUserCommand = null;
+                console.log(`[USER_COMMAND] tool=${JSON.stringify(commandCall)} inv=${observation.inventoryText}`);
+                await toolRegistry.executeToolCall(bot, commandCall);
+                lastError = null;
+                continue;
+            }
+
+            if (activeFollowUsername) {
+                const followed = bot.players[activeFollowUsername]?.entity;
+                if (followed) {
+                    console.log(`[USER_COMMAND] following=${activeFollowUsername}`);
+                    await movement.moveNear(bot, followed.position, 2, 6000);
+                }
+                lastError = null;
+                continue;
+            }
+
             const availableTools = toolRegistry.toolsForLevel(level);
             const aiCall = await askForToolCall({
                 level,
@@ -128,6 +156,10 @@ async function loop() {
             await toolRegistry.executeToolCall(bot, toolCall);
             lastError = null;
         } catch (error) {
+            if (isExpectedMovementCancel(error)) {
+                lastError = null;
+                continue;
+            }
             lastError = error.message;
             console.log('[STEP_ERROR]', error.message);
             movement.stop(bot);
@@ -211,6 +243,139 @@ function scanUsefulBlocks(maxDistance) {
         }))
         .sort((a, b) => a.distance - b.distance)
         .slice(0, 24);
+}
+
+function parseUserCommand(username, lowerMessage) {
+    const message = lowerMessage
+        .replace(BOT_NAME.toLowerCase(), '')
+        .replace('marigo', '')
+        .trim();
+
+    if (includesAny(message, [
+        'komut',
+        'komutlar',
+        'commands',
+        'help'
+    ])) {
+        return {
+            type: 'help',
+            reply: 'Komutlar: beni takip et, dur, odun topla/agac kes, tas topla, yemek bul, durum.'
+        };
+    }
+
+    if (includesAny(message, [
+        'takip et',
+        'beni takip',
+        'follow me',
+        'come with me',
+        'gel benimle'
+    ])) {
+        return {
+            type: 'follow',
+            username,
+            reply: 'Tamam, seni takip ediyorum.'
+        };
+    }
+
+    if (includesAny(message, [
+        'takibi birak',
+        'takibi bırak',
+        'dur',
+        'bekle',
+        'stop',
+        'wait'
+    ])) {
+        return {
+            type: 'stop',
+            reply: 'Tamam, duruyorum ve mevcut komutu iptal ediyorum.'
+        };
+    }
+
+    if (includesAny(message, [
+        'agac kes',
+        'ağaç kes',
+        'odun topla',
+        'wood',
+        'chop tree',
+        'cut tree'
+    ])) {
+        return {
+            type: 'tool',
+            toolCall: {
+                tool: 'mine_block',
+                args: { target: 'any_log' },
+                reason: `Player ${username} requested wood`
+            },
+            reply: 'Tamam, en yakin agaci kesmeye gidiyorum.'
+        };
+    }
+
+    if (includesAny(message, [
+        'tas topla',
+        'taş topla',
+        'stone',
+        'cobblestone',
+        'kaya topla'
+    ])) {
+        return {
+            type: 'tool',
+            toolCall: {
+                tool: 'collect_stone',
+                args: { count: 16 },
+                reason: `Player ${username} requested stone`
+            },
+            reply: 'Tamam, guvenli merdivenle tas toplamaya basliyorum.'
+        };
+    }
+
+    if (includesAny(message, [
+        'yemek bul',
+        'food',
+        'find food'
+    ])) {
+        return {
+            type: 'tool',
+            toolCall: {
+                tool: 'find_food',
+                args: {},
+                reason: `Player ${username} requested food`
+            },
+            reply: 'Tamam, yemek kaynagi ariyorum.'
+        };
+    }
+
+    return null;
+}
+
+function applyUserCommand(command) {
+    if (command.type === 'help') return;
+
+    if (command.type === 'follow') {
+        activeFollowUsername = command.username;
+        queuedUserCommand = null;
+        return;
+    }
+
+    if (command.type === 'stop') {
+        activeFollowUsername = null;
+        queuedUserCommand = null;
+        movement.stop(bot);
+        return;
+    }
+
+    if (command.type === 'tool') {
+        activeFollowUsername = null;
+        queuedUserCommand = command.toolCall;
+    }
+}
+
+function includesAny(message, needles) {
+    return needles.some(needle => message.includes(needle));
+}
+
+function isExpectedMovementCancel(error) {
+    const message = error?.message || '';
+    return message.includes('goal was changed') || message.includes('Goal changed');
 }
 
 function shutdown() {
