@@ -32,6 +32,7 @@ let busy = false;
 let chatBusy = false;
 let activeFollowUsername = null;
 let queuedUserCommand = null;
+let autonomousMode = process.env.AUTONOMOUS_ON_START === 'true';
 let lastError = null;
 
 bot.once('spawn', async () => {
@@ -49,16 +50,16 @@ bot.on('chat', async (username, message) => {
     if (!lower.includes(BOT_NAME.toLowerCase()) && !lower.includes('marigo')) return;
 
     const observation = observe();
+    if (lower.includes('status') || lower.includes('durum')) {
+        const pos = observation.position;
+        bot.chat(`Mode:${autonomousMode ? 'auto' : 'manual'} Level:${skillTree.getLevel(observation).id} xyz:${pos.x},${pos.y},${pos.z} health:${bot.health.toFixed(1)} food:${bot.food} inv:${observation.inventoryText}`);
+        return;
+    }
+
     const command = parseUserCommand(username, lower);
     if (command) {
         applyUserCommand(command);
         bot.chat(command.reply);
-        return;
-    }
-
-    if (lower.includes('status') || lower.includes('durum')) {
-        const pos = observation.position;
-        bot.chat(`Level:${skillTree.getLevel(observation).id} xyz:${pos.x},${pos.y},${pos.z} health:${bot.health.toFixed(1)} food:${bot.food} inv:${observation.inventoryText}`);
         return;
     }
 
@@ -132,6 +133,12 @@ async function loop() {
                     console.log(`[USER_COMMAND] following=${activeFollowUsername}`);
                     await movement.moveNear(bot, followed.position, 2, 6000);
                 }
+                lastError = null;
+                continue;
+            }
+
+            if (!autonomousMode) {
+                movement.stop(bot);
                 lastError = null;
                 continue;
             }
@@ -259,7 +266,34 @@ function parseUserCommand(username, lowerMessage) {
     ])) {
         return {
             type: 'help',
-            reply: 'Komutlar: beni takip et, dur, odun topla/agac kes, tas topla, yemek bul, durum.'
+            reply: 'Komutlar: beni takip et, dur, odun topla/agac kes, tas topla, yemek bul, otonom basla, otonom dur, durum.'
+        };
+    }
+
+    if (includesAny(message, [
+        'otonom basla',
+        'otonom başla',
+        'kendi basla',
+        'kendi başla',
+        'devam et',
+        'auto start',
+        'start autonomous'
+    ])) {
+        return {
+            type: 'auto_start',
+            reply: 'Tamam, otonom plana basliyorum.'
+        };
+    }
+
+    if (includesAny(message, [
+        'otonom dur',
+        'otonom kapat',
+        'auto stop',
+        'stop autonomous'
+    ])) {
+        return {
+            type: 'auto_stop',
+            reply: 'Tamam, otonom plani durdurdum. Komut bekliyorum.'
         };
     }
 
@@ -350,13 +384,30 @@ function parseUserCommand(username, lowerMessage) {
 function applyUserCommand(command) {
     if (command.type === 'help') return;
 
+    if (command.type === 'auto_start') {
+        autonomousMode = true;
+        activeFollowUsername = null;
+        queuedUserCommand = null;
+        return;
+    }
+
+    if (command.type === 'auto_stop') {
+        autonomousMode = false;
+        activeFollowUsername = null;
+        queuedUserCommand = null;
+        movement.stop(bot);
+        return;
+    }
+
     if (command.type === 'follow') {
+        autonomousMode = false;
         activeFollowUsername = command.username;
         queuedUserCommand = null;
         return;
     }
 
     if (command.type === 'stop') {
+        autonomousMode = false;
         activeFollowUsername = null;
         queuedUserCommand = null;
         movement.stop(bot);
@@ -364,6 +415,7 @@ function applyUserCommand(command) {
     }
 
     if (command.type === 'tool') {
+        autonomousMode = false;
         activeFollowUsername = null;
         queuedUserCommand = command.toolCall;
     }
