@@ -33,6 +33,7 @@ let chatBusy = false;
 let activeFollowUsername = null;
 let queuedUserCommand = null;
 let autonomousMode = process.env.AUTONOMOUS_ON_START === 'true';
+let cancelRequested = false;
 let lastError = null;
 
 bot.once('spawn', async () => {
@@ -163,6 +164,12 @@ async function loop() {
             await toolRegistry.executeToolCall(bot, toolCall);
             lastError = null;
         } catch (error) {
+            if (cancelRequested) {
+                cancelRequested = false;
+                lastError = null;
+                movement.stop(bot);
+                continue;
+            }
             if (isExpectedMovementCancel(error)) {
                 lastError = null;
                 continue;
@@ -395,7 +402,7 @@ function applyUserCommand(command) {
         autonomousMode = false;
         activeFollowUsername = null;
         queuedUserCommand = null;
-        movement.stop(bot);
+        haltCurrentAction();
         return;
     }
 
@@ -410,7 +417,7 @@ function applyUserCommand(command) {
         autonomousMode = false;
         activeFollowUsername = null;
         queuedUserCommand = null;
-        movement.stop(bot);
+        haltCurrentAction();
         return;
     }
 
@@ -427,7 +434,20 @@ function includesAny(message, needles) {
 
 function isExpectedMovementCancel(error) {
     const message = error?.message || '';
-    return message.includes('goal was changed') || message.includes('Goal changed');
+    return message.includes('goal was changed') ||
+        message.includes('Goal changed') ||
+        message.includes('digging aborted') ||
+        message.includes('Digging aborted');
+}
+
+function haltCurrentAction() {
+    cancelRequested = true;
+    movement.stop(bot);
+    try {
+        bot.stopDigging();
+    } catch {
+        // The bot may not be digging right now.
+    }
 }
 
 function shutdown() {
