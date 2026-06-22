@@ -3,7 +3,7 @@ require('./logger').installConsoleFilter();
 const mineflayer = require('mineflayer');
 const { pathfinder } = require('mineflayer-pathfinder');
 
-const { askForToolCall } = require('./llm');
+const { askForToolCall, askForChatReply } = require('./llm');
 const SkillTree = require('./skillTree');
 const movement = require('./skills/movement');
 const survival = require('./skills/survival');
@@ -29,6 +29,7 @@ bot.loadPlugin(pathfinder);
 const skillTree = new SkillTree();
 let running = true;
 let busy = false;
+let chatBusy = false;
 let lastError = null;
 
 bot.once('spawn', async () => {
@@ -51,7 +52,31 @@ bot.on('chat', async (username, message) => {
         bot.chat(`Level:${skillTree.getLevel(observation).id} xyz:${pos.x},${pos.y},${pos.z} health:${bot.health.toFixed(1)} food:${bot.food} inv:${observation.inventoryText}`);
         return;
     }
-    bot.chat('I am here. I am currently learning basic survival and the wood/tool loop with a clean skill tree.');
+
+    if (chatBusy) {
+        bot.chat('Bir saniye, onceki mesaji dusunuyorum.');
+        return;
+    }
+
+    chatBusy = true;
+    try {
+        const level = skillTree.getLevel(observation);
+        const reply = await askForChatReply({
+            username,
+            message,
+            observation,
+            level
+        });
+        for (const part of splitChat(reply)) {
+            bot.chat(part);
+            await sleep(350);
+        }
+    } catch (error) {
+        console.log('[CHAT_ERROR]', error.message);
+        bot.chat('Duydum ama cevap verirken takildim.');
+    } finally {
+        chatBusy = false;
+    }
 });
 
 bot.on('kicked', reason => console.log('[KICKED]', reason));
@@ -197,6 +222,23 @@ function shutdown() {
     } catch {
         // Bot was already gone.
     }
+}
+
+function splitChat(text) {
+    const clean = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!clean) return ['Duydum ama su an iyi cevap uretemedim.'];
+
+    const chunks = [];
+    let remaining = clean;
+    const limit = 220;
+    while (remaining.length > limit) {
+        let cut = remaining.lastIndexOf(' ', limit);
+        if (cut < 80) cut = limit;
+        chunks.push(remaining.slice(0, cut).trim());
+        remaining = remaining.slice(cut).trim();
+    }
+    if (remaining) chunks.push(remaining);
+    return chunks.slice(0, 3);
 }
 
 function sleep(ms) {

@@ -31,6 +31,28 @@ async function askForToolCall({ level, observation, tools }) {
     }
 }
 
+async function askForChatReply({ username, message, observation, level }) {
+    if (!USE_LLM || LLM_PROVIDER === 'none') {
+        return 'I can hear you, but my language model is disabled right now.';
+    }
+
+    const prompt = buildChatPrompt({ username, message, observation, level });
+    try {
+        if (LLM_PROVIDER === 'ollama') {
+            return sanitizeChatReply(await askOllamaChatReply(prompt));
+        }
+
+        if (LLM_PROVIDER === 'openai' || LLM_PROVIDER === 'openai-compatible') {
+            return sanitizeChatReply(await askOpenAiCompatibleChatReply(prompt));
+        }
+
+        return `I cannot use provider "${LLM_PROVIDER}" for chat yet.`;
+    } catch (error) {
+        console.log(`[LLM] Could not get a chat reply: ${error.message}`);
+        return 'I heard you, but my chat brain stalled for a moment.';
+    }
+}
+
 async function askOllama(prompt) {
     const response = await axios.post(OLLAMA_URL, {
         model: OLLAMA_MODEL,
@@ -47,6 +69,31 @@ async function askOllama(prompt) {
     });
 
     return parseJson(response.data?.response || response.data?.thinking || '');
+}
+
+async function askOllamaChatReply(prompt) {
+    const response = await axios.post(OLLAMA_URL, {
+        model: OLLAMA_MODEL,
+        prompt,
+        stream: false,
+        think: false,
+        format: {
+            type: 'object',
+            properties: {
+                reply: { type: 'string' }
+            },
+            required: ['reply']
+        },
+        options: {
+            temperature: 0.3,
+            num_predict: Number(process.env.CHAT_MAX_TOKENS || 90)
+        }
+    }, {
+        timeout: Number(process.env.CHAT_TIMEOUT_MS || process.env.LLM_TIMEOUT_MS || 15000)
+    });
+
+    const raw = response.data?.response || response.data?.thinking || '';
+    return extractChatReply(raw);
 }
 
 async function askOpenAiCompatible(prompt) {
@@ -79,6 +126,37 @@ async function askOpenAiCompatible(prompt) {
     return parseJson(response.data?.choices?.[0]?.message?.content || '');
 }
 
+async function askOpenAiCompatibleChatReply(prompt) {
+    if (!OPENAI_API_KEY) {
+        throw new Error('OPENAI_API_KEY is required for the openai-compatible provider');
+    }
+
+    const response = await axios.post(`${OPENAI_BASE_URL}/chat/completions`, {
+        model: OPENAI_MODEL,
+        messages: [
+            {
+                role: 'system',
+                content: 'You are Marigo, a Minecraft bot. Return only JSON with a reply string.'
+            },
+            {
+                role: 'user',
+                content: prompt
+            }
+        ],
+        temperature: 0.3,
+        max_tokens: Number(process.env.CHAT_MAX_TOKENS || 90),
+        response_format: { type: 'json_object' }
+    }, {
+        timeout: Number(process.env.CHAT_TIMEOUT_MS || process.env.LLM_TIMEOUT_MS || 15000),
+        headers: {
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+            'Content-Type': 'application/json'
+        }
+    });
+
+    return extractChatReply(response.data?.choices?.[0]?.message?.content || '');
+}
+
 function buildPrompt(level, observation, tools) {
     return [
         'You are the AI brain controlling a Minecraft bot body.',
@@ -105,12 +183,69 @@ function buildPrompt(level, observation, tools) {
     ].join('\n');
 }
 
+function buildChatPrompt({ username, message, observation, level }) {
+    const language = detectChatLanguage(message);
+    const status = [
+        `level=${level?.id || 'unknown'}`,
+        `goal=${level?.goal || 'unknown'}`,
+        `health=${observation.health}/20`,
+        `food=${observation.food}/20`,
+        `xyz=${observation.position.x},${observation.position.y},${observation.position.z}`,
+        `inventory=${observation.inventoryText}`,
+        `base=${observation.base ? `${observation.base.x},${observation.base.y},${observation.base.z}` : 'none'}`,
+        `lastError=${observation.lastError || 'none'}`
+    ].join('; ');
+
+    return [
+        'You are Marigo, an AI-controlled Minecraft survival bot.',
+        'Reply as Marigo, not as an assistant explaining a task.',
+        `Reply language: ${language}.`,
+        'Do not repeat the player message.',
+        'Use one short Minecraft chat sentence. No reasoning, no markdown, no emoji.',
+        'Return only JSON with one field named reply.',
+        `Player ${username} says: ${message}`,
+        `Your current status: ${status}`,
+        'Your JSON reply:'
+    ].join('\n');
+}
+
+function detectChatLanguage(message) {
+    const text = String(message || '').toLowerCase();
+    if (/[çğıöşü]/i.test(text)) return 'Turkish';
+    const turkishWords = [
+        'merhaba', 'selam', 'naber', 'nasilsin', 'nasılsın',
+        'ne yapiyorsun', 'ne yapıyorsun', 'yapiyorsun', 'yapıyorsun',
+        'su an', 'şu an', 'durum', 'beni takip', 'tas topla', 'taş topla',
+        'odun', 'ev', 'tarla', 'yemek', 'yardim', 'yardım'
+    ];
+    return turkishWords.some(word => text.includes(word)) ? 'Turkish' : 'English';
+}
+
 function toPromptTool(tool) {
     return {
         name: tool.name,
         description: tool.description,
         args: tool.args
     };
+}
+
+function sanitizeChatReply(text) {
+    return String(text || '')
+        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        .replace(/```[\s\S]*?```/g, '')
+        .replace(/\p{Extended_Pictographic}/gu, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 420) || 'I heard you, but I do not have a good answer yet.';
+}
+
+function extractChatReply(raw) {
+    const text = String(raw || '').trim();
+    const parsed = parseJson(text);
+    if (parsed && typeof parsed === 'object') {
+        return parsed.reply || parsed.message || parsed.answer || parsed.text || '';
+    }
+    return text;
 }
 
 function parseJson(text) {
@@ -175,5 +310,6 @@ function stripTrailingSlash(value) {
 }
 
 module.exports = {
-    askForToolCall
+    askForToolCall,
+    askForChatReply
 };
