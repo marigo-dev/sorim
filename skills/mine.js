@@ -47,7 +47,7 @@ async function mineBlock(bot, action) {
     }
 
     console.log(`[MINE] ${current.name} ${current.position.toString()}`);
-    await bot.dig(current);
+    await digWithTimeout(bot, current);
     await collectDrop(bot, expectedDrop, before, current.position);
 }
 
@@ -60,8 +60,13 @@ async function chopTree(bot, baseBlock, expectedDrop) {
     let before = countItem(bot, expectedDrop);
     let mined = 0;
     const skipped = new Set();
+    const startedAt = Date.now();
 
     for (let pass = 0; pass < 10; pass++) {
+        if (Date.now() - startedAt > 90000) {
+            throw new Error(`${baseBlock.name} tree chopping timed out`);
+        }
+
         const current = findNextTrunkBlock(bot, base.position, baseBlock.name, skipped);
         if (!current) break;
 
@@ -79,7 +84,7 @@ async function chopTree(bot, baseBlock, expectedDrop) {
         }
 
         console.log(`[MINE] ${current.name} ${current.position.toString()}`);
-        await bot.dig(current);
+        await digWithTimeout(bot, current);
         mined++;
         try {
             await collectDrop(bot, expectedDrop, before, current.position);
@@ -91,6 +96,7 @@ async function chopTree(bot, baseBlock, expectedDrop) {
 
     if (mined === 0) throw new Error(`Could not dig any block from ${baseBlock.name} trunk`);
     await patrolTreeDrops(bot, expectedDrop, before, base.position);
+    console.log(`[TREE] complete mined=${mined} ${base.position.toString()}`);
 }
 
 function findNextTrunkBlock(bot, basePosition, name, skipped = new Set()) {
@@ -220,7 +226,7 @@ async function equipBestTool(bot, block) {
     const tiers = ['netherite', 'diamond', 'iron', 'stone', 'wooden'];
     const tool = tiers
         .map(tier => `${tier}${suffix}`)
-        .map(name => bot.inventory.items().find(item => item.name === name))
+        .map(name => inventorySlots(bot).find(item => item.name === name))
         .find(Boolean);
     if (tool) await bot.equip(tool, 'hand');
 }
@@ -328,7 +334,7 @@ async function digStaircaseForStone(bot) {
         if (downBlock?.name === 'stone') {
             await equipBestTool(bot, downBlock);
             await bot.lookAt(downBlock.position.offset(0.5, 0.5, 0.5), true);
-            await bot.dig(downBlock);
+            await digWithTimeout(bot, downBlock);
             await collectDrop(bot, 'cobblestone', before, downBlock.position);
             return;
         }
@@ -352,8 +358,28 @@ async function clearBlock(bot, blockOrPosition) {
     if (!bot.canDigBlock(block)) return;
     await equipBestTool(bot, block);
     await bot.lookAt(block.position.offset(0.5, 0.5, 0.5), true);
-    await bot.dig(block);
+    await digWithTimeout(bot, block);
     await movement.sleep(150);
+}
+
+async function digWithTimeout(bot, block) {
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+            try {
+                bot.stopDigging();
+            } catch {
+                // Mineflayer may already have cleared the digging state.
+            }
+            reject(new Error(`Timed out digging ${block.name} ${block.position.toString()}`));
+        }, 10000);
+    });
+
+    try {
+        await Promise.race([bot.dig(block), timeout]);
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 async function nudgeToward(bot, position) {
@@ -388,9 +414,15 @@ function expectedDropFor(blockName) {
 }
 
 function countItem(bot, itemName) {
-    return bot.inventory.items()
+    const slotCount = inventorySlots(bot)
         .filter(item => item.name === itemName)
         .reduce((sum, item) => sum + item.count, 0);
+    const heldCount = bot.heldItem?.name === itemName ? bot.heldItem.count : 0;
+    return Math.max(slotCount, heldCount);
+}
+
+function inventorySlots(bot) {
+    return bot.inventory.slots.filter(Boolean);
 }
 
 function isAir(block) {

@@ -51,7 +51,7 @@ async function equipBestWeapon(bot) {
         'stone_axe',
         'wooden_axe'
     ]
-        .map(name => bot.inventory.items().find(item => item.name === name))
+        .map(name => inventorySlots(bot).find(item => item.name === name))
         .find(Boolean);
     if (weapon) await bot.equip(weapon, 'hand');
 }
@@ -60,7 +60,7 @@ async function equipBestTool(bot, kind) {
     const suffix = kind === 'axe' ? '_axe' : '_pickaxe';
     const tool = ['netherite', 'diamond', 'iron', 'stone', 'wooden']
         .map(tier => `${tier}${suffix}`)
-        .map(name => bot.inventory.items().find(item => item.name === name))
+        .map(name => inventorySlots(bot).find(item => item.name === name))
         .find(Boolean);
     if (tool) await bot.equip(tool, 'hand');
 }
@@ -74,9 +74,15 @@ function hasItem(bot, itemName, count) {
 }
 
 function countItem(bot, itemName) {
-    return bot.inventory.items()
+    const slotCount = inventorySlots(bot)
         .filter(item => item.name === itemName)
         .reduce((sum, item) => sum + item.count, 0);
+    const heldCount = bot.heldItem?.name === itemName ? bot.heldItem.count : 0;
+    return Math.max(slotCount, heldCount);
+}
+
+function inventorySlots(bot) {
+    return bot.inventory.slots.filter(Boolean);
 }
 
 module.exports = {

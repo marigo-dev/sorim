@@ -156,8 +156,28 @@ async function digIfNeeded(bot, position) {
 async function digBlock(bot, block) {
     await equipPickaxe(bot);
     await bot.lookAt(block.position.offset(0.5, 0.5, 0.5), true);
-    await bot.dig(block);
+    await digWithTimeout(bot, block);
     await movement.sleep(150);
+}
+
+async function digWithTimeout(bot, block) {
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+            try {
+                bot.stopDigging();
+            } catch {
+                // Mineflayer may already have cleared the digging state.
+            }
+            reject(new Error(`Timed out digging ${block.name} ${block.position.toString()}`));
+        }, 10000);
+    });
+
+    try {
+        await Promise.race([bot.dig(block), timeout]);
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 async function collectNearby(bot, itemName, before, origin) {
@@ -200,7 +220,7 @@ async function jumpToward(bot, position) {
 
 async function equipPickaxe(bot) {
     const tool = ['stone_pickaxe', 'wooden_pickaxe']
-        .map(name => bot.inventory.items().find(item => item.name === name))
+        .map(name => inventorySlots(bot).find(item => item.name === name))
         .find(Boolean);
     if (tool) await bot.equip(tool, 'hand');
 }
@@ -213,9 +233,15 @@ function hasOpenFace(bot, position) {
 }
 
 function countItem(bot, itemName) {
-    return bot.inventory.items()
+    const slotCount = inventorySlots(bot)
         .filter(item => item.name === itemName)
         .reduce((sum, item) => sum + item.count, 0);
+    const heldCount = bot.heldItem?.name === itemName ? bot.heldItem.count : 0;
+    return Math.max(slotCount, heldCount);
+}
+
+function inventorySlots(bot) {
+    return bot.inventory.slots.filter(Boolean);
 }
 
 function describeStep(bot, position) {

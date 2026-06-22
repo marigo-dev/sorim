@@ -36,15 +36,17 @@ async function askOllama(prompt) {
         model: OLLAMA_MODEL,
         prompt,
         stream: false,
+        think: false,
+        format: 'json',
         options: {
-            temperature: 0.1,
-            num_predict: 120
+            temperature: 0,
+            num_predict: 180
         }
     }, {
         timeout: Number(process.env.LLM_TIMEOUT_MS || 12000)
     });
 
-    return parseJson(response.data?.response || '');
+    return parseJson(response.data?.response || response.data?.thinking || '');
 }
 
 async function askOpenAiCompatible(prompt) {
@@ -112,13 +114,60 @@ function toPromptTool(tool) {
 }
 
 function parseJson(text) {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    try {
-        return JSON.parse(match[0]);
-    } catch {
-        return null;
+    const candidates = extractJsonObjects(text);
+    for (const candidate of candidates.reverse()) {
+        try {
+            return JSON.parse(candidate);
+        } catch {
+            // Try the next candidate.
+        }
     }
+    return null;
+}
+
+function extractJsonObjects(text) {
+    const objects = [];
+    let start = -1;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+            } else if (char === '\\') {
+                escaped = true;
+            } else if (char === '"') {
+                inString = false;
+            }
+            continue;
+        }
+
+        if (char === '"') {
+            inString = true;
+            continue;
+        }
+
+        if (char === '{') {
+            if (depth === 0) start = i;
+            depth++;
+            continue;
+        }
+
+        if (char === '}') {
+            if (depth === 0) continue;
+            depth--;
+            if (depth === 0 && start >= 0) {
+                objects.push(text.slice(start, i + 1));
+                start = -1;
+            }
+        }
+    }
+
+    return objects;
 }
 
 function stripTrailingSlash(value) {

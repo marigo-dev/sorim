@@ -20,9 +20,12 @@ async function craftItem(bot, itemName, count = 1) {
         const before = countItem(bot, itemName);
         let currentRecipe = bot.recipesFor(item.id, null, 1, table)[0] ||
             bot.recipesFor(item.id, null, 1, null)[0];
-        if (!currentRecipe) break;
+        if (!currentRecipe) {
+            throw new Error(`${itemName} icin tarif kayboldu veya malzeme yetmedi`);
+        }
         try {
             await bot.craft(currentRecipe, 1, table);
+            await waitForItemCount(bot, itemName, before + Math.min(count, currentRecipe.result.count), 1500);
         } catch (error) {
             await movement.sleep(500);
             if (countItem(bot, itemName) > before) {
@@ -35,6 +38,7 @@ async function craftItem(bot, itemName, count = 1) {
                 if (countItem(bot, itemName) > before) continue;
                 try {
                     await bot.craft(currentRecipe, 1, table);
+                    await waitForItemCount(bot, itemName, before + Math.min(count, currentRecipe.result.count), 1500);
                 } catch (retryError) {
                     await movement.sleep(700);
                     if (countItem(bot, itemName) > before) {
@@ -51,6 +55,7 @@ async function craftItem(bot, itemName, count = 1) {
             currentRecipe = bot.recipesFor(item.id, null, 1, table)[0];
             if (!currentRecipe) throw error;
             await bot.craft(currentRecipe, 1, table);
+            await waitForItemCount(bot, itemName, before + Math.min(count, currentRecipe.result.count), 1500);
         }
         await movement.sleep(250);
     }
@@ -157,15 +162,30 @@ function findNearbyBlock(bot, name, maxDistance) {
 }
 
 function totalPlanks(bot) {
-    return bot.inventory.items()
+    return inventorySlots(bot)
         .filter(item => item.name.endsWith('_planks'))
         .reduce((sum, item) => sum + item.count, 0);
 }
 
 function countItem(bot, itemName) {
-    return bot.inventory.items()
+    const slotCount = inventorySlots(bot)
         .filter(item => item.name === itemName)
         .reduce((sum, item) => sum + item.count, 0);
+    const heldCount = bot.heldItem?.name === itemName ? bot.heldItem.count : 0;
+    return Math.max(slotCount, heldCount);
+}
+
+async function waitForItemCount(bot, itemName, expected, timeoutMs) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        if (countItem(bot, itemName) >= expected) return;
+        await movement.sleep(100);
+    }
+    throw new Error(`${itemName} craft sonucu envantere yansimadi`);
+}
+
+function inventorySlots(bot) {
+    return bot.inventory.slots.filter(Boolean);
 }
 
 function findPlacements(bot) {

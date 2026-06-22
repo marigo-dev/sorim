@@ -18,7 +18,6 @@ const HOSTILES = new Set([
 ]);
 
 const NIGHT_BLOCKED_LEVELS = new Set([
-    'L5_COLLECT_STONE',
     'L9_FOOD_LOOP',
     'L11_STABLE_SURVIVAL'
 ]);

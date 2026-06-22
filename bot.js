@@ -89,12 +89,17 @@ async function loop() {
                 observation,
                 tools: availableTools
             });
-            const toolCall = toolRegistry.validateToolCall(
+            const validAiCall = toolRegistry.validateToolCall(
                 toolRegistry.normalizeToolCall(aiCall),
                 availableTools
-            ) || toolRegistry.fallbackToolCall(skillTree, observation, level);
+            );
+            const source = validAiCall ? 'ai' : 'fallback';
+            if (aiCall && !validAiCall) {
+                console.log(`[AI_REJECTED] level=${level.id} raw=${JSON.stringify(aiCall)}`);
+            }
+            const toolCall = validAiCall || toolRegistry.fallbackToolCall(skillTree, observation, level);
 
-            console.log(`[AI_LOOP] level=${level.id} tool=${JSON.stringify(toolCall)} inv=${observation.inventoryText}`);
+            console.log(`[AI_LOOP] source=${source} level=${level.id} tool=${JSON.stringify(toolCall)} inv=${observation.inventoryText}`);
             await toolRegistry.executeToolCall(bot, toolCall);
             lastError = null;
         } catch (error) {
@@ -142,8 +147,11 @@ function observe() {
 
 function countInventory() {
     const counts = {};
-    for (const item of bot.inventory.items()) {
+    for (const item of bot.inventory.slots.filter(Boolean)) {
         counts[item.name] = (counts[item.name] || 0) + item.count;
+    }
+    if (bot.heldItem) {
+        counts[bot.heldItem.name] = Math.max(counts[bot.heldItem.name] || 0, bot.heldItem.count);
     }
     return counts;
 }
