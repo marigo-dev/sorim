@@ -23,8 +23,15 @@ mc-server/world_nether/
 mc-server/world_the_end/
 mc-server/cache/
 mc-server/plugins/
+mc-server/config/
 mc-server/*.log
 mc-server/*.log.gz
+mc-server/bukkit.yml
+mc-server/commands.yml
+mc-server/help.yml
+mc-server/permissions.yml
+mc-server/spigot.yml
+mc-server/version_history.json
 mc-server/usercache.json
 mc-server/ops.json
 mc-server/whitelist.json
