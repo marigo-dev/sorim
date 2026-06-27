@@ -11,11 +11,13 @@ function configure(bot) {
 }
 
 async function moveNear(bot, position, range = 2, timeoutMs = 20000) {
+    if (bot.entity?.position?.distanceTo(position) <= range) return;
     const goal = new goals.GoalNear(position.x, position.y, position.z, range);
     await withTimeout(bot.pathfinder.goto(goal), timeoutMs, 'Timed out walking to target');
 }
 
 async function moveBlock(bot, position, timeoutMs = 12000) {
+    if (bot.entity?.position?.floored?.().equals(position)) return;
     const goal = new goals.GoalBlock(position.x, position.y, position.z);
     await withTimeout(bot.pathfinder.goto(goal), timeoutMs, 'Timed out walking to block target');
 }
@@ -24,7 +26,7 @@ async function explore(bot, action = {}) {
     const target = action.target || 'around';
     const origin = bot.entity.position;
     const angle = Math.random() * Math.PI * 2;
-    const distance = target === 'stone' ? 12 : target === 'food' ? 12 : 24;
+    const distance = target === 'wood' ? 36 : target === 'stone' ? 16 : target === 'food' ? 24 : 30;
     const position = new Vec3(
         Math.floor(origin.x + Math.cos(angle) * distance),
         Math.floor(origin.y),
@@ -34,13 +36,14 @@ async function explore(bot, action = {}) {
     console.log(`[MOVE] Exploring target=${target} x=${position.x} z=${position.z}`);
     try {
         await withTimeout(
-            bot.pathfinder.goto(new goals.GoalNearXZ(position.x, position.z, 3)),
-            18000,
+            bot.pathfinder.goto(new goals.GoalNearXZ(position.x, position.z, target === 'wood' ? 8 : 3)),
+            target === 'wood' ? 26000 : 18000,
             'Exploration timed out'
         );
     } catch (error) {
         console.log(`[MOVE] Exploration could not complete: ${error.message}`);
-        await manualNudge(bot, 1800);
+        await bot.lookAt(position.offset(0.5, 0.5, 0.5), true);
+        await manualNudge(bot, target === 'wood' ? 7000 : 2200);
     }
 }
 

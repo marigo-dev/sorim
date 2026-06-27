@@ -9,6 +9,12 @@ const shelter = require('./skills/shelter');
 const survival = require('./skills/survival');
 const food = require('./skills/food');
 const storage = require('./skills/storage');
+const mining = require('./skills/mining');
+const smelting = require('./skills/smelting');
+const iron = require('./skills/iron');
+const build = require('./skills/build');
+const sharedStorage = require('./skills/sharedStorage');
+const colonyBuild = require('./skills/colonyBuild');
 
 const TOOL_DEFINITIONS = [
     {
@@ -102,6 +108,72 @@ const TOOL_DEFINITIONS = [
         actions: ['organize_storage']
     },
     {
+        name: 'prepare_mining_kit',
+        description: 'Prepare furnace, fuel, torches, food readiness, and support blocks before iron mining.',
+        args: {},
+        actions: ['prepare_mining_kit']
+    },
+    {
+        name: 'mine_iron',
+        description: 'Open a safe stair mine, place torches, mine iron ore, and return toward base.',
+        args: { count: 'number optional' },
+        actions: ['mine_iron']
+    },
+    {
+        name: 'smelt_item',
+        description: 'Smelt an input item into an output item using furnace and fuel.',
+        args: { input: 'string required', output: 'string required', count: 'number optional' },
+        actions: ['smelt_item']
+    },
+    {
+        name: 'craft_iron_kit',
+        description: 'Craft iron pickaxe, sword, axe, shield, then iron armor as ingots allow.',
+        args: {},
+        actions: ['craft_iron_kit']
+    },
+    {
+        name: 'build_blueprint',
+        description: 'Creative-mode build tool. Builds one named blueprint from the local catalog.',
+        args: { name: 'string required', x: 'number optional', y: 'number optional', z: 'number optional' },
+        actions: ['build_blueprint']
+    },
+    {
+        name: 'build_showcase',
+        description: 'Creative-mode build tool. Builds every local catalog blueprint in a spaced showcase grid.',
+        args: { x: 'number optional', y: 'number optional', z: 'number optional' },
+        actions: ['build_showcase']
+    },
+    {
+        name: 'ensure_shared_storage',
+        description: 'Survival-mode colony tool. Ensure the shared storage chest exists at the registered colony storage position.',
+        args: { x: 'number optional', y: 'number optional', z: 'number optional' },
+        actions: ['ensure_shared_storage']
+    },
+    {
+        name: 'deposit_shared_storage',
+        description: 'Survival-mode colony tool. Deposit an inventory item into shared storage.',
+        args: { item: 'string required', count: 'number optional' },
+        actions: ['deposit_shared_storage']
+    },
+    {
+        name: 'withdraw_shared_storage',
+        description: 'Survival-mode colony tool. Withdraw an item from shared storage.',
+        args: { item: 'string required', count: 'number required' },
+        actions: ['withdraw_shared_storage']
+    },
+    {
+        name: 'count_shared_storage',
+        description: 'Survival-mode colony tool. Count items currently inside shared storage.',
+        args: {},
+        actions: ['count_shared_storage']
+    },
+    {
+        name: 'build_colony_marker',
+        description: 'Survival-mode colony tool. Spend shared resources on a small base/foundation marker.',
+        args: { material: 'string optional' },
+        actions: ['build_colony_marker']
+    },
+    {
         name: 'move_near',
         description: 'Move near explicit coordinates. Use sparingly; higher level tools are safer.',
         args: { x: 'number required', y: 'number required', z: 'number required', range: 'number optional' },
@@ -115,7 +187,7 @@ function toolsForLevel(level) {
     if (!level?.allowedActions) return TOOL_DEFINITIONS;
     const allowed = new Set(level.allowedActions);
     return TOOL_DEFINITIONS.filter(tool =>
-        tool.actions.some(action => allowed.has(action)) ||
+            tool.actions.some(action => allowed.has(action)) ||
         ['wait_safe', 'return_base', 'escape_pit', 'fight_mob', 'eat_food'].includes(tool.name)
     );
 }
@@ -168,6 +240,17 @@ function actionToToolCall(action) {
         wait_safe: 'wait_safe',
         sleep_bed: 'sleep_bed',
         organize_storage: 'organize_storage',
+        prepare_mining_kit: 'prepare_mining_kit',
+        mine_iron: 'mine_iron',
+        smelt_item: 'smelt_item',
+        craft_iron_kit: 'craft_iron_kit',
+        build_blueprint: 'build_blueprint',
+        build_showcase: 'build_showcase',
+        ensure_shared_storage: 'ensure_shared_storage',
+        deposit_shared_storage: 'deposit_shared_storage',
+        withdraw_shared_storage: 'withdraw_shared_storage',
+        count_shared_storage: 'count_shared_storage',
+        build_colony_marker: 'build_colony_marker',
         move_near: 'move_near',
         idle: 'wait_safe'
     };
@@ -278,6 +361,75 @@ async function executeToolCall(bot, call) {
         return;
     }
 
+    if (call.tool === 'prepare_mining_kit') {
+        await mining.prepareMiningKit(bot);
+        return;
+    }
+
+    if (call.tool === 'mine_iron') {
+        await mining.mineIron(bot, Number(args.count || 16));
+        return;
+    }
+
+    if (call.tool === 'smelt_item') {
+        await smelting.smeltItem(
+            bot,
+            requireString(args.input, 'input'),
+            requireString(args.output, 'output'),
+            Number(args.count || 1)
+        );
+        return;
+    }
+
+    if (call.tool === 'craft_iron_kit') {
+        await iron.craftIronKit(bot);
+        return;
+    }
+
+    if (call.tool === 'build_blueprint') {
+        await build.buildBlueprint(bot, requireString(args.name, 'name'), optionalPosition(args));
+        return;
+    }
+
+    if (call.tool === 'build_showcase') {
+        await build.buildShowcase(bot, optionalPosition(args));
+        return;
+    }
+
+    if (call.tool === 'ensure_shared_storage') {
+        await sharedStorage.ensureSharedStorage(bot, optionalPosition(args));
+        return;
+    }
+
+    if (call.tool === 'deposit_shared_storage') {
+        await sharedStorage.depositToSharedStorage(
+            bot,
+            requireString(args.item, 'item'),
+            args.count ? Number(args.count) : null
+        );
+        return;
+    }
+
+    if (call.tool === 'withdraw_shared_storage') {
+        await sharedStorage.withdrawFromSharedStorage(
+            bot,
+            requireString(args.item, 'item'),
+            Number(args.count || 1)
+        );
+        return;
+    }
+
+    if (call.tool === 'count_shared_storage') {
+        const counts = await sharedStorage.countSharedStorage(bot);
+        console.log(`[SHARED] inventory=${JSON.stringify(counts)}`);
+        return;
+    }
+
+    if (call.tool === 'build_colony_marker') {
+        await colonyBuild.buildColonyMarker(bot, args.material || 'cobblestone');
+        return;
+    }
+
     throw new Error(`Unknown tool: ${call.tool}`);
 }
 
@@ -295,6 +447,13 @@ function requireString(value, name) {
         throw new Error(`Tool argument "${name}" is required`);
     }
     return value;
+}
+
+function optionalPosition(args) {
+    if ([args.x, args.y, args.z].every(value => typeof value === 'number' && Number.isFinite(value))) {
+        return { x: args.x, y: args.y, z: args.z };
+    }
+    return null;
 }
 
 function sleep(ms) {

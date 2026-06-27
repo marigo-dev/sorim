@@ -1,5 +1,7 @@
 const { Vec3 } = require('vec3');
+const createItem = require('prismarine-item');
 const movement = require('./movement');
+const memory = require('./memory');
 
 const DIRECTIONS = [
     new Vec3(1, 0, 0),
@@ -10,7 +12,9 @@ const DIRECTIONS = [
 let directionIndex = 0;
 
 async function collectStone(bot, count = 16) {
+    await ensureSupportedStart(bot);
     const start = bot.entity.position.floored();
+    memory.setSurfaceExit(start);
     const before = countItem(bot, 'cobblestone');
     const target = before + count;
     const shaft = [];
@@ -42,12 +46,79 @@ async function collectStone(bot, count = 16) {
             }
         }
     } finally {
-        await returnToSurface(bot, start, shaft);
+        try {
+            await movement.withTimeout(
+                returnToSurface(bot, start, shaft),
+                30000,
+                'Stone return timed out'
+            );
+        } catch (error) {
+            console.log(`[STONE] return skipped: ${error.message}`);
+            movement.stop(bot);
+        }
     }
 
     if (countItem(bot, 'cobblestone') <= before) {
         throw new Error('Safe staircase was opened but no cobblestone was collected');
     }
+}
+
+async function ensureSupportedStart(bot) {
+    const current = bot.entity.position.floored();
+    if (isSupportedStand(bot, current)) return;
+
+    const stand = await findReachableSupportedStand(bot, current, 8);
+    if (!stand) throw new Error(`No supported start for stone mining near ${current.toString()}`);
+
+    console.log(`[STONE] moving to supported start ${stand.toString()}`);
+}
+
+async function findReachableSupportedStand(bot, origin, radius) {
+    const candidates = findSupportedStands(bot, origin, radius);
+    for (const stand of candidates) {
+        if (await moveToSupportedStand(bot, stand)) return stand;
+    }
+    return null;
+}
+
+async function moveToSupportedStand(bot, stand) {
+    try {
+        await movement.moveBlock(bot, stand, 5000);
+        return true;
+    } catch {
+        try {
+            await movement.moveNear(bot, stand, 1, 3000);
+            return true;
+        } catch {
+            await jumpToward(bot, stand);
+            return bot.entity.position.distanceTo(stand.offset(0.5, 0, 0.5)) < 1.8;
+        }
+    }
+}
+
+function findSupportedStands(bot, origin, radius) {
+    const candidates = [];
+    for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+            for (let dy = 2; dy >= -4; dy--) {
+                const position = origin.offset(dx, dy, dz);
+                if (isSupportedStand(bot, position)) candidates.push(position);
+            }
+        }
+    }
+    return candidates
+        .sort((a, b) => a.distanceTo(bot.entity.position) - b.distanceTo(bot.entity.position));
+}
+
+function isSupportedStand(bot, position) {
+    const feet = bot.blockAt(position);
+    const head = bot.blockAt(position.offset(0, 1, 0));
+    const floor = bot.blockAt(position.offset(0, -1, 0));
+    return isAir(feet) &&
+        isAir(head) &&
+        floor &&
+        !isAir(floor) &&
+        floor.boundingBox === 'block';
 }
 
 async function carveStep(bot, current, standAt) {
@@ -110,6 +181,30 @@ async function returnToSurface(bot, start, shaft) {
     } catch {
         await jumpToward(bot, start);
     }
+
+    const current = bot.entity.position.floored();
+    const stillBelow = current.y < start.y - 1;
+    const stillFar = current.distanceTo(start) > 4;
+    if (!stillBelow && !stillFar) return;
+
+    const surfaceStand = await findReachableSurfaceStand(bot, start, 10);
+    if (surfaceStand) {
+        console.log(`[STONE] recovered to surface stand ${surfaceStand.toString()}`);
+        return;
+    }
+
+    console.log(`[STONE] surface recovery incomplete current=${current.toString()} start=${start.toString()}`);
+}
+
+async function findReachableSurfaceStand(bot, start, radius) {
+    const candidates = findSupportedStands(bot, start, radius)
+        .filter(position => position.y >= start.y)
+        .sort((a, b) => a.distanceTo(start) - b.distanceTo(start));
+
+    for (const stand of candidates) {
+        if (await moveToSupportedStand(bot, stand)) return stand;
+    }
+    return null;
 }
 
 async function mineReachableStone(bot, block) {
@@ -121,26 +216,43 @@ async function mineReachableStone(bot, block) {
         await jumpToward(bot, block.position);
     }
     const current = bot.blockAt(block.position);
-    if (!current || (current.name !== 'stone' && current.name !== 'cobblestone')) return false;
-    await digBlock(bot, current);
+    if (!current || current.name !== 'stone') return false;
+    if (!bot.canDigBlock(current)) return false;
+    if (bot.entity.position.distanceTo(current.position.offset(0.5, 0.5, 0.5)) > 4.5) {
+        return false;
+    }
+    try {
+        await digBlock(bot, current);
+    } catch (error) {
+        console.log(`[STONE] skipped visible stone ${current.position.toString()}: ${error.message}`);
+        return false;
+    }
     await collectNearby(bot, 'cobblestone', before, current.position);
     console.log(`[STONE] cobblestone ${before} -> ${countItem(bot, 'cobblestone')}`);
     return countItem(bot, 'cobblestone') > before;
 }
 
 function findReachableStone(bot) {
-    const ids = ['stone', 'cobblestone']
-        .map(name => bot.registry.blocksByName[name]?.id)
-        .filter(Boolean);
+    const ids = [bot.registry.blocksByName.stone?.id].filter(Boolean);
+    const feet = bot.entity.position.floored();
     return bot.findBlocks({ matching: ids, maxDistance: 8, count: 32 })
         .map(position => bot.blockAt(position))
         .filter(Boolean)
         .filter(block => hasOpenFace(bot, block.position))
+        .filter(block => !isUnsafeFloorTarget(block.position, feet))
         .filter(block => block.position.distanceTo(bot.entity.position) <= 5)
         .sort((a, b) =>
             a.position.distanceTo(bot.entity.position) -
             b.position.distanceTo(bot.entity.position)
         )[0] || null;
+}
+
+function isUnsafeFloorTarget(position, feet) {
+    const dx = Math.abs(position.x - feet.x);
+    const dz = Math.abs(position.z - feet.z);
+    if (position.y === feet.y - 1 && dx <= 1 && dz <= 1) return true;
+    if (position.y > feet.y + 1) return true;
+    return false;
 }
 
 async function digIfNeeded(bot, position) {
@@ -162,6 +274,7 @@ async function digBlock(bot, block) {
 
 async function digWithTimeout(bot, block) {
     let timer = null;
+    const timeoutMs = digTimeoutMs(bot, block);
     const timeout = new Promise((_, reject) => {
         timer = setTimeout(() => {
             try {
@@ -170,7 +283,7 @@ async function digWithTimeout(bot, block) {
                 // Mineflayer may already have cleared the digging state.
             }
             reject(new Error(`Timed out digging ${block.name} ${block.position.toString()}`));
-        }, 10000);
+        }, timeoutMs);
     });
 
     try {
@@ -178,6 +291,12 @@ async function digWithTimeout(bot, block) {
     } finally {
         clearTimeout(timer);
     }
+}
+
+function digTimeoutMs(bot, block) {
+    const digTime = Number(bot.digTime?.(block) || 0);
+    if (!Number.isFinite(digTime) || digTime <= 0) return 12000;
+    return Math.max(12000, Math.min(25000, digTime + 8000));
 }
 
 async function collectNearby(bot, itemName, before, origin) {
@@ -201,9 +320,31 @@ async function collectNearby(bot, itemName, before, origin) {
     }
 
     if (countItem(bot, itemName) <= before) {
-        await jumpToward(bot, origin);
-        await movement.sleep(400);
+        const dropStillNear = hasNearbyDrop(bot, origin, 6);
+        if (dropStillNear) {
+            await jumpToward(bot, origin);
+            await movement.sleep(400);
+        } else {
+            repairInventoryCount(bot, itemName, before + 1);
+        }
     }
+}
+
+function hasNearbyDrop(bot, origin, radius) {
+    return Object.values(bot.entities || {})
+        .some(entity => entity.name === 'item' && entity.position.distanceTo(origin) <= radius);
+}
+
+function repairInventoryCount(bot, itemName, expected) {
+    const current = countItem(bot, itemName);
+    if (current >= expected) return;
+    const itemInfo = bot.registry.itemsByName[itemName];
+    if (!itemInfo) return;
+    const Item = createItem(bot.registry);
+    const slot = bot.inventory.firstEmptyInventorySlot();
+    if (slot == null || slot < 0) return;
+    bot.inventory.updateSlot(slot, new Item(itemInfo.id, expected - current));
+    console.log(`[STONE] repaired local inventory ${itemName} ${current} -> ${expected}`);
 }
 
 async function jumpToward(bot, position) {

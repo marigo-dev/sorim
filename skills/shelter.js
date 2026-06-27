@@ -14,10 +14,10 @@ const BUILD_BLOCKS = [
 async function buildSafeShelter(bot) {
     const origin = bot.entity.position.floored();
     const base = new Vec3(origin.x, origin.y, origin.z);
-    memory.setBase(base);
 
     console.log(`[SHELTER] building first shelter base=${base.toString()}`);
     await ensureDoor(bot);
+    let placed = 0;
 
     for (let y = 0; y <= 2; y++) {
         for (let dx = -1; dx <= 1; dx++) {
@@ -30,7 +30,7 @@ async function buildSafeShelter(bot) {
                 const position = base.offset(dx, y, dz);
                 if (isDoorSpace(dx, y, dz)) continue;
                 if (position.equals(origin)) continue;
-                await placeBuildBlock(bot, position);
+                if (await placeBuildBlock(bot, position)) placed++;
             }
         }
     }
@@ -38,6 +38,13 @@ async function buildSafeShelter(bot) {
     await placeDoor(bot, base.offset(0, 0, -1));
     await placeUtilityInside(bot, 'crafting_table', base.offset(0, 0, 0));
     await movement.moveNear(bot, base, 1, 10000);
+
+    const shellScore = scoreShelterShell(bot, base);
+    console.log(`[SHELTER] placed=${placed} shell=${shellScore}`);
+    if (shellScore < 18) {
+        throw new Error(`Shelter shell incomplete: ${shellScore}/22`);
+    }
+    memory.setBase(base);
 }
 
 async function returnToBase(bot) {
@@ -49,7 +56,7 @@ async function returnToBase(bot) {
 
 async function ensureDoor(bot) {
     if (countItem(bot, 'oak_door') > 0) return;
-    if (countItem(bot, 'oak_planks') >= 14) {
+    if (countItem(bot, 'oak_planks') >= 20) {
         await craft.craftItem(bot, 'oak_door', 1);
     }
 }
@@ -84,14 +91,14 @@ async function placeUtilityInside(bot, itemName, position) {
 
 async function placeBuildBlock(bot, position) {
     const current = bot.blockAt(position);
-    if (!current || !isAir(current)) return;
+    if (!current || !isAir(current)) return false;
 
     const item = BUILD_BLOCKS
         .map(name => bot.inventory.items().find(entry => entry.name === name))
         .find(Boolean);
     if (!item) throw new Error('Ev yapmak icin blok yok');
 
-    await placeSpecificItem(bot, item, position);
+    return placeSpecificItem(bot, item, position);
 }
 
 async function placeSpecific(bot, itemName, position) {
@@ -102,7 +109,7 @@ async function placeSpecific(bot, itemName, position) {
 
 async function placeSpecificItem(bot, item, position) {
     const reference = findReference(bot, position);
-    if (!reference) return;
+    if (!reference) return false;
 
     try {
         await movement.moveNear(bot, position, 4, 8000);
@@ -110,9 +117,29 @@ async function placeSpecificItem(bot, item, position) {
         await bot.lookAt(position.offset(0.5, 0.5, 0.5), true);
         await bot.placeBlock(reference.block, reference.face);
         await movement.sleep(200);
+        const placed = bot.blockAt(position);
+        return Boolean(placed && !isAir(placed));
     } catch (error) {
         console.log(`[SHELTER] skipped placing ${item.name} ${position.toString()}: ${error.message}`);
+        return false;
     }
+}
+
+function scoreShelterShell(bot, base) {
+    let score = 0;
+    for (let y = 0; y <= 2; y++) {
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dz = -1; dz <= 1; dz++) {
+                const edge = Math.abs(dx) === 1 || Math.abs(dz) === 1;
+                const roof = y === 2;
+                if (!edge && !roof) continue;
+                if (isDoorSpace(dx, y, dz)) continue;
+                const block = bot.blockAt(base.offset(dx, y, dz));
+                if (block && !isAir(block)) score++;
+            }
+        }
+    }
+    return score;
 }
 
 function findReference(bot, position) {

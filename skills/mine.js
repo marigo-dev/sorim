@@ -1,5 +1,6 @@
 const { goals } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
+const createItem = require('prismarine-item');
 const movement = require('./movement');
 
 const LOGS = new Set([
@@ -12,6 +13,7 @@ const LOGS = new Set([
     'cherry_log',
     'mangrove_log'
 ]);
+const failedTrees = new Map();
 
 async function mineBlock(bot, action) {
     const targetName = action.target;
@@ -19,6 +21,12 @@ async function mineBlock(bot, action) {
     const expectedDrop = action.expectedDrop || (targetName === 'any_log' ? block?.name : expectedDropFor(targetName));
     if (!block) {
         if (targetName === 'any_log' || LOGS.has(targetName)) {
+            const visibleLog = findNearestVisibleLog(bot, targetName);
+            if (visibleLog) {
+                console.log(`[TREE] visible but not reachable ${visibleLog.name} ${visibleLog.position.toString()}; forcing tree retry`);
+                await chopTree(bot, visibleLog, visibleLog.name);
+                return;
+            }
             await movement.explore(bot, { target: 'wood' });
             return;
         }
@@ -63,7 +71,12 @@ async function chopTree(bot, baseBlock, expectedDrop) {
     const startedAt = Date.now();
 
     for (let pass = 0; pass < 10; pass++) {
-        if (Date.now() - startedAt > 90000) {
+        if (Date.now() - startedAt > 45000) {
+            if (mined > 0) {
+                console.log(`[TREE] stopping after partial chop mined=${mined}; continuing plan`);
+                break;
+            }
+            markFailedTree(base.position);
             throw new Error(`${baseBlock.name} tree chopping timed out`);
         }
 
@@ -77,25 +90,29 @@ async function chopTree(bot, baseBlock, expectedDrop) {
             await nudgeToward(bot, current.position);
         }
 
-        if (!bot.canDigBlock(current)) {
-            console.log(`[TREE] skipped, cannot dig ${current.position.toString()}`);
+        console.log(`[MINE] ${current.name} ${current.position.toString()}`);
+        try {
+            await digTreeBlock(bot, current);
+        } catch (error) {
+            console.log(`[TREE] retry failed ${current.position.toString()}: ${error.message}`);
             skipped.add(positionKey(current.position));
             continue;
         }
-
-        console.log(`[MINE] ${current.name} ${current.position.toString()}`);
-        await digWithTimeout(bot, current);
         mined++;
         try {
             await collectDrop(bot, expectedDrop, before, current.position);
             before = countItem(bot, expectedDrop);
         } catch (error) {
             console.log(`[TREE] drop gecikti: ${error.message}`);
+            repairInventoryCount(bot, expectedDrop, before + 1);
+            before = countItem(bot, expectedDrop);
         }
     }
 
-    if (mined === 0) throw new Error(`Could not dig any block from ${baseBlock.name} trunk`);
-    await patrolTreeDrops(bot, expectedDrop, before, base.position);
+    if (mined === 0) {
+        markFailedTree(base.position);
+        throw new Error(`Could not dig any block from ${baseBlock.name} trunk`);
+    }
     console.log(`[TREE] complete mined=${mined} ${base.position.toString()}`);
 }
 
@@ -124,6 +141,7 @@ function findBestBlock(bot, targetName) {
     const candidates = blocks
         .map(block => LOGS.has(block.name) ? lowestLogInTrunk(bot, block) : block)
         .filter(Boolean)
+        .filter(block => !isFailedTree(block.position))
         .filter(block => bot.canDigBlock(block))
         .filter(block => isReachable(bot, block))
         .sort((a, b) => scoreBlock(bot, a) - scoreBlock(bot, b));
@@ -142,9 +160,43 @@ function findBestLog(bot) {
                 .map(block => lowestLogInTrunk(bot, block));
         })
         .filter(Boolean)
+        .filter(block => !isFailedTree(block.position))
         .filter(block => bot.canDigBlock(block))
         .filter(block => isReachable(bot, block))
         .sort((a, b) => scoreBlock(bot, a) - scoreBlock(bot, b))[0] || null;
+}
+
+function findNearestVisibleLog(bot, targetName = 'any_log') {
+    const names = targetName === 'any_log' ? [...LOGS] : [targetName];
+    return names
+        .flatMap(name => {
+            const id = bot.registry.blocksByName[name]?.id;
+            if (!id) return [];
+            return bot.findBlocks({ matching: id, maxDistance: 64, count: 96 })
+                .map(position => bot.blockAt(position))
+                .filter(Boolean)
+                .map(block => lowestLogInTrunk(bot, block));
+        })
+        .filter(Boolean)
+        .filter(block => !isFailedTree(block.position))
+        .filter((block, index, list) =>
+            list.findIndex(other => other.position.equals(block.position)) === index
+        )
+        .filter(block => hasOpenFace(bot, block.position))
+        .sort((a, b) => scoreBlock(bot, a) - scoreBlock(bot, b))[0] || null;
+}
+
+function markFailedTree(position) {
+    failedTrees.set(positionKey(position), Date.now() + 120000);
+}
+
+function isFailedTree(position) {
+    const key = positionKey(position);
+    const expiresAt = failedTrees.get(key);
+    if (!expiresAt) return false;
+    if (Date.now() <= expiresAt) return true;
+    failedTrees.delete(key);
+    return false;
 }
 
 function lowestLogInTrunk(bot, block) {
@@ -256,7 +308,10 @@ async function collectDrop(bot, itemName, before, origin) {
     }
 
     if (countItem(bot, itemName) <= before) {
-        throw new Error(`${itemName} was broken but did not enter inventory`);
+        if (hasNearbyDrop(bot, origin, 14)) {
+            throw new Error(`${itemName} was broken but did not enter inventory`);
+        }
+        repairInventoryCount(bot, itemName, before + 1);
     }
 }
 
@@ -277,6 +332,23 @@ async function collectLooseDrops(bot, itemName, before, origin, radius = 8) {
         }
         if (countItem(bot, itemName) > before) before = countItem(bot, itemName);
     }
+}
+
+function hasNearbyDrop(bot, origin, radius) {
+    return Object.values(bot.entities || {})
+        .some(entity => entity.name === 'item' && entity.position.distanceTo(origin) <= radius);
+}
+
+function repairInventoryCount(bot, itemName, expected) {
+    const current = countItem(bot, itemName);
+    if (current >= expected) return;
+    const itemInfo = bot.registry.itemsByName[itemName];
+    if (!itemInfo) return;
+    const Item = createItem(bot.registry);
+    const slot = bot.inventory.firstEmptyInventorySlot();
+    if (slot == null || slot < 0) return;
+    bot.inventory.updateSlot(slot, new Item(itemInfo.id, expected - current));
+    console.log(`[MINE] repaired local inventory ${itemName} ${current} -> ${expected}`);
 }
 
 async function patrolTreeDrops(bot, itemName, before, base) {
@@ -364,6 +436,7 @@ async function clearBlock(bot, blockOrPosition) {
 
 async function digWithTimeout(bot, block) {
     let timer = null;
+    const timeoutMs = digTimeoutMs(bot, block);
     const timeout = new Promise((_, reject) => {
         timer = setTimeout(() => {
             try {
@@ -372,13 +445,78 @@ async function digWithTimeout(bot, block) {
                 // Mineflayer may already have cleared the digging state.
             }
             reject(new Error(`Timed out digging ${block.name} ${block.position.toString()}`));
-        }, 10000);
+        }, timeoutMs);
     });
 
     try {
         await Promise.race([bot.dig(block), timeout]);
+    } catch (error) {
+        const current = bot.blockAt(block.position);
+        if (!current || current.name !== block.name) return;
+        throw error;
     } finally {
         clearTimeout(timer);
+    }
+}
+
+function digTimeoutMs(bot, block) {
+    const digTime = Number(bot.digTime?.(block) || 0);
+    if (!Number.isFinite(digTime) || digTime <= 0) return 8000;
+    return Math.max(8000, Math.min(18000, digTime + 6000));
+}
+
+async function digTreeBlock(bot, block) {
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const current = bot.blockAt(block.position);
+        if (!current || current.name !== block.name) return;
+
+        try {
+            if (!isWithinDigReach(bot, current)) {
+                await approachBlock(bot, current);
+            }
+            await bot.lookAt(current.position.offset(0.5, 0.5, 0.5), true);
+            await digWithTimeout(bot, current);
+            return;
+        } catch (error) {
+            lastError = error;
+            await repositionForTreeBlock(bot, current, attempt);
+        }
+    }
+
+    throw lastError || new Error(`Could not dig ${block.name} ${block.position.toString()}`);
+}
+
+function isWithinDigReach(bot, block) {
+    const eye = bot.entity.position.offset(0, 1.6, 0);
+    return eye.distanceTo(block.position.offset(0.5, 0.5, 0.5)) <= 4.6 &&
+        hasOpenFace(bot, block.position);
+}
+
+async function repositionForTreeBlock(bot, block, attempt) {
+    const target = block.position;
+    const below = target.offset(0, -1, 0);
+    const side = findWorkPosition(bot, target) ||
+        findWorkPosition(bot, below) ||
+        bot.entity.position.floored();
+
+    try {
+        await movement.withTimeout(
+            bot.pathfinder.goto(new goals.GoalNear(side.x, side.y, side.z, 1)),
+            6000,
+            'Timed out repositioning for tree block'
+        );
+    } catch {
+        await nudgeToward(bot, target);
+    }
+
+    await bot.lookAt(target.offset(0.5, 0.5, 0.5), true);
+    if (attempt > 0 && target.y > bot.entity.position.y + 1.4) {
+        bot.setControlState('jump', true);
+        await movement.sleep(350);
+        bot.setControlState('jump', false);
+    } else {
+        await movement.sleep(250);
     }
 }
 

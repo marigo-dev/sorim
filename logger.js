@@ -23,6 +23,10 @@ const DEBUG_PREFIXES = [
     '[PLACE]',
     '[TOOLS]',
     '[SHELTER]',
+    '[SMELT]',
+    '[BUILD]',
+    '[COLONY]',
+    '[SHARED]',
     '[STORAGE]',
     '[FOOD]',
     '[MEMORY]'
@@ -37,7 +41,8 @@ const WARN_PREFIXES = [
 ];
 
 const ERROR_PREFIXES = [
-    '[FATAL]'
+    '[FATAL]',
+    '[COLONY_FATAL]'
 ];
 
 function installConsoleFilter() {

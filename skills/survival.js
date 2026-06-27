@@ -7,6 +7,7 @@ const memory = require('./memory');
 
 const HOSTILES = new Set([
     'zombie',
+    'zombie_villager',
     'skeleton',
     'creeper',
     'spider',
@@ -22,9 +23,17 @@ const NIGHT_BLOCKED_LEVELS = new Set([
     'L11_STABLE_SURVIVAL'
 ]);
 
+const MELEE_HOSTILES = new Set([
+    'zombie',
+    'zombie_villager',
+    'spider',
+    'drowned',
+    'husk'
+]);
+
 function chooseImmediateAction(bot, observation, level = null) {
-    const hostile = nearestHostile(bot, 8);
-    if (hostile && (observation.health <= 16 || hostile.distance <= 4)) {
+    const hostile = nearestHostile(bot, 10);
+    if (hostile && (observation.health <= 18 || hostile.distance <= 7)) {
         return {
             action: 'fight_mob',
             entityId: hostile.id,
@@ -39,7 +48,11 @@ function chooseImmediateAction(bot, observation, level = null) {
         };
     }
 
-    if (observation.food <= 8 && food.foodScore(observation.inventory) === 0) {
+    if (
+        observation.food <= 8 &&
+        food.foodScore(observation.inventory) === 0 &&
+        !food.isTemporarilyUnavailable()
+    ) {
         return {
             action: 'find_food',
             reason: 'No food and hunger is critical'
@@ -119,8 +132,10 @@ function shouldEscapePit(bot, observation) {
 }
 
 function shouldReachSurfaceForWork(bot, observation, level) {
+    if (level?.id === 'L7_BUILD_SAFE_SHELTER' && !memory.hasBase()) {
+        return bot.entity.position.y < 69 || !hasOpenSkyAbove(bot);
+    }
     if (bot.entity.position.y >= 58) return false;
-    if (level?.id === 'L7_BUILD_SAFE_SHELTER' && !memory.hasBase()) return true;
     if (
         level?.id === 'L11_STABLE_SURVIVAL' &&
         woodUnits(observation.inventory) < 2
@@ -130,29 +145,157 @@ function shouldReachSurfaceForWork(bot, observation, level) {
     return false;
 }
 
+function hasOpenSkyAbove(bot) {
+    const feet = bot.entity.position.floored();
+    for (let y = 1; y <= 8; y++) {
+        if (!isAir(bot.blockAt(feet.offset(0, y, 0)))) return false;
+    }
+    return true;
+}
+
 async function fightMob(bot, entityId) {
     const entity = bot.entities[entityId] || nearestHostile(bot, 10)?.entity;
     if (!entity) return;
 
-    console.log(`[SURVIVAL] fighting ${entity.name}`);
-    await tools.equipBestWeapon(bot);
-    for (let i = 0; i < 10 && entity.isValid !== false && bot.health > 0; i++) {
-        const distance = entity.position.distanceTo(bot.entity.position);
-        if (entity.name === 'creeper' && distance < 4) {
-            await backAway(bot, entity.position);
+    const targetName = entityName(entity);
+    console.log(`[SURVIVAL] fighting ${targetName}`);
+    const weapon = await tools.equipBestWeapon(bot);
+    if (!weapon) {
+        console.log(`[SURVIVAL] no weapon for ${targetName}; using bare hands defensively`);
+        await retreatFromThreat(bot, entity, 4);
+        return;
+    }
+
+    if (targetName === 'creeper') {
+        await retreatFromThreat(bot, entity, 4);
+        return;
+    }
+
+    if (targetName === 'skeleton' || targetName === 'stray') {
+        await handleRangedThreat(bot, entity, weapon);
+        return;
+    }
+
+    if (!MELEE_HOSTILES.has(targetName) && bot.health <= 16) {
+        await retreatFromThreat(bot, entity, 3);
+        return;
+    }
+
+    for (let i = 0; i < 8 && bot.health > 0; i++) {
+        const liveEntity = bot.entities[entity.id];
+        if (!liveEntity || liveEntity.isValid === false) return;
+
+        const name = entityName(liveEntity);
+        if (bot.health <= 9) {
+            await retreatFromThreat(bot, liveEntity, 3);
+            return;
+        }
+
+        if (name === 'creeper') {
+            await retreatFromThreat(bot, liveEntity, 4);
+            return;
+        }
+
+        const distance = liveEntity.position.distanceTo(bot.entity.position);
+        if (distance > 7) return;
+        if (distance > 3.0) {
+            try {
+                await movement.moveNear(bot, liveEntity.position, 2, 1400);
+            } catch {
+                await retreatFromThreat(bot, liveEntity, 2);
+                return;
+            }
+        }
+        bot.lookAt(liveEntity.position.offset(0, 1.2, 0), true).catch(() => {});
+        bot.attack(liveEntity);
+        if (i % 2 === 1) {
+            await backAway(bot, liveEntity.position);
+        }
+        await movement.sleep(450);
+    }
+}
+
+async function handleRangedThreat(bot, entity, weapon) {
+    const hasShield = bot.inventory.items().some(item => item.name === 'shield');
+    const hasArmor = armorScore(bot) >= 2;
+
+    if (hasShield) await equipShield(bot);
+
+    for (let i = 0; i < 8 && bot.health > 0; i++) {
+        const liveEntity = bot.entities[entity.id];
+        if (!liveEntity || liveEntity.isValid === false) return;
+
+        const distance = liveEntity.position.distanceTo(bot.entity.position);
+        if (bot.health <= 12 && !hasShield) {
+            await retreatFromThreat(bot, liveEntity, 4);
+            return;
+        }
+
+        if (!weapon && !hasShield && !hasArmor) {
+            await retreatFromThreat(bot, liveEntity, 4);
+            return;
+        }
+
+        if (distance > 8 && !hasShield) return;
+
+        if (distance > 2.8) {
+            await strafeApproach(bot, liveEntity.position);
             continue;
         }
-        if (distance > 3.2) {
-            await movement.moveNear(bot, entity.position, 2, 5000);
-        }
-        bot.attack(entity);
-        await movement.sleep(550);
+
+        bot.lookAt(liveEntity.position.offset(0, 1.25, 0), true).catch(() => {});
+        bot.attack(liveEntity);
+        await backAway(bot, liveEntity.position);
+    }
+}
+
+async function equipShield(bot) {
+    const shield = bot.inventory.items().find(item => item.name === 'shield');
+    if (!shield) return;
+    try {
+        await bot.equip(shield, 'off-hand');
+    } catch {
+        // Off-hand support varies across protocol shims; fighting can continue without it.
+    }
+}
+
+function armorScore(bot) {
+    const slots = bot.inventory.slots.filter(Boolean);
+    return slots.filter(item =>
+        /_(helmet|chestplate|leggings|boots)$/.test(item.name)
+    ).length;
+}
+
+async function strafeApproach(bot, targetPosition) {
+    try {
+        await bot.lookAt(targetPosition.offset(0, 1.2, 0), true);
+        bot.setControlState('forward', true);
+        bot.setControlState('sprint', true);
+        bot.setControlState(Math.random() > 0.5 ? 'left' : 'right', true);
+        bot.setControlState('jump', true);
+        await movement.sleep(650);
+    } finally {
+        bot.clearControlStates();
+    }
+}
+
+async function retreatFromThreat(bot, entity, steps) {
+    for (let i = 0; i < steps; i++) {
+        const liveEntity = bot.entities[entity.id];
+        await backAway(bot, liveEntity?.position || entity.position);
+        if (!liveEntity || liveEntity.position.distanceTo(bot.entity.position) > 9) return;
     }
 }
 
 async function escapePit(bot) {
     const origin = bot.entity.position.floored();
     console.log(`[SURVIVAL] escaping pit ${origin.toString()}`);
+
+    const surfaceExit = memory.getSurfaceExit();
+    if (surfaceExit) {
+        const reached = await climbTowardSurfaceExit(bot, new Vec3(surfaceExit.x, surfaceExit.y, surfaceExit.z));
+        if (reached) return;
+    }
 
     const exits = findNearbyExits(bot, origin);
     for (const exit of exits) {
@@ -165,6 +308,95 @@ async function escapePit(bot) {
     }
 
     await pillarUp(bot);
+}
+
+async function climbTowardSurfaceExit(bot, exit) {
+    const startY = bot.entity.position.y;
+    for (let i = 0; i < 8; i++) {
+        const current = bot.entity.position.floored();
+        if (current.y >= exit.y - 1 && current.distanceTo(exit) <= 4) {
+            console.log(`[SURVIVAL] reached surface exit area ${current.toString()}`);
+            return true;
+        }
+
+        const dx = Math.abs(exit.x - current.x) >= Math.abs(exit.z - current.z)
+            ? Math.sign(exit.x - current.x)
+            : 0;
+        const dz = dx === 0 ? Math.sign(exit.z - current.z) : 0;
+        const horizontal = current.offset(dx || 1, 0, dz);
+        const next = current.y < exit.y - 1
+            ? horizontal.offset(0, 1, 0)
+            : horizontal;
+
+        await clearStandSpace(bot, next);
+        await ensureStepFloor(bot, next.offset(0, -1, 0));
+
+        try {
+            await movement.moveNear(bot, next, 1, 2500);
+        } catch {
+            await jumpForward(bot);
+        }
+
+        if (bot.entity.position.y > startY + 0.6) return true;
+    }
+    return false;
+}
+
+async function clearStandSpace(bot, position) {
+    await digIfNeeded(bot, position);
+    await digIfNeeded(bot, position.offset(0, 1, 0));
+    await digIfNeeded(bot, position.offset(0, 2, 0));
+}
+
+async function ensureStepFloor(bot, position) {
+    const floor = bot.blockAt(position);
+    if (floor?.boundingBox === 'block') return;
+    const item = bot.inventory.items().find(entry =>
+        ['dirt', 'cobblestone', 'oak_planks', 'birch_planks'].includes(entry.name)
+    );
+    if (!item) return;
+
+    const reference = findPlacementReference(bot, position);
+    if (!reference) return;
+    try {
+        await bot.equip(item, 'hand');
+        await bot.lookAt(position.offset(0.5, 0.5, 0.5), true);
+        await bot.placeBlock(reference.block, reference.face);
+        await movement.sleep(150);
+    } catch {
+        // The next movement attempt may still find a natural floor.
+    }
+}
+
+async function digIfNeeded(bot, position) {
+    const block = bot.blockAt(position);
+    if (!block || isAir(block) || !bot.canDigBlock(block)) return;
+    await tools.equipBestTool(bot, 'pickaxe');
+    try {
+        await bot.lookAt(position.offset(0.5, 0.5, 0.5), true);
+        await movement.withTimeout(bot.dig(block), 6000, `Timed out clearing ${block.name}`);
+    } catch {
+        try {
+            bot.stopDigging();
+        } catch {
+            // Dig state may already be clear.
+        }
+    }
+}
+
+function findPlacementReference(bot, target) {
+    const options = [
+        { offset: new Vec3(0, -1, 0), face: new Vec3(0, 1, 0) },
+        { offset: new Vec3(1, 0, 0), face: new Vec3(-1, 0, 0) },
+        { offset: new Vec3(-1, 0, 0), face: new Vec3(1, 0, 0) },
+        { offset: new Vec3(0, 0, 1), face: new Vec3(0, 0, -1) },
+        { offset: new Vec3(0, 0, -1), face: new Vec3(0, 0, 1) }
+    ];
+    for (const option of options) {
+        const block = bot.blockAt(target.plus(option.offset));
+        if (block?.boundingBox === 'block') return { block, face: option.face };
+    }
+    return null;
 }
 
 async function returnBase(bot) {
@@ -202,15 +434,48 @@ async function sleepInBed(bot) {
 
 function nearestHostile(bot, radius) {
     return Object.values(bot.entities || {})
-        .filter(entity => HOSTILES.has(entity.name))
+        .filter(entity => isHostileEntity(entity))
         .filter(entity => entity.position && entity.position.distanceTo(bot.entity.position) <= radius)
         .map(entity => ({
             id: entity.id,
-            name: entity.name,
+            name: entityName(entity),
             distance: entity.position.distanceTo(bot.entity.position),
             entity
         }))
         .sort((a, b) => a.distance - b.distance)[0] || null;
+}
+
+function isHostileEntity(entity) {
+    const name = entityName(entity);
+    if (HOSTILES.has(name)) return true;
+    if (entity.type !== 'mob') return false;
+    return ![
+        'cow',
+        'pig',
+        'sheep',
+        'chicken',
+        'horse',
+        'donkey',
+        'cat',
+        'wolf',
+        'villager',
+        'cod',
+        'salmon',
+        'tropical_fish',
+        'pufferfish',
+        'squid',
+        'glow_squid',
+        'turtle',
+        'frog',
+        'item'
+    ].includes(name);
+}
+
+function entityName(entity) {
+    return String(entity.name || entity.mobType || entity.displayName || entity.type || 'unknown')
+        .toLowerCase()
+        .replace(/^minecraft:/, '')
+        .replace(/\s+/g, '_');
 }
 
 function isNight(bot) {

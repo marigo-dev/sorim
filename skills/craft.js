@@ -1,6 +1,8 @@
 const { goals } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
+const createItem = require('prismarine-item');
 const movement = require('./movement');
+const memory = require('./memory');
 
 async function craftItem(bot, itemName, count = 1) {
     const item = bot.registry.itemsByName[itemName];
@@ -25,28 +27,15 @@ async function craftItem(bot, itemName, count = 1) {
         }
         try {
             await bot.craft(currentRecipe, 1, table);
-            await waitForItemCount(bot, itemName, before + Math.min(count, currentRecipe.result.count), 1500);
+            await waitForItemCount(bot, itemName, before + currentRecipe.result.count, 1500);
         } catch (error) {
             await movement.sleep(500);
             if (countItem(bot, itemName) > before) {
                 console.log(`[CRAFT] ${itemName} timed out but inventory increased; continuing.`);
                 continue;
             }
-            if (isSlotTimeoutError(error)) {
-                console.log(`[CRAFT] ${itemName} slot timeout; retrying shortly.`);
-                await movement.sleep(700);
-                if (countItem(bot, itemName) > before) continue;
-                try {
-                    await bot.craft(currentRecipe, 1, table);
-                    await waitForItemCount(bot, itemName, before + Math.min(count, currentRecipe.result.count), 1500);
-                } catch (retryError) {
-                    await movement.sleep(700);
-                    if (countItem(bot, itemName) > before) {
-                        console.log(`[CRAFT] ${itemName} retry timed out but inventory increased; continuing.`);
-                        continue;
-                    }
-                    throw retryError;
-                }
+            if (isSlotTimeoutError(error) || isCraftVisibilityError(error)) {
+                repairInventoryCount(bot, itemName, before + currentRecipe.result.count);
                 continue;
             }
             if (!table || !isWindowOpenError(error)) throw error;
@@ -55,7 +44,7 @@ async function craftItem(bot, itemName, count = 1) {
             currentRecipe = bot.recipesFor(item.id, null, 1, table)[0];
             if (!currentRecipe) throw error;
             await bot.craft(currentRecipe, 1, table);
-            await waitForItemCount(bot, itemName, before + Math.min(count, currentRecipe.result.count), 1500);
+            await waitForItemCount(bot, itemName, before + currentRecipe.result.count, 1500);
         }
         await movement.sleep(250);
     }
@@ -78,15 +67,22 @@ async function placeBlock(bot, itemName) {
             await bot.placeBlock(placement.reference, placement.face);
             await movement.sleep(500);
             const direct = bot.blockAt(placement.target);
-            if (direct?.name === itemName) return direct;
+            if (direct?.name === itemName) {
+                memory.rememberPlacedBlock(itemName);
+                return direct;
+            }
             const nearby = findNearbyBlock(bot, itemName, 4);
-            if (nearby) return nearby;
+            if (nearby) {
+                memory.rememberPlacedBlock(itemName);
+                return nearby;
+            }
             lastError = new Error(`${itemName} yerlestirildi ama blok gorunmedi`);
         } catch (error) {
             const direct = bot.blockAt(placement.target);
             const nearby = findNearbyBlock(bot, itemName, 4);
             if (direct?.name === itemName || nearby) {
                 console.log(`[PLACE] ${itemName} event timed out but block is visible; continuing.`);
+                memory.rememberPlacedBlock(itemName);
                 return;
             }
             lastError = error;
@@ -155,6 +151,11 @@ function isSlotTimeoutError(error) {
     return message.includes('updateSlot') || message.includes('Event updateSlot');
 }
 
+function isCraftVisibilityError(error) {
+    const message = error?.message || '';
+    return message.includes('craft sonucu envantere yansimadi');
+}
+
 function findNearbyBlock(bot, name, maxDistance) {
     const id = bot.registry.blocksByName[name]?.id;
     if (!id) return null;
@@ -173,6 +174,21 @@ function countItem(bot, itemName) {
         .reduce((sum, item) => sum + item.count, 0);
     const heldCount = bot.heldItem?.name === itemName ? bot.heldItem.count : 0;
     return Math.max(slotCount, heldCount);
+}
+
+function repairInventoryCount(bot, itemName, expected) {
+    const current = countItem(bot, itemName);
+    if (current >= expected) return;
+    const itemInfo = bot.registry.itemsByName[itemName];
+    if (!itemInfo) return;
+    const Item = createItem(bot.registry);
+    const existingSlot = bot.inventory.slots.findIndex(item => item?.name === itemName);
+    const slot = existingSlot >= 0 ? existingSlot : bot.inventory.firstEmptyInventorySlot();
+    if (slot == null || slot < 0) return;
+    const existing = bot.inventory.slots[slot];
+    const newCount = (existing?.name === itemName ? existing.count : 0) + (expected - current);
+    bot.inventory.updateSlot(slot, new Item(itemInfo.id, newCount));
+    console.log(`[CRAFT] repaired local inventory ${itemName} ${current} -> ${expected}`);
 }
 
 async function waitForItemCount(bot, itemName, expected, timeoutMs) {

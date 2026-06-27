@@ -15,7 +15,9 @@ Minecraft world -> perception -> AI brain -> tool call -> safety validation -> s
 Main parts:
 
 - `bot.js`: connects to Minecraft, observes the world, runs the agent loop, and executes tool calls.
+- `colony.js`: runs two cooperating agents with shared tasks and storage.
 - `llm.js`: talks to Ollama or an OpenAI-compatible API and asks the AI brain for the next tool call.
+- `protocol26Shim.js`: experimental native Minecraft 26.2 protocol compatibility layer.
 - `toolRegistry.js`: defines the body tools the AI is allowed to use and maps tool calls to Mineflayer skills.
 - `skillTree.js`: provides curriculum context and safe fallback decisions when AI output is invalid or unavailable.
 - `skills/`: low-level body abilities such as mining, crafting, movement, food, survival, shelter, and storage.
@@ -30,6 +32,12 @@ The AI does not directly control Mineflayer APIs. It chooses from explicit tools
 - `fight_mob`
 - `return_base`
 - `organize_storage`
+- `prepare_mining_kit`
+- `mine_iron`
+- `smelt_item`
+- `craft_iron_kit`
+- `build_blueprint`
+- `ensure_shared_storage`
 
 Example AI tool call:
 
@@ -47,7 +55,7 @@ The safety supervisor can override the AI when survival is urgent, for example w
 
 ## Current Status
 
-The current AI-agent foundation focuses on early survival:
+The current AI-agent foundation includes:
 
 - collect wood
 - craft planks, sticks, crafting table, and wooden pickaxe
@@ -55,10 +63,13 @@ The current AI-agent foundation focuses on early survival:
 - craft stone pickaxe, stone axe, and stone sword
 - build a basic shelter
 - run simple survival checks for hunger, mobs, pits, night, and storage
+- prepare a mining kit, mine iron, smelt items, and craft an iron kit
+- execute creative-mode blueprints and showcase builds
+- run two-agent colony experiments with shared storage
 - ask an LLM for decisions when enabled
 - fall back to safe deterministic behavior when an AI response is invalid
 
-This is not yet a full human-level Minecraft player. The architecture is intentionally modular so each survival skill and each AI decision layer can be improved independently.
+The early survival chain has been exercised in live runs through stone tools. Native 26.2 inventory packets, long autonomous runs, and the complete iron-age chain are still experimental. This is not yet a full human-level Minecraft player.
 
 ## Requirements
 
@@ -158,7 +169,7 @@ Restart the server after changing `server.properties`.
 
 ## 4. Version Compatibility
 
-Mineflayer may not always support the newest Minecraft protocol immediately. The bot defaults to:
+Mineflayer may not always support the newest Minecraft protocol immediately. The stable default is:
 
 ```text
 MC_VERSION=1.21
@@ -170,6 +181,18 @@ If your Paper server is newer, install these plugins in `mc-server/plugins/`:
 - ViaBackwards
 
 Then restart the server. This lets the bot connect with an older supported protocol while the server runs a newer build.
+
+### Experimental native 26.2 mode
+
+Sorim also contains a local protocol shim for connecting without ViaVersion or ViaBackwards:
+
+```powershell
+$env:MC_VERSION='26.2'
+$env:ENABLE_EXPERIMENTAL_26_2='true'
+npm start
+```
+
+This mode is under active development. Basic connection and early survival actions work, but inventory component decoding can still fail on packet shapes that Mineflayer does not yet understand. Use the 1.21 bridge setup for repeatable survival testing.
 
 ## 5. Choose An AI Provider
 
@@ -213,11 +236,18 @@ LLM_PROVIDER=ollama OLLAMA_MODEL=qwen3:4b npm start
 Expected behavior:
 
 - bot joins as `marigo`
+- bot waits for an in-game start command
 - searches for wood
 - crafts basic tools
 - collects cobblestone
 - builds a basic shelter
 - starts routine survival maintenance
+
+Start autonomous planning in chat:
+
+```text
+marigo otonom basla
+```
 
 Default Ollama endpoint:
 
@@ -279,6 +309,8 @@ Core:
 | `MC_USERNAME` | `marigo` | Bot username |
 | `LOOP_DELAY_MS` | `1500` | Main loop delay |
 | `LOG_LEVEL` | `info` | `silent`, `error`, `warn`, `info`, or `debug` |
+| `AUTONOMOUS_ON_START` | `false` | Start planning immediately instead of waiting for chat |
+| `ENABLE_EXPERIMENTAL_26_2` | `false` | Enable the native 26.2 protocol shim |
 
 LLM:
 
@@ -293,8 +325,24 @@ LLM:
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible base URL |
 | `OPENAI_API_KEY` | empty | API key for OpenAI-compatible provider |
 | `OPENAI_MODEL` | `gpt-4.1-mini` | OpenAI-compatible model |
+| `USE_LLM_PLANNER` | `false` | Let the LLM select high-level tools; deterministic fallback remains active |
 
-## 9. Logs
+Copy `.env.example` values into your shell or preferred environment loader as a starting point. Node.js does not automatically load this file.
+
+## 9. Colony Mode
+
+Run the two-agent experiment:
+
+```powershell
+$env:COLONY_ALPHA='marigo_alpha'
+$env:COLONY_BETA='marigo_beta'
+$env:COLONY_CENTER='1800,70,0'
+npm run colony
+```
+
+The colony runtime coordinates roles, shared tasks, a common build center, and shared storage. It is an MVP experiment rather than the default solo progression mode.
+
+## 10. Logs
 
 Default:
 
@@ -319,7 +367,7 @@ LOG_LEVEL=debug npm start
 
 Debug mode prints movement, crafting, mining, storage, and survival loop details.
 
-## 10. In-Game Chat
+## 11. In-Game Chat
 
 The bot responds when its name is mentioned.
 
@@ -328,6 +376,10 @@ Examples:
 ```text
 marigo status
 marigo durum
+marigo otonom basla
+marigo otonom dur
+marigo beni takip et
+marigo agac kes
 ```
 
 Status returns:
@@ -338,7 +390,7 @@ Status returns:
 - hunger
 - inventory summary
 
-## 11. Test Checklist
+## 12. Test Checklist
 
 After starting the server and bot, watch for this sequence:
 
@@ -358,7 +410,7 @@ $env:LOG_LEVEL='debug'
 npm start
 ```
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 ### Bot cannot connect
 
@@ -397,15 +449,16 @@ This mode is not the main project direction; it is useful for checking whether m
 
 The skill tree validates all AI actions. If the model returns bad JSON, the bot falls back to safe behavior for that loop. Use a low temperature and a model that follows JSON instructions well.
 
-## 13. Repository Notes
+## 14. Repository Notes
 
 The repository intentionally excludes:
 
 - `node_modules/`
 - runtime logs
-- local memory files under `data/`
+- local memory files under `data/` and `memory/`
 - Minecraft world files
 - downloaded server jars
+- local 26.2 test server files
 
 Older experimental code can remain under:
 

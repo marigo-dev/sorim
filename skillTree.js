@@ -10,6 +10,7 @@ const LOG_ITEMS = [
 ];
 
 const food = require('./skills/food');
+const iron = require('./skills/iron');
 
 const FOOD_VALUES = {
     bread: 5,
@@ -30,22 +31,25 @@ const FOOD_VALUES = {
 const LEVELS = [
     {
         id: 'L1_COLLECT_WOOD',
-        goal: 'Collect at least 6 logs. Search for trees and cut trunk logs.',
+        goal: 'Collect at least 4 logs. Search for trees and cut trunk logs.',
         allowedActions: ['mine', 'explore', 'idle'],
-        complete: (observation, tree) => tree.progress.maxWoodUnits >= 6
+        complete: (observation, tree) => tree.progress.maxWoodUnits >= 4
     },
     {
         id: 'L2_CRAFT_PLANKS',
-        goal: 'Craft at least 24 planks from logs; reserve enough for tools, shelter, and storage.',
+        goal: 'Craft at least 16 planks from logs; unlock the early tool chain.',
         allowedActions: ['craft', 'idle'],
-        complete: (observation, tree) => tree.progress.maxPlanks >= 24
+        complete: (observation, tree) => tree.progress.maxPlanks >= 16
     },
     {
         id: 'L3_CRAFT_TABLE',
         goal: 'Craft and place one crafting table.',
         allowedActions: ['craft', 'place', 'idle'],
         complete: (observation, tree) =>
+            (observation.inventory.wooden_pickaxe || 0) >= 1 ||
+            hasStoneTools(observation.inventory) ||
             tree.progress.hasCraftingTable ||
+            observation.hasPlacedCraftingTable === true ||
             observation.nearbyBlocks.some(block => block.name === 'crafting_table' && block.distance <= 16)
     },
     {
@@ -93,6 +97,42 @@ const LEVELS = [
         goal: 'Place a chest near the base and organize excess inventory.',
         allowedActions: ['organize_storage', 'idle'],
         complete: observation => observation.hasUsableChest === true
+    },
+    {
+        id: 'L12_PREPARE_MINING_KIT',
+        goal: 'Prepare furnace, fuel, torches, food, stone tools, and block stock for iron mining.',
+        allowedActions: ['prepare_mining_kit', 'eat_food', 'find_food', 'mine', 'craft', 'idle'],
+        complete: observation => hasMiningKit(observation)
+    },
+    {
+        id: 'L13_SAFE_IRON_MINE',
+        goal: 'Open a controlled stair mine from base, place torches, and search for iron.',
+        allowedActions: ['mine_iron', 'eat_food', 'organize_storage', 'idle'],
+        complete: observation =>
+            rawIronPotential(observation.inventory) >= 16 ||
+            iron.hasIronCoreKit(observation.inventory)
+    },
+    {
+        id: 'L14_COLLECT_RAW_IRON',
+        goal: 'Collect enough raw iron for iron tools, shield, and an 8 ingot reserve.',
+        allowedActions: ['mine_iron', 'eat_food', 'organize_storage', 'idle'],
+        complete: observation =>
+            rawIronPotential(observation.inventory) >= 17 ||
+            iron.hasIronCoreKit(observation.inventory)
+    },
+    {
+        id: 'L15_SMELT_IRON',
+        goal: 'Smelt raw iron into iron ingots using furnace and fuel.',
+        allowedActions: ['smelt_item', 'prepare_mining_kit', 'idle'],
+        complete: observation =>
+            (observation.inventory.iron_ingot || 0) >= 17 ||
+            iron.hasIronCoreKit(observation.inventory)
+    },
+    {
+        id: 'L16_CRAFT_IRON_KIT',
+        goal: 'Craft iron pickaxe, sword, axe, shield, then iron armor as ingots allow.',
+        allowedActions: ['craft_iron_kit', 'craft', 'idle'],
+        complete: observation => iron.hasIronCoreKit(observation.inventory)
     }
 ];
 
@@ -119,6 +159,10 @@ class SkillTree {
                     'eat_food',
                     'find_food',
                     'organize_storage',
+                    'prepare_mining_kit',
+                    'mine_iron',
+                    'smelt_item',
+                    'craft_iron_kit',
                     'idle'
                 ],
                 complete: () => false
@@ -138,9 +182,9 @@ class SkillTree {
                 };
             }
             return {
-                action: 'explore',
-                target: 'wood',
-                reason: 'Level 1: find wood'
+                action: 'mine',
+                target: 'any_log',
+                reason: 'Level 1: search and cut the nearest tree'
             };
         }
 
@@ -149,7 +193,7 @@ class SkillTree {
             return {
                 action: 'craft',
                 item: plankForLog(logName || 'oak_log'),
-                count: 24 - totalPlanks(inventory),
+                count: 16 - totalPlanks(inventory),
                 reason: 'Level 2: craft planks'
             };
         }
@@ -229,7 +273,60 @@ class SkillTree {
             };
         }
 
+        if (level.id === 'L12_PREPARE_MINING_KIT') {
+            if (foodScore(inventory) < 16 && !food.isTemporarilyUnavailable()) {
+                return {
+                    action: 'find_food',
+                    reason: 'Level 12: collect food before mining'
+                };
+            }
+            return {
+                action: 'prepare_mining_kit',
+                reason: 'Level 12: prepare furnace, fuel, torches, and blocks'
+            };
+        }
+
+        if (level.id === 'L13_SAFE_IRON_MINE') {
+            return {
+                action: 'mine_iron',
+                count: 16,
+                reason: 'Level 13: open safe mine and find first iron'
+            };
+        }
+
+        if (level.id === 'L14_COLLECT_RAW_IRON') {
+            return {
+                action: 'mine_iron',
+                count: 17,
+                reason: 'Level 14: collect enough raw iron for kit and reserve'
+            };
+        }
+
+        if (level.id === 'L15_SMELT_IRON') {
+            return {
+                action: 'smelt_item',
+                input: 'raw_iron',
+                output: 'iron_ingot',
+                count: Math.max(1, Math.min(8, 17 - (inventory.iron_ingot || 0))),
+                reason: 'Level 15: smelt raw iron into ingots'
+            };
+        }
+
+        if (level.id === 'L16_CRAFT_IRON_KIT') {
+            return {
+                action: 'craft_iron_kit',
+                reason: 'Level 16: craft iron tools, shield, and armor'
+            };
+        }
+
         if (level.id === 'L11_STABLE_SURVIVAL') {
+            if (!iron.hasIronCoreKit(inventory)) {
+                return {
+                    action: 'prepare_mining_kit',
+                    reason: 'Routine: advance toward iron age'
+                };
+            }
+
             if (foodScore(inventory) < 16 && !food.isTemporarilyUnavailable()) {
                 return {
                     action: 'find_food',
@@ -296,6 +393,10 @@ class SkillTree {
         if (action.action === 'escape_pit') return action;
         if (action.action === 'return_base') return action;
         if (action.action === 'organize_storage') return action;
+        if (action.action === 'prepare_mining_kit') return action;
+        if (action.action === 'mine_iron') return action;
+        if (action.action === 'smelt_item') return action;
+        if (action.action === 'craft_iron_kit') return action;
         if (action.action === 'craft' && typeof action.item === 'string') return action;
         if (action.action === 'place' && typeof action.item === 'string') return action;
 
@@ -337,6 +438,9 @@ class SkillTree {
         ) {
             this.progress.hasCraftingTable = true;
         }
+        if (observation.hasPlacedCraftingTable === true) {
+            this.progress.hasCraftingTable = true;
+        }
     }
 }
 
@@ -376,13 +480,33 @@ function foodScore(inventory) {
         .reduce((sum, [name, count]) => sum + (FOOD_VALUES[name] || 0) * count, 0);
 }
 
+function hasMiningKit(observation) {
+    const inventory = observation.inventory;
+    if (iron.hasIronCoreKit(inventory)) return true;
+    const hasFurnace = (inventory.furnace || 0) > 0 ||
+        observation.nearbyBlocks.some(block => block.name === 'furnace' && block.distance <= 16) ||
+        (inventory.charcoal || 0) > 0;
+    const hasFuel = (inventory.coal || 0) > 0 ||
+        (inventory.charcoal || 0) > 0 ||
+        totalLogs(inventory) > 0;
+    const hasTools = (inventory.stone_pickaxe || 0) > 0 &&
+        ((inventory.stone_sword || 0) > 0 || (inventory.iron_sword || 0) > 0);
+    const hasBlocks = ((inventory.cobblestone || 0) + (inventory.dirt || 0)) >= 16;
+    const hasFood = foodScore(inventory) >= 16 || food.isTemporarilyUnavailable();
+    return hasFurnace && hasFuel && (inventory.torch || 0) >= 16 && hasTools && hasBlocks && hasFood;
+}
+
+function rawIronPotential(inventory) {
+    return (inventory.raw_iron || 0) + (inventory.iron_ingot || 0);
+}
+
 function shouldOrganizeInventory(inventory, observation) {
     if (observation.hasUsableChest !== true) return false;
     if (observation.storageReady === false) return false;
     const itemTypes = Object.keys(inventory).length;
     const disposable = ['egg', 'oak_sapling', 'oak_door', 'dirt', 'cobblestone']
         .some(name => (inventory[name] || 0) > keepRoutineCount(name));
-    return itemTypes >= 8 || disposable;
+    return itemTypes >= 12 || disposable;
 }
 
 function keepRoutineCount(itemName) {

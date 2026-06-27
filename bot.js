@@ -1,4 +1,5 @@
 require('./logger').installConsoleFilter();
+require('./protocol26Shim');
 
 const mineflayer = require('mineflayer');
 const { pathfinder } = require('mineflayer-pathfinder');
@@ -16,6 +17,7 @@ const HOST = process.env.MC_HOST || 'localhost';
 const PORT = Number(process.env.MC_PORT || 25565);
 const VERSION = process.env.MC_VERSION || '1.21';
 const LOOP_DELAY_MS = Number(process.env.LOOP_DELAY_MS || 1500);
+const USE_LLM_PLANNER = process.env.USE_LLM_PLANNER === 'true';
 
 const bot = mineflayer.createBot({
     host: HOST,
@@ -24,6 +26,7 @@ const bot = mineflayer.createBot({
     version: VERSION
 });
 
+install26_2MetadataShim(bot);
 bot.loadPlugin(pathfinder);
 
 const skillTree = new SkillTree();
@@ -39,6 +42,8 @@ let lastError = null;
 bot.once('spawn', async () => {
     console.log(`[BOOT] ${BOT_NAME} spawned. AI body runtime started.`);
     movement.configure(bot);
+    install26_2AttackShim(bot);
+    await sleep(3000);
     loop().catch(error => {
         console.log('[FATAL]', error.message);
         shutdown();
@@ -49,6 +54,7 @@ bot.on('chat', async (username, message) => {
     if (username === bot.username) return;
     const lower = message.toLowerCase();
     if (!lower.includes(BOT_NAME.toLowerCase()) && !lower.includes('marigo')) return;
+    if (looksLikeAdminCommand(lower)) return;
 
     const observation = observe();
     if (lower.includes('status') || lower.includes('durum')) {
@@ -110,15 +116,6 @@ async function loop() {
         try {
             const observation = observe();
             const level = skillTree.getLevel(observation);
-            const immediate = survival.chooseImmediateAction(bot, observation, level);
-            if (immediate) {
-                const safetyCall = toolRegistry.normalizeToolCall(immediate);
-                console.log(`[SAFETY] tool=${JSON.stringify(safetyCall)} inv=${observation.inventoryText}`);
-                await toolRegistry.executeToolCall(bot, safetyCall);
-                lastError = null;
-                continue;
-            }
-
             if (queuedUserCommand) {
                 const commandCall = queuedUserCommand;
                 queuedUserCommand = null;
@@ -144,21 +141,37 @@ async function loop() {
                 continue;
             }
 
-            const availableTools = toolRegistry.toolsForLevel(level);
-            const aiCall = await askForToolCall({
-                level,
-                observation,
-                tools: availableTools
-            });
-            const validAiCall = toolRegistry.validateToolCall(
-                toolRegistry.normalizeToolCall(aiCall),
-                availableTools
-            );
-            const source = validAiCall ? 'ai' : 'fallback';
-            if (aiCall && !validAiCall) {
-                console.log(`[AI_REJECTED] level=${level.id} raw=${JSON.stringify(aiCall)}`);
+            const immediate = survival.chooseImmediateAction(bot, observation, level);
+            if (immediate) {
+                const safetyCall = toolRegistry.normalizeToolCall(immediate);
+                console.log(`[SAFETY] tool=${JSON.stringify(safetyCall)} inv=${observation.inventoryText}`);
+                await toolRegistry.executeToolCall(bot, safetyCall);
+                lastError = null;
+                continue;
             }
-            const toolCall = validAiCall || toolRegistry.fallbackToolCall(skillTree, observation, level);
+
+            const availableTools = toolRegistry.toolsForLevel(level);
+            let source = 'fallback';
+            let toolCall = null;
+
+            if (USE_LLM_PLANNER) {
+                const aiCall = await askForToolCall({
+                    level,
+                    observation,
+                    tools: availableTools
+                });
+                const validAiCall = toolRegistry.validateToolCall(
+                    toolRegistry.normalizeToolCall(aiCall),
+                    availableTools
+                );
+                source = validAiCall ? 'ai' : 'fallback';
+                if (aiCall && !validAiCall) {
+                    console.log(`[AI_REJECTED] level=${level.id} raw=${JSON.stringify(aiCall)}`);
+                }
+                toolCall = validAiCall;
+            }
+
+            toolCall = toolCall || toolRegistry.fallbackToolCall(skillTree, observation, level);
 
             console.log(`[AI_LOOP] source=${source} level=${level.id} tool=${JSON.stringify(toolCall)} inv=${observation.inventoryText}`);
             await toolRegistry.executeToolCall(bot, toolCall);
@@ -209,11 +222,59 @@ function observe() {
         nearbyBlocks,
         nearbyMobs,
         hasUsableChest: storage.hasChestNearby(bot),
+        hasPlacedCraftingTable: memory.hasPlacedBlock('crafting_table'),
+        hasPlacedFurnace: memory.hasPlacedBlock('furnace'),
         storageReady: !storage.isTemporarilyUnavailable(),
         base: memory.getBase(),
         survivalReady: true,
         lastError
     };
+}
+
+function install26_2AttackShim(bot) {
+    if (VERSION !== '26.2' && process.env.ENABLE_EXPERIMENTAL_26_2 !== 'true') return;
+    if (bot._marigo26_2AttackShimInstalled || typeof bot.attack !== 'function') return;
+    bot._marigo26_2AttackShimInstalled = true;
+    const originalAttack = bot.attack.bind(bot);
+
+    bot.attack = function attack26_2(target, swing = true) {
+        if (!target?.id || !bot._client) return originalAttack(target, swing);
+        if (swing) bot.swingArm();
+        bot._client.write('attack', { entityId: target.id });
+    };
+}
+
+function install26_2MetadataShim(bot) {
+    if (VERSION !== '26.2' && process.env.ENABLE_EXPERIMENTAL_26_2 !== 'true') return;
+    const client = bot._client;
+    if (!client || client._marigo26_2MetadataShimInstalled) return;
+
+    const originalEmit = client.emit.bind(client);
+    client.emit = function emitWithMetadataFallback(eventName, packet, ...args) {
+        if (eventName === 'entity_metadata' && packet && !Array.isArray(packet.metadata)) {
+            packet.metadata = [];
+        }
+        if (
+            (eventName === 'set_slot' && !isUsableNotchItem(packet?.item)) ||
+            (eventName === 'set_player_inventory' && !isUsableNotchItem(packet?.contents)) ||
+            (eventName === 'window_items' && (
+                !Array.isArray(packet?.items) ||
+                packet.items.some(item => !isUsableNotchItem(item))
+            ))
+        ) {
+            return false;
+        }
+        return originalEmit(eventName, packet, ...args);
+    };
+    client._marigo26_2MetadataShimInstalled = true;
+}
+
+function isUsableNotchItem(item) {
+    return Boolean(item) && (
+        typeof item.present === 'boolean' ||
+        typeof item.itemId === 'number' ||
+        typeof item.itemCount === 'number'
+    );
 }
 
 function countInventory() {
@@ -238,7 +299,8 @@ function scanUsefulBlocks(maxDistance) {
     const names = [
         'oak_log', 'birch_log', 'spruce_log', 'jungle_log',
         'acacia_log', 'dark_oak_log', 'cherry_log', 'mangrove_log',
-        'stone', 'cobblestone', 'crafting_table', 'chest'
+        'stone', 'cobblestone', 'coal_ore', 'iron_ore', 'deepslate_iron_ore',
+        'crafting_table', 'furnace', 'chest', 'torch'
     ];
     const ids = names
         .map(name => bot.registry.blocksByName[name]?.id)
@@ -273,7 +335,7 @@ function parseUserCommand(username, lowerMessage) {
     ])) {
         return {
             type: 'help',
-            reply: 'Komutlar: beni takip et, dur, odun topla/agac kes, tas topla, yemek bul, otonom basla, otonom dur, durum.'
+            reply: 'Komutlar: beni takip et, dur, odun topla/agac kes, tas topla, yemek bul, build showcase, build <isim>, otonom basla, otonom dur, durum.'
         };
     }
 
@@ -370,6 +432,37 @@ function parseUserCommand(username, lowerMessage) {
     }
 
     if (includesAny(message, [
+        'build showcase',
+        'showcase build',
+        'hepsini yap',
+        'tum buildleri yap',
+        'tüm buildleri yap'
+    ])) {
+        return {
+            type: 'tool',
+            toolCall: {
+                tool: 'build_showcase',
+                args: {},
+                reason: `Player ${username} requested creative build showcase`
+            },
+            reply: 'Tamam, creative showcase alanini kuruyorum.'
+        };
+    }
+
+    const buildMatch = message.match(/\b(?:build|inşa|insa|yap)\s+([a-z0-9_-]+)/i);
+    if (buildMatch) {
+        return {
+            type: 'tool',
+            toolCall: {
+                tool: 'build_blueprint',
+                args: { name: buildMatch[1] },
+                reason: `Player ${username} requested blueprint ${buildMatch[1]}`
+            },
+            reply: `${buildMatch[1]} blueprintini creative modda kuruyorum.`
+        };
+    }
+
+    if (includesAny(message, [
         'yemek bul',
         'food',
         'find food'
@@ -386,6 +479,31 @@ function parseUserCommand(username, lowerMessage) {
     }
 
     return null;
+}
+
+function looksLikeAdminCommand(lowerMessage) {
+    const stripped = lowerMessage.replace(BOT_NAME.toLowerCase(), '').replace('marigo', '').trim();
+    const firstWord = stripped.split(/\s+/)[0];
+    return [
+        'op',
+        'deop',
+        'tp',
+        'teleport',
+        'clear',
+        'give',
+        'fill',
+        'setblock',
+        'difficulty',
+        'gamerule',
+        'time',
+        'weather',
+        'kill',
+        'effect',
+        'gamemode',
+        'summon'
+    ].includes(firstWord) ||
+        ['gave', 'removed', 'teleported', 'changed', 'set', 'made', 'killed', 'applied']
+            .includes(firstWord);
 }
 
 function applyUserCommand(command) {
@@ -429,7 +547,17 @@ function applyUserCommand(command) {
 }
 
 function includesAny(message, needles) {
-    return needles.some(needle => message.includes(needle));
+    return needles.some(needle => {
+        if (!needle.includes(' ') && /^[a-z0-9_]+$/i.test(needle)) {
+            return new RegExp(`(^|[^a-z0-9_])${escapeRegExp(needle)}([^a-z0-9_]|$)`, 'i')
+                .test(message);
+        }
+        return message.includes(needle);
+    });
+}
+
+function escapeRegExp(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function isExpectedMovementCancel(error) {

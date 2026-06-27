@@ -7,8 +7,22 @@ const KEEP_ITEMS = new Set([
     'stone_pickaxe',
     'stone_axe',
     'stone_sword',
+    'iron_pickaxe',
+    'iron_axe',
+    'iron_sword',
+    'iron_helmet',
+    'iron_chestplate',
+    'iron_leggings',
+    'iron_boots',
+    'shield',
     'wooden_pickaxe',
-    'crafting_table'
+    'crafting_table',
+    'furnace',
+    'torch',
+    'coal',
+    'charcoal',
+    'raw_iron',
+    'iron_ingot'
 ]);
 
 const FOOD_ITEMS = new Set([
@@ -41,6 +55,7 @@ const LOG_TO_PLANKS = {
 let storageRetryAfter = 0;
 
 async function organizeStorage(bot) {
+    await returnNearBase(bot);
     const chestBlock = await ensureChest(bot);
     if (!chestBlock) throw new Error('Could not place chest');
 
@@ -67,6 +82,19 @@ async function organizeStorage(bot) {
         }
     } finally {
         chest.close();
+    }
+}
+
+async function returnNearBase(bot) {
+    const base = memory.getBase();
+    if (!base) return;
+    const target = new Vec3(base.x, base.y, base.z);
+    if (bot.entity.position.distanceTo(target) <= 5) return;
+    try {
+        console.log(`[STORAGE] returning to base ${target.toString()}`);
+        await movement.moveNear(bot, target, 2, 15000);
+    } catch (error) {
+        console.log(`[STORAGE] could not return to base: ${error.message}`);
     }
 }
 

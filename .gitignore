@@ -11,6 +11,7 @@ yarn-error.log*
 
 # Local runtime state
 data/
+memory/
 *.bak
 
 # Minecraft server/runtime files
@@ -41,6 +42,7 @@ mc-server/banned-ips.json
 # Nested experimental bot copy inside local server folder
 mc-server/bot/node_modules/
 mc-server/bot/data/
+mc-server-26-2-test/
 
 # OS/editor noise
 .DS_Store
