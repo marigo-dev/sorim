@@ -8,6 +8,7 @@ const food = require('./food');
 const shelter = require('./shelter');
 const memory = require('./memory');
 const actionControl = require('./actionControl');
+const survival = require('./survival');
 
 const IRON_ORES = ['iron_ore', 'deepslate_iron_ore'];
 const LOG_ITEMS = ['oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log', 'cherry_log', 'mangrove_log'];
@@ -49,12 +50,14 @@ async function mineIron(bot, targetRawIron = 16) {
         memory.setSurfaceExit(start);
         memory.setMineRoute(route);
     }
-    const direction = directionForRoute(route) ||
+    const direction = directionTowardKnownIron(bot) || directionForRoute(route) ||
         MINE_DIRECTIONS[mineDirectionIndex++ % MINE_DIRECTIONS.length];
     console.log(`[IRON_MINE] target raw_iron=${target} start=${start.toString()}`);
 
     try {
         for (let step = 0; step < 80 && countItem(bot, 'raw_iron') < target; step++) {
+            actionControl.assertActive(bot, actionVersion);
+            await collectLooseDrops(bot, 3);
             actionControl.assertActive(bot, actionVersion);
             if (bot.food <= 12 && food.foodScore(countInventory(bot)) > 0) {
                 await food.eatBestFood(bot);
@@ -93,38 +96,75 @@ async function mineIron(bot, targetRawIron = 16) {
     }
 }
 
+async function returnToSurface(bot) {
+    const route = memory.getMineRoute();
+    if (route.length === 0) {
+        await shelter.returnToBase(bot);
+        return;
+    }
+    const actionVersion = actionControl.snapshot(bot);
+    const returned = await returnMiningRoute(bot, route, actionVersion);
+    if (!returned) {
+        await survival.escapePit(bot);
+        if (memory.getMineRoute().length === 0) {
+            await returnTowardBase(bot, new Vec3(route[0].x, route[0].y, route[0].z));
+            return;
+        }
+        throw new Error(`Mine return incomplete at ${bot.entity.position.floored().toString()}`);
+    }
+    await returnTowardBase(bot, new Vec3(route[0].x, route[0].y, route[0].z));
+    memory.clearMineRoute();
+    memory.clearSurfaceExit();
+}
+
 async function ensureFurnace(bot) {
     if (countItem(bot, 'furnace') > 0 || findNearbyBlock(bot, 'furnace', 16)) return;
     if (countItem(bot, 'cobblestone') < 8) {
         await stone.collectStone(bot, 8 - countItem(bot, 'cobblestone'));
     }
     if (countItem(bot, 'cobblestone') < 8) throw new Error('Furnace icin 8 cobblestone toplanamadi');
+    await ensurePlanks(bot, 4);
     await craft.craftItem(bot, 'furnace', 1);
 }
 
 async function ensureFuel(bot, minimum = 1) {
     if (fuelCount(bot) >= minimum) return;
-    const coal = findReachableBlock(bot, 'coal_ore', 24);
-    if (coal) {
-        try {
-            await mine.mineBlock(bot, { target: 'coal_ore', expectedDrop: 'coal' });
-        } catch (error) {
-            console.log(`[MINING] coal fallback to charcoal: ${error.message}`);
-        }
+    const coalCandidates = findReachableBlocks(bot, 'coal_ore', 24);
+    for (const coal of coalCandidates) {
         if (fuelCount(bot) >= minimum) return;
+        try {
+            await mine.mineSpecificBlock(bot, coal, 'coal');
+        } catch (error) {
+            console.log(`[MINING] coal candidate skipped ${coal.position.toString()}: ${error.message}`);
+        }
     }
-    while (fuelCount(bot) < minimum) {
-        await ensureCharcoal(bot);
-    }
+    if (fuelCount(bot) >= minimum) return;
+    console.log('[MINING] reachable coal exhausted; preparing charcoal.');
+    await ensureCharcoal(bot, minimum - fuelCount(bot));
 }
 
-async function ensureCharcoal(bot) {
-    while (totalLogs(bot) < 2) {
+async function ensureCharcoal(bot, amount = 1) {
+    while (!hasCharcoalMaterials(bot, amount)) {
         await mine.mineBlock(bot, { target: 'any_log' });
     }
-    const currentLog = LOG_ITEMS.find(name => countItem(bot, name) > 0);
-    if (!currentLog) throw new Error('Charcoal icin log bulunamadi');
-    await smelting.smeltItem(bot, currentLog, 'charcoal', 1);
+    let remaining = amount;
+    for (const logName of LOG_ITEMS) {
+        if (remaining <= 0) break;
+        const available = countItem(bot, logName);
+        if (available <= 0) continue;
+        const batch = Math.min(remaining, available);
+        await smelting.smeltItem(bot, logName, 'charcoal', batch);
+        remaining -= batch;
+    }
+    if (remaining > 0) throw new Error(`Charcoal icin ${remaining} log eksik`);
+}
+
+function hasCharcoalMaterials(bot, amount) {
+    const externalFuel = countItem(bot, 'coal') + countItem(bot, 'charcoal') +
+        PLANK_ITEMS.reduce((sum, name) => sum + countItem(bot, name), 0);
+    const fuelLogs = externalFuel > 0 ? 0 : Math.ceil(amount / 1.5);
+    const requiredLogs = amount + fuelLogs;
+    return totalLogs(bot) >= requiredLogs;
 }
 
 async function ensureTorches(bot, minimum) {
@@ -147,11 +187,17 @@ async function ensureBlocks(bot, minimum) {
 }
 
 async function ensurePlanks(bot, minimum) {
-    if (PLANK_ITEMS.reduce((sum, name) => sum + countItem(bot, name), 0) >= minimum) return;
-    const log = LOG_ITEMS.find(name => countItem(bot, name) > 0);
-    if (!log) await mine.mineBlock(bot, { target: 'any_log' });
-    const currentLog = LOG_ITEMS.find(name => countItem(bot, name) > 0);
-    if (currentLog) await craft.craftItem(bot, currentLog.replace(/_log$/, '_planks'), 4);
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const plankCount = PLANK_ITEMS.reduce((sum, name) => sum + countItem(bot, name), 0);
+        if (plankCount >= minimum) return;
+        let log = LOG_ITEMS.find(name => countItem(bot, name) > 0);
+        if (!log) {
+            await mine.mineBlock(bot, { target: 'any_log' });
+            log = LOG_ITEMS.find(name => countItem(bot, name) > 0);
+        }
+        if (log) await craft.craftItem(bot, log.replace(/_log$/, '_planks'), 4);
+    }
+    throw new Error(`Plank reserve could not reach ${minimum}`);
 }
 
 async function mineOre(bot, ore) {
@@ -165,6 +211,11 @@ async function mineOre(bot, ore) {
 
     const current = bot.blockAt(ore.position);
     if (!current || !IRON_ORES.includes(current.name)) return;
+    const reach = bot.entity.position.offset(0, 1.65, 0)
+        .distanceTo(current.position.offset(0.5, 0.5, 0.5));
+    if (reach > 4.5) {
+        throw new Error(`Iron ore remains out of reach (${reach.toFixed(2)})`);
+    }
     await bot.lookAt(current.position.offset(0.5, 0.5, 0.5), true);
     await digWithTimeout(bot, current);
     await collectNearby(bot, 'raw_iron', before, current.position);
@@ -253,12 +304,27 @@ async function returnMiningRoute(bot, route, actionVersion) {
     let index = nearestRouteIndex(bot, route);
     console.log(`[IRON_MINE] returning route points=${index + 1}`);
 
+    const anchor = new Vec3(route[index].x, route[index].y, route[index].z);
+    if (!bot.entity.position.floored().equals(anchor)) {
+        try {
+            await movement.moveBlock(bot, anchor, 6500);
+        } catch {
+            movement.stop(bot);
+            await nudgeToward(bot, anchor);
+        }
+        if (bot.entity.position.distanceTo(anchor.offset(0.5, 0, 0.5)) > 2.5) {
+            console.log(`[IRON_MINE] could not reconnect to route at ${anchor.toString()}`);
+            return false;
+        }
+    }
+
     for (index -= 1; index >= 0; index--) {
         actionControl.assertActive(bot, actionVersion);
         const target = new Vec3(route[index].x, route[index].y, route[index].z);
         try {
             await movement.moveBlock(bot, target, 6500);
         } catch {
+            movement.stop(bot);
             await nudgeToward(bot, target);
         }
         if (bot.entity.position.distanceTo(target.offset(0.5, 0, 0.5)) > 2.5) {
@@ -279,16 +345,21 @@ function findReachableIronOre(bot) {
         .map(position => bot.blockAt(position))
         .filter(Boolean)
         .filter(block => hasOpenFace(bot, block.position))
+        .filter(block => block.position.distanceTo(bot.entity.position) <= 5)
         .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))[0] || null;
 }
 
-function findReachableBlock(bot, name, maxDistance) {
+function findReachableBlocks(bot, name, maxDistance) {
     const id = bot.registry.blocksByName[name]?.id;
-    if (!id) return null;
+    if (!id) return [];
     return bot.findBlocks({ matching: id, maxDistance, count: 16 })
         .map(position => bot.blockAt(position))
         .filter(Boolean)
-        .filter(block => hasOpenFace(bot, block.position))[0] || null;
+        .filter(block => hasOpenFace(bot, block.position))
+        .sort((left, right) =>
+            left.position.distanceTo(bot.entity.position) -
+            right.position.distanceTo(bot.entity.position)
+        );
 }
 
 function findNearbyBlock(bot, name, maxDistance) {
@@ -306,6 +377,7 @@ async function equipPickaxe(bot) {
 }
 
 async function digWithTimeout(bot, block) {
+    if (bot.version === '26.2' && await digWithProtocol(bot, block)) return;
     let timer = null;
     const timeoutMs = digTimeoutMs(bot, block);
     const timeout = new Promise((_, reject) => {
@@ -325,6 +397,22 @@ async function digWithTimeout(bot, block) {
     }
 }
 
+async function digWithProtocol(bot, block) {
+    const duration = Math.max(250, Math.min(5000, Number(bot.digTime?.(block) || 1000) + 250));
+    console.log(`[IRON_MINE] protocol dig ${block.name} ${block.position.toString()} wait=${duration}`);
+    bot._client.write('block_dig', { status: 0, location: block.position, face: 1 });
+    bot.swingArm();
+    await movement.sleep(duration);
+    bot._client.write('block_dig', { status: 2, location: block.position, face: 1 });
+
+    const deadline = Date.now() + 2200;
+    while (Date.now() < deadline) {
+        if (bot.blockAt(block.position)?.name !== block.name) return true;
+        await movement.sleep(100);
+    }
+    return false;
+}
+
 function digTimeoutMs(bot, block) {
     const digTime = Number(bot.digTime?.(block) || 0);
     if (!Number.isFinite(digTime) || digTime <= 0) return 22000;
@@ -340,12 +428,33 @@ async function collectNearby(bot, itemName, before, origin) {
             .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))[0];
         if (drop) {
             try {
-                await movement.moveNear(bot, drop.position, 1, 4000);
+                await movement.moveBlock(bot, drop.position.floored(), 3500);
             } catch {
+                movement.stop(bot);
                 await nudgeToward(bot, drop.position);
             }
         }
         await movement.sleep(250);
+    }
+}
+
+async function collectLooseDrops(bot, maximum) {
+    for (let attempt = 0; attempt < maximum; attempt++) {
+        const drop = Object.values(bot.entities || {})
+            .filter(entity => entity.name === 'item' && entity.position)
+            .filter(entity => entity.position.distanceTo(bot.entity.position) <= 16)
+            .sort((left, right) =>
+                left.position.distanceTo(bot.entity.position) -
+                right.position.distanceTo(bot.entity.position)
+            )[0];
+        if (!drop) return;
+        try {
+            await movement.moveBlock(bot, drop.position.floored(), 3500);
+        } catch {
+            movement.stop(bot);
+            await nudgeToward(bot, drop.position);
+        }
+        await movement.sleep(350);
     }
 }
 
@@ -388,6 +497,23 @@ function directionForRoute(route) {
         const dz = Math.sign(route[index].z - route[index - 1].z);
         if (dx || dz) return new Vec3(dx, 0, dz);
     }
+    return null;
+}
+
+function directionTowardKnownIron(bot) {
+    const ids = IRON_ORES.map(name => bot.registry.blocksByName[name]?.id).filter(Boolean);
+    if (ids.length === 0) return null;
+    const nearest = bot.findBlocks({ matching: ids, maxDistance: 24, count: 64 })
+        .sort((left, right) =>
+            left.distanceTo(bot.entity.position) - right.distanceTo(bot.entity.position)
+        )[0];
+    if (!nearest) return null;
+    const dx = nearest.x - bot.entity.position.x;
+    const dz = nearest.z - bot.entity.position.z;
+    if (Math.abs(dx) >= Math.abs(dz) && Math.abs(dx) > 1) {
+        return new Vec3(Math.sign(dx), 0, 0);
+    }
+    if (Math.abs(dz) > 1) return new Vec3(0, 0, Math.sign(dz));
     return null;
 }
 
@@ -460,5 +586,6 @@ function isAir(block) {
 
 module.exports = {
     prepareMiningKit,
-    mineIron
+    mineIron,
+    returnToSurface
 };

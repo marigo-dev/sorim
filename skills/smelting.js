@@ -4,7 +4,16 @@ const movement = require('./movement');
 const memory = require('./memory');
 const actionControl = require('./actionControl');
 
-const FUEL_ITEMS = ['coal', 'charcoal', 'oak_log', 'birch_log', 'spruce_log', 'oak_planks', 'birch_planks'];
+const FUEL_ITEMS = [
+    'coal',
+    'charcoal',
+    'oak_planks',
+    'birch_planks',
+    'spruce_planks',
+    'oak_log',
+    'birch_log',
+    'spruce_log'
+];
 
 async function ensureFurnace(bot) {
     const nearby = findNearbyBlock(bot, 'furnace', 16);
@@ -39,6 +48,14 @@ async function ensureFurnace(bot) {
                 return visible;
             }
         } catch (error) {
+            const direct = bot.blockAt(placement.target);
+            const visible = findNearbyBlock(bot, 'furnace', 4);
+            if (direct?.name === 'furnace' || visible) {
+                const furnace = direct?.name === 'furnace' ? direct : visible;
+                memory.rememberPlacedBlock('furnace');
+                console.log(`[SMELT] furnace placement confirmed after timeout ${furnace.position.toString()}`);
+                return furnace;
+            }
             console.log(`[SMELT] furnace placement failed: ${error.message}`);
         }
     }
@@ -53,8 +70,7 @@ async function smeltItem(bot, inputName, outputName, count = 1) {
     const input = bot.inventory.items().find(item => item.name === inputName);
     if (!input) throw new Error(`${inputName} yok`);
 
-    await movement.moveNear(bot, furnaceBlock.position, 3, 10000);
-    const furnace = await bot.openFurnace(furnaceBlock);
+    const furnace = await openFurnaceSafely(bot, furnaceBlock);
     try {
         await takeOutputIfPresent(furnace);
         await clearDifferentInput(furnace, inputName);
@@ -64,7 +80,85 @@ async function smeltItem(bot, inputName, outputName, count = 1) {
         await waitForOutput(bot, furnace, outputName, count, actionVersion);
     } finally {
         furnace.close();
+        await movement.sleep(750);
     }
+}
+
+async function openFurnaceSafely(bot, furnaceBlock) {
+    let lastError = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            await moveWithinFurnaceReach(bot, furnaceBlock, attempt);
+            const distance = blockReachDistance(bot, furnaceBlock);
+            console.log(
+                `[SMELT] opening furnace attempt=${attempt + 1} distance=${distance.toFixed(2)} ` +
+                `bot=${bot.entity.position.toString()} block=${furnaceBlock.position.toString()}`
+            );
+            await bot.lookAt(furnaceBlock.position.offset(0.5, 0.5, 0.5), true);
+            return await bot.openFurnace(furnaceBlock);
+        } catch (error) {
+            lastError = error;
+            movement.stop(bot);
+            console.log(`[SMELT] furnace open attempt ${attempt + 1} failed: ${error.message}`);
+        }
+    }
+    throw lastError || new Error('Furnace acilamadi');
+}
+
+async function moveWithinFurnaceReach(bot, furnaceBlock, attempt) {
+    if (blockReachDistance(bot, furnaceBlock) <= 4.3) return;
+    console.log(
+        `[SMELT] approaching furnace bot=${bot.entity.position.floored().toString()} ` +
+        `block=${furnaceBlock.position.toString()}`
+    );
+    const stands = furnaceStandPositions(bot, furnaceBlock.position);
+    const target = stands[Math.min(attempt, stands.length - 1)];
+    if (target) {
+        try {
+            await movement.moveBlock(bot, target, 7000);
+        } catch {
+            movement.stop(bot);
+            await approachFurnaceDirectly(bot, furnaceBlock);
+        }
+    } else {
+        try {
+            await movement.moveNear(bot, furnaceBlock.position, 2, 8000);
+        } catch {
+            movement.stop(bot);
+            await approachFurnaceDirectly(bot, furnaceBlock);
+        }
+    }
+    if (blockReachDistance(bot, furnaceBlock) > 4.5) {
+        throw new Error(`Furnace interaction out of reach (${blockReachDistance(bot, furnaceBlock).toFixed(2)})`);
+    }
+}
+
+async function approachFurnaceDirectly(bot, furnaceBlock) {
+    for (let step = 0; step < 6 && blockReachDistance(bot, furnaceBlock) > 4.3; step++) {
+        await bot.lookAt(furnaceBlock.position.offset(0.5, 0.8, 0.5), true);
+        await movement.manualNudge(bot, 900);
+    }
+}
+
+function furnaceStandPositions(bot, position) {
+    return [
+        position.offset(1, 0, 0),
+        position.offset(-1, 0, 0),
+        position.offset(0, 0, 1),
+        position.offset(0, 0, -1)
+    ].filter(stand => {
+        const feet = bot.blockAt(stand);
+        const head = bot.blockAt(stand.offset(0, 1, 0));
+        const floor = bot.blockAt(stand.offset(0, -1, 0));
+        return isAir(feet) && isAir(head) && floor?.boundingBox === 'block';
+    }).sort((left, right) =>
+        left.distanceTo(bot.entity.position) - right.distanceTo(bot.entity.position)
+    );
+}
+
+function blockReachDistance(bot, block) {
+    return bot.entity.position.offset(0, 1.65, 0)
+        .distanceTo(block.position.offset(0.5, 0.5, 0.5));
 }
 
 async function takeOutputIfPresent(furnace) {
@@ -93,7 +187,7 @@ async function ensureFuel(bot, furnace) {
         .map(name => bot.inventory.items().find(item => item.name === name))
         .find(Boolean);
     if (!fuel) throw new Error('Eritme icin yakit yok');
-    await furnace.putFuel(fuel.type, null, Math.min(fuel.count, fuel.name.endsWith('_log') ? 1 : fuel.count));
+    await furnace.putFuel(fuel.type, null, fuel.count);
 }
 
 async function waitForOutput(bot, furnace, outputName, count, actionVersion) {

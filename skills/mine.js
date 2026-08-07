@@ -36,12 +36,18 @@ async function mineBlock(bot, action) {
                     await movement.moveNear(bot, visibleLog.position, 3, 8000);
                 } catch (error) {
                     actionControl.assertActive(bot, actionVersion);
-                    markFailedTree(visibleLog.position);
-                    console.log(`[TREE] approach failed: ${error.message}`);
-                    await movement.explore(bot, { target: 'wood' });
-                    return;
+                    movement.stop(bot);
+                    console.log(`[TREE] path approach failed, trying direct movement: ${error.message}`);
+                    if (!await approachTreeDirectly(bot, visibleLog.position, actionVersion)) {
+                        markFailedTree(visibleLog.position);
+                        await movement.explore(bot, { target: 'wood' });
+                        return;
+                    }
                 }
-                await chopTree(bot, visibleLog, visibleLog.name);
+                const currentLog = bot.blockAt(visibleLog.position);
+                if (currentLog?.name === visibleLog.name) {
+                    await chopTree(bot, currentLog, visibleLog.name, actionVersion);
+                }
                 return;
             }
             await movement.explore(bot, { target: 'wood' });
@@ -74,6 +80,42 @@ async function mineBlock(bot, action) {
     console.log(`[MINE] ${current.name} ${current.position.toString()}`);
     await digWithTimeout(bot, current);
     await collectDrop(bot, expectedDrop, before, current.position);
+}
+
+async function approachTreeDirectly(bot, position, actionVersion) {
+    let previousDistance = Infinity;
+    for (let attempt = 0; attempt < 5; attempt++) {
+        actionControl.assertActive(bot, actionVersion);
+        const distance = bot.entity.position.distanceTo(position.offset(0.5, 0, 0.5));
+        if (distance <= 4.5) return true;
+        await nudgeToward(bot, position);
+        const nextDistance = bot.entity.position.distanceTo(position.offset(0.5, 0, 0.5));
+        if (nextDistance >= previousDistance - 0.2 && attempt >= 1) break;
+        previousDistance = nextDistance;
+    }
+    return bot.entity.position.distanceTo(position.offset(0.5, 0, 0.5)) <= 4.5;
+}
+
+async function mineSpecificBlock(bot, blockOrPosition, expectedDrop) {
+    const actionVersion = actionControl.snapshot(bot);
+    actionControl.assertActive(bot, actionVersion);
+    const position = blockOrPosition?.position || blockOrPosition;
+    let block = bot.blockAt(position);
+    if (!block || isAir(block)) return false;
+
+    const before = countItem(bot, expectedDrop);
+    await equipBestTool(bot, block);
+    await approachBlock(bot, block);
+    actionControl.assertActive(bot, actionVersion);
+
+    block = bot.blockAt(position);
+    if (!block || isAir(block)) return countItem(bot, expectedDrop) > before;
+    if (!bot.canDigBlock(block)) throw new Error(`${block.name} cannot be dug`);
+
+    console.log(`[MINE] direct ${block.name} ${block.position.toString()}`);
+    await digWithTimeout(bot, block);
+    await collectDrop(bot, expectedDrop, before, block.position);
+    return countItem(bot, expectedDrop) > before;
 }
 
 async function chopTree(bot, baseBlock, expectedDrop, actionVersion = actionControl.snapshot(bot)) {
@@ -350,6 +392,7 @@ async function collectDrop(bot, itemName, before, origin) {
             try {
                 await movement.moveBlock(bot, drop.position.floored(), 2200);
             } catch {
+                movement.stop(bot);
                 await nudgeToward(bot, drop.position);
             }
         } else {
@@ -366,8 +409,8 @@ async function collectDrop(bot, itemName, before, origin) {
     }
 }
 
-async function collectLooseDrops(bot, itemName, before, origin, radius = 8) {
-    for (let attempt = 0; attempt < 14; attempt++) {
+async function collectLooseDrops(bot, itemName, before, origin, radius = 8, deadline = Infinity) {
+    for (let attempt = 0; attempt < 6 && Date.now() < deadline; attempt++) {
         const drop = Object.values(bot.entities || {})
             .filter(entity => entity.name === 'item')
             .filter(entity => entity.position.distanceTo(origin) <= radius)
@@ -379,6 +422,7 @@ async function collectLooseDrops(bot, itemName, before, origin, radius = 8) {
         try {
             await movement.moveBlock(bot, drop.position.floored(), 3000);
         } catch {
+            movement.stop(bot);
             await nudgeToward(bot, drop.position);
         }
         if (countItem(bot, itemName) > before) before = countItem(bot, itemName);
@@ -391,7 +435,8 @@ function hasNearbyDrop(bot, origin, radius) {
 }
 
 async function patrolTreeDrops(bot, itemName, before, base) {
-    await collectLooseDrops(bot, itemName, before, base, 18);
+    const deadline = Date.now() + 18000;
+    await collectLooseDrops(bot, itemName, before, base, 18, deadline);
     const points = [
         base.offset(1, 0, 0),
         base.offset(-1, 0, 0),
@@ -400,12 +445,14 @@ async function patrolTreeDrops(bot, itemName, before, base) {
     ];
 
     for (const point of points) {
+        if (Date.now() >= deadline) break;
         try {
             await movement.moveNear(bot, point, 1, 3000);
         } catch {
+            movement.stop(bot);
             await nudgeToward(bot, point);
         }
-        await collectLooseDrops(bot, itemName, before, base, 18);
+        await collectLooseDrops(bot, itemName, before, base, 18, deadline);
         before = countItem(bot, itemName);
     }
 }
@@ -490,10 +537,27 @@ async function digWithTimeout(bot, block) {
     } catch (error) {
         const current = bot.blockAt(block.position);
         if (!current || current.name !== block.name) return;
+        if (await digWithProtocolFallback(bot, current)) return;
         throw error;
     } finally {
         clearTimeout(timer);
     }
+}
+
+async function digWithProtocolFallback(bot, block) {
+    const duration = Math.max(250, Math.min(15000, Number(bot.digTime?.(block) || 1000) + 250));
+    console.log(`[MINE] protocol dig fallback ${block.position.toString()} wait=${duration}`);
+    bot._client.write('block_dig', { status: 0, location: block.position, face: 1 });
+    bot.swingArm();
+    await movement.sleep(duration);
+    bot._client.write('block_dig', { status: 2, location: block.position, face: 1 });
+
+    const deadline = Date.now() + 2500;
+    while (Date.now() < deadline) {
+        if (bot.blockAt(block.position)?.name !== block.name) return true;
+        await movement.sleep(100);
+    }
+    return false;
 }
 
 function digTimeoutMs(bot, block) {
@@ -620,5 +684,6 @@ function isAir(block) {
 }
 
 module.exports = {
-    mineBlock
+    mineBlock,
+    mineSpecificBlock
 };

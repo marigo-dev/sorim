@@ -48,6 +48,16 @@ assert.equal(
     'L15_SMELT_IRON'
 );
 assert.equal(
+    new SkillTree().getLevel(observation({ ...miningKit, raw_iron: 9, iron_ingot: 7 })).id,
+    'L15_SMELT_IRON'
+);
+const smeltingTree = new SkillTree();
+assert.equal(smeltingTree.getLevel(observation({ ...miningKit, raw_iron: 17 })).id, 'L15_SMELT_IRON');
+assert.equal(
+    smeltingTree.getLevel(observation({ ...miningKit, raw_iron: 9, iron_ingot: 7 })).id,
+    'L15_SMELT_IRON'
+);
+assert.equal(
     new SkillTree().getLevel(observation({ ...miningKit, iron_ingot: 17 })).id,
     'L16_CRAFT_IRON_KIT'
 );

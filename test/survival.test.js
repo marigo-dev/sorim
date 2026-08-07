@@ -51,6 +51,18 @@ try {
     assert.equal(food.foodCount({ cooked_beef: 2 }), 2);
     assert.equal(food.hasFoodStock({ bread: 16 }), true);
     assert.equal(food.hasFoodStock({ cooked_beef: 2 }), false);
+
+    memory.setBase({ x: 0, y: 100, z: 0 });
+    const underground = makeBot(6000);
+    underground.entity.position = new Vec3(4, 63, 2);
+    assert.equal(
+        survival.chooseImmediateAction(
+            underground,
+            observation(20, { cobblestone: 32 }),
+            { id: 'L10_STORAGE_AND_BASE_MEMORY' }
+        ).action,
+        'escape_pit'
+    );
     console.log('Survival night and hunger priorities passed.');
 } finally {
     memory.flush();

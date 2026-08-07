@@ -10,6 +10,7 @@ const survival = require('./skills/survival');
 const food = require('./skills/food');
 const storage = require('./skills/storage');
 const mining = require('./skills/mining');
+const memory = require('./skills/memory');
 const smelting = require('./skills/smelting');
 const iron = require('./skills/iron');
 const build = require('./skills/build');
@@ -372,6 +373,10 @@ async function executeToolCall(bot, call) {
     }
 
     if (call.tool === 'smelt_item') {
+        if (memory.getMineRoute().length > 0) {
+            await mining.returnToSurface(bot);
+            return;
+        }
         await smelting.smeltItem(
             bot,
             requireString(args.input, 'input'),
@@ -382,6 +387,10 @@ async function executeToolCall(bot, call) {
     }
 
     if (call.tool === 'craft_iron_kit') {
+        if (memory.getMineRoute().length > 0) {
+            await mining.returnToSurface(bot);
+            return;
+        }
         await iron.craftIronKit(bot);
         return;
     }
