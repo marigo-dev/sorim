@@ -8,7 +8,7 @@
     "colony": "node colony.js",
     "check": "node --check bot.js && node --check colony.js && node --check logger.js && node --check llm.js && node --check protocol26Shim.js && node --check toolRegistry.js && node --check skillTree.js && node --check skills/actionControl.js && node --check skills/mine.js && node --check skills/craft.js && node --check skills/movement.js && node --check skills/stone.js && node --check skills/tools.js && node --check skills/shelter.js && node --check skills/survival.js && node --check skills/food.js && node --check skills/homestead.js && node --check skills/storage.js && node --check skills/sharedStorage.js && node --check skills/memory.js && node --check skills/colonyMemory.js && node --check skills/colonyTasks.js && node --check skills/colonyBuild.js && node --check skills/mining.js && node --check skills/smelting.js && node --check skills/iron.js && node --check skills/build.js",
     "test:protocol": "node test/protocol26Shim.test.js",
-    "test:core": "node test/skillTree.test.js && node test/memory.test.js && node test/survival.test.js && node test/homestead.test.js && node test/ironProgression.test.js",
+    "test:core": "node test/skillTree.test.js && node test/memory.test.js && node test/survival.test.js && node test/movement.test.js && node test/homestead.test.js && node test/ironProgression.test.js",
     "test": "npm run check && npm run test:protocol && npm run test:core"
   },
   "keywords": [

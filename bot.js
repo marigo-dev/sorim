@@ -121,19 +121,18 @@ process.on('SIGTERM', shutdown);
 
 const safetyWatchdog = setInterval(() => {
     if (!running || !autonomousMode || !busy || cancelRequested || !bot.entity || bot.health <= 0) return;
-    if (activeToolName === 'fight_mob') return;
+    if (['fight_mob', 'evade_hostile', 'escape_pit'].includes(activeToolName)) return;
+    if (activeToolName === 'emergency_shelter' || survival.isEmergencyShelter(bot)) return;
     const threat = survival.nearestHostile(bot, 12);
-    if (!threat) return;
+    if (!survival.shouldInterruptForThreat(bot, threat)) return;
 
     console.log(
         `[SAFETY_INTERRUPT] cancelling=${activeToolName || 'unknown'} ` +
         `threat=${threat.name} distance=${threat.distance.toFixed(1)}`
     );
-    pendingSafetyCall = {
-        tool: 'fight_mob',
-        args: { entityId: threat.id },
-        reason: `Reactive threat interrupt: ${threat.name}`
-    };
+    pendingSafetyCall = toolRegistry.normalizeToolCall(
+        survival.chooseThreatAction(bot, threat, bot.health)
+    );
     haltCurrentAction(`hostile ${threat.name}`);
 }, 300);
 safetyWatchdog.unref();
@@ -646,6 +645,7 @@ function shutdown() {
     if (!running) return;
     running = false;
     console.log('[SHUTDOWN] Stopping bot.');
+    haltCurrentAction('shutdown');
     try {
         memory.flush();
     } catch (error) {

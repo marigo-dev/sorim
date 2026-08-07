@@ -513,6 +513,8 @@ class SkillTree {
         if (action.action === 'find_food') return action;
         if (action.action === 'maintain_food_supply') return action;
         if (action.action === 'fight_mob') return action;
+        if (action.action === 'evade_hostile') return action;
+        if (action.action === 'emergency_shelter') return action;
         if (action.action === 'escape_pit') return action;
         if (action.action === 'return_base') return action;
         if (action.action === 'organize_storage') return action;

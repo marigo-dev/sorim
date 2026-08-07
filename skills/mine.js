@@ -26,31 +26,26 @@ async function mineBlock(bot, action) {
     const expectedDrop = action.expectedDrop || (targetName === 'any_log' ? block?.name : expectedDropFor(targetName));
     if (!block) {
         if (targetName === 'any_log' || LOGS.has(targetName)) {
-            const visibleLog = findNearestVisibleLog(bot, targetName);
-            if (
-                visibleLog &&
-                visibleLog.position.distanceTo(bot.entity.position) <= 16
-            ) {
-                console.log(`[TREE] approaching visible ${visibleLog.name} ${visibleLog.position.toString()}`);
-                try {
-                    await movement.moveNear(bot, visibleLog.position, 3, 8000);
-                } catch (error) {
-                    actionControl.assertActive(bot, actionVersion);
-                    movement.stop(bot);
-                    console.log(`[TREE] path approach failed, trying direct movement: ${error.message}`);
-                    if (!await approachTreeDirectly(bot, visibleLog.position, actionVersion)) {
-                        markFailedTree(visibleLog.position);
-                        await movement.explore(bot, { target: 'wood' });
-                        return;
-                    }
-                }
-                const currentLog = bot.blockAt(visibleLog.position);
-                if (currentLog?.name === visibleLog.name) {
-                    await chopTree(bot, currentLog, visibleLog.name, actionVersion);
-                }
+            let visibleLog = findNearestVisibleLog(bot, targetName);
+            if (!visibleLog) {
+                const exploration = await movement.explore(bot, {
+                    target: 'wood',
+                    stopWhen: () => findNearestVisibleLog(bot, targetName)
+                });
+                actionControl.assertActive(bot, actionVersion);
+                visibleLog = exploration?.found || findNearestVisibleLog(bot, targetName);
+            }
+            if (!visibleLog) return;
+
+            console.log(`[TREE] approaching visible ${visibleLog.name} ${visibleLog.position.toString()}`);
+            if (!await approachTreeByWaypoints(bot, visibleLog.position, actionVersion)) {
+                markFailedTree(visibleLog.position);
                 return;
             }
-            await movement.explore(bot, { target: 'wood' });
+            const currentLog = bot.blockAt(visibleLog.position);
+            if (currentLog?.name === visibleLog.name) {
+                await chopTree(bot, currentLog, visibleLog.name, actionVersion);
+            }
             return;
         }
         if (targetName === 'stone' || targetName === 'cobblestone') {
@@ -80,6 +75,51 @@ async function mineBlock(bot, action) {
     console.log(`[MINE] ${current.name} ${current.position.toString()}`);
     await digWithTimeout(bot, current);
     await collectDrop(bot, expectedDrop, before, current.position);
+}
+
+async function approachTreeByWaypoints(bot, position, actionVersion) {
+    let stalled = 0;
+    let previousDistance = horizontalDistance(bot.entity.position, position);
+    for (let step = 0; step < 8 && previousDistance > 10; step++) {
+        actionControl.assertActive(bot, actionVersion);
+        const origin = bot.entity.position;
+        const dx = position.x - origin.x;
+        const dz = position.z - origin.z;
+        const distance = Math.hypot(dx, dz);
+        const stride = Math.min(16, Math.max(6, distance - 7));
+        const waypoint = new Vec3(
+            Math.round(origin.x + dx / distance * stride),
+            Math.floor(origin.y),
+            Math.round(origin.z + dz / distance * stride)
+        );
+        try {
+            await movement.moveNearXZ(bot, waypoint, 3, 10000);
+        } catch (error) {
+            actionControl.assertActive(bot, actionVersion);
+            movement.stop(bot);
+            console.log(`[TREE] waypoint delayed ${waypoint.toString()}: ${error.message}`);
+            await movement.moveTowardSafely(bot, waypoint, 12);
+        }
+
+        const nextDistance = horizontalDistance(bot.entity.position, position);
+        stalled = nextDistance >= previousDistance - 1 ? stalled + 1 : 0;
+        previousDistance = nextDistance;
+        if (stalled >= 2) return false;
+    }
+
+    try {
+        await movement.moveNear(bot, position, 3, 12000);
+        return true;
+    } catch (error) {
+        actionControl.assertActive(bot, actionVersion);
+        movement.stop(bot);
+        console.log(`[TREE] final path approach failed, trying direct movement: ${error.message}`);
+        return approachTreeDirectly(bot, position, actionVersion);
+    }
+}
+
+function horizontalDistance(left, right) {
+    return Math.hypot(left.x - right.x, left.z - right.z);
 }
 
 async function approachTreeDirectly(bot, position, actionVersion) {

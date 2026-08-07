@@ -31,6 +31,8 @@ The AI does not directly control Mineflayer APIs. It chooses from explicit tools
 - `find_food`
 - `maintain_food_supply`
 - `fight_mob`
+- `evade_hostile`
+- `emergency_shelter`
 - `return_base`
 - `organize_storage`
 - `prepare_mining_kit`
@@ -62,11 +64,14 @@ The safety supervisor can override the AI when survival is urgent, for example w
 The current AI-agent foundation includes:
 
 - collect wood
+- scan for trees while exploring, interrupt the route when one appears, and cross uneven terrain using safe local steps
 - craft planks, sticks, crafting table, and wooden pickaxe
 - dig a safe staircase for cobblestone
 - craft stone pickaxe, stone axe, and stone sword
 - build a basic shelter
 - run simple survival checks for hunger, mobs, pits, night, and storage
+- evade unsafe fights when unarmed, while continuing to fight with an appropriate weapon
+- seal a temporary three-block-deep refuge when the first night arrives before a base exists, then climb out in daylight
 - obtain and place a bed, return to it at night, and sleep on the surface
 - create a hydrated wheat farm, expand it as seeds become available, harvest mature crops in batches, and replant seeds
 - maintain a reserve of at least 16 edible items and wait safely at the base while crops grow
@@ -76,7 +81,7 @@ The current AI-agent foundation includes:
 - ask an LLM for decisions when enabled
 - fall back to safe deterministic behavior when an AI response is invalid
 
-The native 26.2 survival chain has been exercised in live runs through shelter, food fallback, persistent base and farm memory, chest storage, bed placement and sleep, a hydrated wheat farm, the complete iron-age crafting chain, and full iron armor. Controlled server-side tests verified expansion to 48 farmland blocks, batched crop harvest and replanting, a 20-bread reserve, the equipped armor, an 8-ingot reserve, hostile detection, iron-sword combat, and survival on Easy difficulty. Long unsupervised runs in naturally generated terrain are still experimental. This is not yet a full human-level Minecraft player.
+The native 26.2 survival chain has been exercised in live runs through shelter, food fallback, persistent base and farm memory, chest storage, bed placement and sleep, a hydrated wheat farm, the complete iron-age crafting chain, and full iron armor. Controlled server-side tests verified expansion to 48 farmland blocks, batched crop harvest and replanting, a 20-bread reserve, the equipped armor, an 8-ingot reserve, hostile detection, iron-sword combat, and survival on Easy difficulty. A fresh natural-terrain run also verified route-time tree detection, safe traversal from a high plains spawn to a forest, and complete chopping of a six-log oak. A separate night test verified emergency refuge construction, protected waiting, and physical pillar-up recovery after sunrise. Long unsupervised runs in naturally generated terrain are still experimental. This is not yet a full human-level Minecraft player.
 
 ## Requirements
 
@@ -397,7 +402,7 @@ Status returns:
 After starting the server and bot, watch for this sequence:
 
 1. Bot joins the server.
-2. Bot finds trees and collects logs.
+2. Bot scans while exploring, safely crosses uneven terrain, finds trees, and collects the complete trunk.
 3. Bot crafts planks, sticks, crafting table, and wooden pickaxe.
 4. Bot digs a safe staircase for stone.
 5. Bot crafts stone pickaxe, stone axe, and stone sword.
@@ -405,12 +410,13 @@ After starting the server and bot, watch for this sequence:
 7. Bot works toward a reserve of 16 edible items, cooks raw food when a furnace and fuel are available, and uses its farm before searching farther away.
 8. Bot places a chest and deposits excess inventory while keeping survival tools and food.
 9. If night arrives and no bed exists, bot reduces risky outdoor tasks.
-10. Bot obtains three matching wool, crafts and places a bed, then sleeps there when night arrives on the surface.
-11. Bot preserves the iron reserve while making a bucket, collects water, creates the first eight hydrated farmland blocks, and plants wheat.
-12. The farm expands toward 48 farmland blocks as seeds become available. Mature wheat is harvested in bounded batches and immediately replanted; while crops grow, the bot waits safely at its base instead of roaming for food.
-13. Bot prepares torches and fuel, mines and smelts enough iron for its core kit and an 8-ingot reserve.
-14. Bot collects the additional armor iron, crafts and equips full iron armor, and keeps the reserve intact.
-15. On Easy difficulty, a nearby hostile interrupts routine work and is fought with the best available weapon.
+10. If the first night arrives before a base exists, the bot seals an emergency refuge and climbs back to the remembered surface after sunrise.
+11. Bot obtains three matching wool, crafts and places a bed, then sleeps there when night arrives on the surface.
+12. Bot preserves the iron reserve while making a bucket, collects water, creates the first eight hydrated farmland blocks, and plants wheat.
+13. The farm expands toward 48 farmland blocks as seeds become available. Mature wheat is harvested in bounded batches and immediately replanted; while crops grow, the bot waits safely at its base instead of roaming for food.
+14. Bot prepares torches and fuel, mines and smelts enough iron for its core kit and an 8-ingot reserve.
+15. Bot collects the additional armor iron, crafts and equips full iron armor, and keeps the reserve intact.
+16. On Easy difficulty, an unarmed bot evades an unsafe fight; once armed, a nearby hostile is fought with the best available weapon.
 
 If the bot gets stuck, restart with debug logs:
 

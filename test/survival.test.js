@@ -13,6 +13,8 @@ function makeBot(timeOfDay) {
     return {
         entity: { position: new Vec3(0, 64, 0) },
         entities: {},
+        inventory: { items: () => [], slots: [] },
+        health: 20,
         time: { timeOfDay },
         registry: { blocksByName: {} },
         findBlocks: () => [],
@@ -30,11 +32,68 @@ function observation(food, inventory = {}) {
 
 try {
     memory.initialize('survival-test', { directory });
+    const firstNight = makeBot(14000);
+    assert.equal(
+        survival.chooseImmediateAction(
+            firstNight,
+            observation(20),
+            { id: 'L1_COLLECT_WOOD' }
+        ).action,
+        'emergency_shelter'
+    );
+    memory.setSurfaceExit({ x: 0, y: 64, z: 0 });
+    const earlyMorningPit = makeBot(6000);
+    earlyMorningPit.entity.position = new Vec3(0, 61, 0);
+    assert.equal(
+        survival.chooseImmediateAction(
+            earlyMorningPit,
+            observation(20, { dirt: 3 }),
+            { id: 'L1_COLLECT_WOOD' }
+        ).action,
+        'escape_pit'
+    );
+    memory.clearSurfaceExit();
     memory.setBase({ x: 0, y: 64, z: 0 });
 
     const night = makeBot(14000);
     const day = makeBot(6000);
     const level = { id: 'L9_FOOD_LOOP' };
+
+    night.entities.spider = {
+        id: 7,
+        name: 'spider',
+        type: 'mob',
+        position: new Vec3(3, 64, 0)
+    };
+    day.entities.spider = { ...night.entities.spider };
+    assert.equal(survival.nearestHostile(day, 10), null);
+    assert.equal(survival.nearestHostile(night, 10).name, 'spider');
+    assert.equal(
+        survival.chooseImmediateAction(night, observation(20), level).action,
+        'evade_hostile'
+    );
+    assert.equal(
+        survival.shouldInterruptForThreat(night, { name: 'zombie', distance: 11 }),
+        false
+    );
+    assert.equal(
+        survival.shouldInterruptForThreat(night, { name: 'zombie', distance: 5 }),
+        true
+    );
+    assert.equal(
+        survival.shouldInterruptForThreat(night, { name: 'skeleton', distance: 11 }),
+        true
+    );
+    night.inventory.items = () => [{ name: 'stone_sword', count: 1 }];
+    assert.equal(
+        survival.shouldInterruptForThreat(night, { name: 'zombie', distance: 9 }),
+        true
+    );
+    assert.equal(
+        survival.chooseImmediateAction(night, observation(20), level).action,
+        'fight_mob'
+    );
+    night.entities = {};
 
     assert.equal(
         survival.chooseImmediateAction(night, observation(8), level).action,

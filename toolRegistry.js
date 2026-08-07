@@ -86,6 +86,18 @@ const TOOL_DEFINITIONS = [
         actions: ['fight_mob']
     },
     {
+        name: 'evade_hostile',
+        description: 'Create safe distance from a hostile when fighting would be reckless.',
+        args: { entityId: 'number optional' },
+        actions: ['evade_hostile']
+    },
+    {
+        name: 'emergency_shelter',
+        description: 'Create a sealed temporary refuge when the first night arrives before a base exists.',
+        args: {},
+        actions: ['emergency_shelter']
+    },
+    {
         name: 'escape_pit',
         description: 'Get out of a pit or cramped hole.',
         args: {},
@@ -214,7 +226,7 @@ function toolsForLevel(level) {
     const allowed = new Set(level.allowedActions);
     return TOOL_DEFINITIONS.filter(tool =>
             tool.actions.some(action => allowed.has(action)) ||
-        ['wait_safe', 'return_base', 'escape_pit', 'fight_mob', 'eat_food'].includes(tool.name)
+        ['wait_safe', 'return_base', 'escape_pit', 'fight_mob', 'evade_hostile', 'emergency_shelter', 'eat_food'].includes(tool.name)
     );
 }
 
@@ -262,6 +274,8 @@ function actionToToolCall(action) {
         find_food: 'find_food',
         maintain_food_supply: 'maintain_food_supply',
         fight_mob: 'fight_mob',
+        evade_hostile: 'evade_hostile',
+        emergency_shelter: 'emergency_shelter',
         escape_pit: 'escape_pit',
         return_base: 'return_base',
         wait_safe: 'wait_safe',
@@ -373,6 +387,16 @@ async function executeToolCall(bot, call) {
 
     if (call.tool === 'fight_mob') {
         await survival.fightMob(bot, args.entityId);
+        return;
+    }
+
+    if (call.tool === 'evade_hostile') {
+        await survival.evadeHostile(bot, args.entityId);
+        return;
+    }
+
+    if (call.tool === 'emergency_shelter') {
+        await survival.buildEmergencyShelter(bot);
         return;
     }
 
