@@ -16,9 +16,11 @@ const toolRegistry = require('./toolRegistry');
 const BOT_NAME = process.env.MC_USERNAME || 'marigo';
 const HOST = process.env.MC_HOST || 'localhost';
 const PORT = Number(process.env.MC_PORT || 25565);
-const VERSION = process.env.MC_VERSION || '1.21';
+const VERSION = process.env.MC_VERSION || '26.2';
 const LOOP_DELAY_MS = Number(process.env.LOOP_DELAY_MS || 1500);
 const USE_LLM_PLANNER = process.env.USE_LLM_PLANNER === 'true';
+
+memory.initialize(BOT_NAME);
 
 const bot = mineflayer.createBot({
     host: HOST,
@@ -104,6 +106,7 @@ bot.on('error', error => console.log('[BOT_ERROR]', error.message));
 bot.on('death', () => {
     console.log('[DEATH] Bot died; cancelling the active action before respawn.');
     pendingSafetyCall = null;
+    memory.clearSurfaceExit();
     haltCurrentAction('death');
 });
 bot.on('end', () => {
@@ -288,6 +291,14 @@ function install26_2MetadataShim(bot) {
     client.emit = function emitWithMetadataFallback(eventName, packet, ...args) {
         if (eventName === 'entity_metadata' && packet && !Array.isArray(packet.metadata)) {
             packet.metadata = [];
+        }
+        if (
+            eventName === 'world_particles' &&
+            (!packet?.particle || typeof packet.particle.type !== 'number')
+        ) {
+            // Particle ids are cosmetic. Ignore unknown 26.2 payloads instead of
+            // letting Mineflayer's older registry interrupt combat and movement.
+            return false;
         }
         if (
             (eventName === 'set_slot' && !isUsableNotchItem(packet?.item)) ||
@@ -627,6 +638,11 @@ function shutdown() {
     if (!running) return;
     running = false;
     console.log('[SHUTDOWN] Stopping bot.');
+    try {
+        memory.flush();
+    } catch (error) {
+        console.log('[MEMORY] shutdown save failed:', error.message);
+    }
     try {
         bot.quit('Goodbye');
     } catch {

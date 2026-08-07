@@ -197,7 +197,7 @@ async function fightMob(bot, entityId) {
         }
 
         const distance = liveEntity.position.distanceTo(bot.entity.position);
-        if (distance > 7) return;
+        if (distance > 12) return;
         if (distance > 3.0) {
             await strafeApproach(bot, liveEntity.position);
             continue;
@@ -222,8 +222,8 @@ async function handleRangedThreat(bot, entity, weapon) {
         if (!liveEntity || liveEntity.isValid === false) return;
 
         const distance = liveEntity.position.distanceTo(bot.entity.position);
-        if (bot.health <= 12 && !hasShield) {
-            await retreatFromThreat(bot, liveEntity, 4);
+        if (bot.health <= 8 && !hasShield) {
+            await retreatFromThreat(bot, liveEntity, 10, 15);
             return;
         }
 
@@ -234,14 +234,15 @@ async function handleRangedThreat(bot, entity, weapon) {
 
         if (distance > 14 && !hasShield) return;
 
-        if (distance > 2.8) {
+        if (distance > 3.4) {
             await strafeApproach(bot, liveEntity.position);
             continue;
         }
 
         await bot.lookAt(liveEntity.position.offset(0, 1.25, 0), true);
         bot.attack(liveEntity);
-        await backAway(bot, liveEntity.position);
+        console.log(`[SURVIVAL] ranged target strike distance=${distance.toFixed(1)}`);
+        await movement.sleep(650);
     }
 }
 
@@ -275,11 +276,11 @@ async function strafeApproach(bot, targetPosition) {
     }
 }
 
-async function retreatFromThreat(bot, entity, steps) {
+async function retreatFromThreat(bot, entity, steps, safeDistance = 9) {
     for (let i = 0; i < steps; i++) {
         const liveEntity = bot.entities[entity.id];
         await backAway(bot, liveEntity?.position || entity.position);
-        if (!liveEntity || liveEntity.position.distanceTo(bot.entity.position) > 9) return;
+        if (!liveEntity || liveEntity.position.distanceTo(bot.entity.position) > safeDistance) return;
     }
 }
 
@@ -388,13 +389,20 @@ async function climbTowardSurfaceExit(bot, exit, actionVersion) {
         await ensureStepFloor(bot, next.offset(0, -1, 0));
 
         try {
-            await movement.moveNear(bot, next, 1, 2500);
+            await movement.moveBlock(bot, next, 4000);
         } catch {
+            movement.stop(bot);
             await bot.lookAt(next.offset(0.5, 1, 0.5), true);
             await jumpForward(bot);
         }
 
+        console.log(
+            `[SURVIVAL] exit step target=${next.toString()} ` +
+            `position=${bot.entity.position.floored().toString()}`
+        );
+
         if (bot.entity.position.y > startY + 0.6) return true;
+        if (bot.entity.position.floored().equals(current)) return false;
     }
     return false;
 }
@@ -611,6 +619,7 @@ async function pillarUp(bot) {
     for (let i = 0; i < 4; i++) {
         const beforeY = bot.entity.position.y;
         const feet = bot.entity.position.floored();
+        await digIfNeeded(bot, feet.offset(0, 1, 0));
         await digIfNeeded(bot, feet.offset(0, 2, 0));
         await digIfNeeded(bot, feet.offset(0, 3, 0));
         await waitForGround(bot, 1000);
@@ -619,6 +628,7 @@ async function pillarUp(bot) {
         let placed = false;
         try {
             await bot.equip(block, 'hand');
+            primeGroundedJump(bot);
             bot.setControlState('jump', true);
             const rose = await waitForRise(bot, beforeY, 0.45, 1200);
             if (!rose) throw new Error('No room to jump for pillar placement');
@@ -637,6 +647,9 @@ async function pillarUp(bot) {
             placed = true;
             await movement.sleep(500);
         } catch (error) {
+            if (bot.entity.position.y >= beforeY + 0.7) {
+                placed = true;
+            }
             console.log(`[SURVIVAL] pillar placement failed: ${error.message}`);
             // A failed placement must not consume the whole survival tick.
         } finally {
@@ -683,11 +696,24 @@ async function backAway(bot, threatPosition) {
 
 async function jumpForward(bot) {
     try {
+        await waitForGround(bot, 700);
+        primeGroundedJump(bot);
         bot.setControlState('forward', true);
         bot.setControlState('jump', true);
-        await movement.sleep(1000);
+        bot.setControlState('sprint', true);
+        await movement.sleep(1800);
     } finally {
         bot.clearControlStates();
+    }
+}
+
+function primeGroundedJump(bot) {
+    const feet = bot.entity.position.floored();
+    const floor = bot.blockAt(feet.offset(0, -1, 0));
+    const verticalSpeed = Math.abs(bot.entity.velocity?.y || 0);
+    if (floor?.boundingBox === 'block' && verticalSpeed < 0.08) {
+        bot.entity.onGround = true;
+        if (bot.entity.velocity) bot.entity.velocity.y = 0.42;
     }
 }
 

@@ -14,7 +14,7 @@ const toolRegistry = require('./toolRegistry');
 
 const HOST = process.env.MC_HOST || 'localhost';
 const PORT = Number(process.env.MC_PORT || 25565);
-const VERSION = process.env.MC_VERSION || '1.21';
+const VERSION = process.env.MC_VERSION || '26.2';
 const CENTER = colonyTasks.parseCenter(process.env.COLONY_CENTER || '1800,70,0');
 const RUNTIME_MS = Number(process.env.COLONY_RUNTIME_MS || 180000);
 const LOOP_DELAY_MS = Number(process.env.COLONY_LOOP_DELAY_MS || 1200);

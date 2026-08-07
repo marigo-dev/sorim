@@ -12,22 +12,6 @@ const LOG_ITEMS = [
 const food = require('./skills/food');
 const iron = require('./skills/iron');
 
-const FOOD_VALUES = {
-    bread: 5,
-    cooked_beef: 8,
-    cooked_porkchop: 8,
-    cooked_mutton: 6,
-    cooked_chicken: 6,
-    beef: 3,
-    porkchop: 3,
-    mutton: 2,
-    chicken: 2,
-    apple: 4,
-    carrot: 3,
-    potato: 1,
-    baked_potato: 5
-};
-
 const LEVELS = [
     {
         id: 'L1_COLLECT_WOOD',
@@ -92,10 +76,10 @@ const LEVELS = [
     },
     {
         id: 'L9_FOOD_LOOP',
-        goal: 'Keep at least 16 food points in reserve; if no food is nearby, temporarily move on.',
+        goal: 'Keep at least 16 edible items in reserve; if no food is nearby, temporarily move on.',
         allowedActions: ['eat_food', 'find_food', 'idle'],
         complete: observation =>
-            foodScore(observation.inventory) >= 16 ||
+            food.hasFoodStock(observation.inventory, 16) ||
             food.isTemporarilyUnavailable()
     },
     {
@@ -297,7 +281,7 @@ class SkillTree {
         }
 
         if (level.id === 'L12_PREPARE_MINING_KIT') {
-            if (foodScore(inventory) < 16 && !food.isTemporarilyUnavailable()) {
+            if (!food.hasFoodStock(inventory, 16) && !food.isTemporarilyUnavailable()) {
                 return {
                     action: 'find_food',
                     reason: 'Level 12: collect food before mining'
@@ -350,7 +334,7 @@ class SkillTree {
                 };
             }
 
-            if (foodScore(inventory) < 16 && !food.isTemporarilyUnavailable()) {
+            if (!food.hasFoodStock(inventory, 16) && !food.isTemporarilyUnavailable()) {
                 return {
                     action: 'find_food',
                     reason: 'Routine: food reserve is low'
@@ -524,8 +508,7 @@ function hasStoneAgeProgress(inventory) {
 }
 
 function foodScore(inventory) {
-    return Object.entries(inventory)
-        .reduce((sum, [name, count]) => sum + (FOOD_VALUES[name] || 0) * count, 0);
+    return food.foodScore(inventory);
 }
 
 function hasMiningKit(observation) {
@@ -540,7 +523,7 @@ function hasMiningKit(observation) {
     const hasTools = (inventory.stone_pickaxe || 0) > 0 &&
         ((inventory.stone_sword || 0) > 0 || (inventory.iron_sword || 0) > 0);
     const hasBlocks = ((inventory.cobblestone || 0) + (inventory.dirt || 0)) >= 16;
-    const hasFood = foodScore(inventory) >= 16 || food.isTemporarilyUnavailable();
+    const hasFood = food.hasFoodStock(inventory, 16) || food.isTemporarilyUnavailable();
     return hasFurnace && hasFuel && (inventory.torch || 0) >= 16 && hasTools && hasBlocks && hasFood;
 }
 

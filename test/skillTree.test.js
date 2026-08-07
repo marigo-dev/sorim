@@ -43,6 +43,22 @@ assert.equal(
     shelterLevel.id,
     'L7_BUILD_SAFE_SHELTER'
 );
+
+const foodStockTree = new SkillTree();
+assert.equal(
+    foodStockTree.getLevel(observation({
+        ...stoneToolInventory,
+        cooked_beef: 2
+    }, { base: { x: 0, y: 70, z: 0 } })).id,
+    'L9_FOOD_LOOP'
+);
+assert.equal(
+    foodStockTree.getLevel(observation({
+        ...stoneToolInventory,
+        apple: 16
+    }, { base: { x: 0, y: 70, z: 0 } })).id,
+    'L10_STORAGE_AND_BASE_MEMORY'
+);
 assert.equal(
     completedStoneTools.getForcedAction(observation(stoneToolInventory), shelterLevel).action,
     'mine'

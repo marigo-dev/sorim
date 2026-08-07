@@ -17,7 +17,7 @@ Main parts:
 - `bot.js`: connects to Minecraft, observes the world, runs the agent loop, and executes tool calls.
 - `colony.js`: runs two cooperating agents with shared tasks and storage.
 - `llm.js`: talks to Ollama or an OpenAI-compatible API and asks the AI brain for the next tool call.
-- `protocol26Shim.js`: experimental native Minecraft 26.2 protocol compatibility layer.
+- `protocol26Shim.js`: native Minecraft 26.2 protocol compatibility layer.
 - `toolRegistry.js`: defines the body tools the AI is allowed to use and maps tool calls to Mineflayer skills.
 - `skillTree.js`: provides curriculum context and safe fallback decisions when AI output is invalid or unavailable.
 - `skills/`: low-level body abilities such as mining, crafting, movement, food, survival, shelter, and storage.
@@ -69,7 +69,7 @@ The current AI-agent foundation includes:
 - ask an LLM for decisions when enabled
 - fall back to safe deterministic behavior when an AI response is invalid
 
-The early survival chain has been exercised in live runs through stone tools. Native 26.2 inventory packets, long autonomous runs, and the complete iron-age chain are still experimental. This is not yet a full human-level Minecraft player.
+The native 26.2 survival chain has been exercised in live runs through shelter, food fallback, persistent base memory, and chest storage. Melee and ranged combat have controlled live tests. Long autonomous runs and the complete iron-age chain are still experimental. This is not yet a full human-level Minecraft player.
 
 ## Requirements
 
@@ -169,30 +169,25 @@ Restart the server after changing `server.properties`.
 
 ## 4. Version Compatibility
 
-Mineflayer may not always support the newest Minecraft protocol immediately. The stable default is:
+Mineflayer may not always support the newest Minecraft protocol immediately. Sorim includes a local compatibility shim for native Paper 26.2 connections without ViaVersion or ViaBackwards:
 
-```text
-MC_VERSION=1.21
+```powershell
+$env:MC_VERSION='26.2'
+npm start
 ```
 
-If your Paper server is newer, install these plugins in `mc-server/plugins/`:
+The shim currently covers the 26.2 registry, inventory component, entity, particle, and attack packet differences exercised by the survival skills. Future Paper or Minecraft protocol changes may require new mappings.
+
+### Optional 1.21 bridge mode
+
+For servers where native 26.2 is not required, the older bridge setup remains available. Install these plugins in `mc-server/plugins/`:
 
 - ViaVersion
 - ViaBackwards
 
 Then restart the server. This lets the bot connect with an older supported protocol while the server runs a newer build.
 
-### Experimental native 26.2 mode
-
-Sorim also contains a local protocol shim for connecting without ViaVersion or ViaBackwards:
-
-```powershell
-$env:MC_VERSION='26.2'
-$env:ENABLE_EXPERIMENTAL_26_2='true'
-npm start
-```
-
-This mode is under active development. Basic connection and early survival actions work, but inventory component decoding can still fail on packet shapes that Mineflayer does not yet understand. Use the 1.21 bridge setup for repeatable survival testing.
+Set `MC_VERSION=1.21` when using the bridge. Native 26.2 does not require either plugin.
 
 ## 5. Choose An AI Provider
 
@@ -305,7 +300,7 @@ Core:
 | --- | --- | --- |
 | `MC_HOST` | `localhost` | Minecraft server host |
 | `MC_PORT` | `25565` | Minecraft server port |
-| `MC_VERSION` | `1.21` | Mineflayer protocol version |
+| `MC_VERSION` | `26.2` | Mineflayer protocol version; use `1.21` only with the optional bridge |
 | `MC_USERNAME` | `marigo` | Bot username |
 | `LOOP_DELAY_MS` | `1500` | Main loop delay |
 | `LOG_LEVEL` | `info` | `silent`, `error`, `warn`, `info`, or `debug` |
@@ -400,8 +395,9 @@ After starting the server and bot, watch for this sequence:
 4. Bot digs a safe staircase for stone.
 5. Bot crafts stone pickaxe, stone axe, and stone sword.
 6. Bot builds a small shelter and stores a base coordinate.
-7. Bot checks food and storage routines.
-8. If night arrives and no bed exists, bot reduces risky outdoor tasks.
+7. Bot works toward a reserve of 16 edible items, cooks raw food when a furnace and fuel are available, and temporarily moves on when no mob or mature crop exists.
+8. Bot places a chest and deposits excess inventory while keeping survival tools and food.
+9. If night arrives and no bed exists, bot reduces risky outdoor tasks.
 
 If the bot gets stuck, restart with debug logs:
 
@@ -416,7 +412,7 @@ npm start
 
 - Check that the server is running.
 - Check `MC_HOST`, `MC_PORT`, and `MC_VERSION`.
-- If the server is newer than Mineflayer supports, install ViaVersion and ViaBackwards.
+- For native Paper 26.2, keep `MC_VERSION=26.2`; for other unsupported server versions, use the optional ViaVersion/ViaBackwards bridge with `MC_VERSION=1.21`.
 
 ### Bot joins but cannot break blocks
 

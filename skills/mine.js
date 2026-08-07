@@ -24,8 +24,20 @@ async function mineBlock(bot, action) {
     if (!block) {
         if (targetName === 'any_log' || LOGS.has(targetName)) {
             const visibleLog = findNearestVisibleLog(bot, targetName);
-            if (visibleLog) {
-                console.log(`[TREE] visible but not reachable ${visibleLog.name} ${visibleLog.position.toString()}; forcing tree retry`);
+            if (
+                visibleLog &&
+                visibleLog.position.distanceTo(bot.entity.position) <= 16
+            ) {
+                console.log(`[TREE] approaching visible ${visibleLog.name} ${visibleLog.position.toString()}`);
+                try {
+                    await movement.moveNear(bot, visibleLog.position, 3, 8000);
+                } catch (error) {
+                    actionControl.assertActive(bot, actionVersion);
+                    markFailedTree(visibleLog.position);
+                    console.log(`[TREE] approach failed: ${error.message}`);
+                    await movement.explore(bot, { target: 'wood' });
+                    return;
+                }
                 await chopTree(bot, visibleLog, visibleLog.name);
                 return;
             }
@@ -67,7 +79,7 @@ async function chopTree(bot, baseBlock, expectedDrop, actionVersion = actionCont
     if (initialTrunk.length === 0) throw new Error(`No trunk found for ${baseBlock.name}`);
 
     console.log(`[TREE] ${baseBlock.name} trunk=${initialTrunk.length} base=${base.position.toString()}`);
-    let before = countItem(bot, expectedDrop);
+    const before = countItem(bot, expectedDrop);
     let mined = 0;
     const skipped = new Set();
     const startedAt = Date.now();
@@ -104,22 +116,14 @@ async function chopTree(bot, baseBlock, expectedDrop, actionVersion = actionCont
             continue;
         }
         mined++;
-        try {
-            // Upper logs fall down the cleared trunk. Returning to the trunk
-            // base is more reliable than chasing the entity's spawn height.
-            await collectDrop(bot, expectedDrop, before, base.position);
-            before = countItem(bot, expectedDrop);
-        } catch (error) {
-            actionControl.assertActive(bot, actionVersion);
-            console.log(`[TREE] drop gecikti: ${error.message}`);
-            before = countItem(bot, expectedDrop);
-        }
+        await movement.sleep(200);
     }
 
     if (mined === 0) {
         markFailedTree(base.position);
         throw new Error(`Could not dig any block from ${baseBlock.name} trunk`);
     }
+    await patrolTreeDrops(bot, expectedDrop, before, base.position);
     console.log(`[TREE] complete mined=${mined} ${base.position.toString()}`);
 }
 
@@ -389,9 +393,7 @@ async function patrolTreeDrops(bot, itemName, before, base) {
         base.offset(1, 0, 0),
         base.offset(-1, 0, 0),
         base.offset(0, 0, 1),
-        base.offset(0, 0, -1),
-        base.offset(2, 0, 0),
-        base.offset(0, 0, 2)
+        base.offset(0, 0, -1)
     ];
 
     for (const point of points) {
@@ -504,7 +506,13 @@ async function digTreeBlock(bot, block) {
         if (!current || current.name !== block.name) return;
 
         try {
-            if (!isWithinDigReach(bot, current)) {
+            if (!isWithinTreeDigReach(bot, current)) {
+                const distance = bot.entity.position.offset(0, 1.65, 0)
+                    .distanceTo(current.position.offset(0.5, 0.5, 0.5));
+                console.log(
+                    `[TREE] reposition distance=${distance.toFixed(2)} ` +
+                    `diggable=${current.diggable} bot=${bot.entity.position.toString()}`
+                );
                 await approachBlock(bot, current);
             }
             await bot.lookAt(current.position.offset(0.5, 0.5, 0.5), true);
@@ -512,11 +520,16 @@ async function digTreeBlock(bot, block) {
             return;
         } catch (error) {
             lastError = error;
+            console.log(`[TREE] dig attempt ${attempt + 1} failed: ${error.message}`);
             await repositionForTreeBlock(bot, current, attempt);
         }
     }
 
     throw lastError || new Error(`Could not dig ${block.name} ${block.position.toString()}`);
+}
+
+function isWithinTreeDigReach(bot, block) {
+    return bot.canDigBlock(block);
 }
 
 function isWithinDigReach(bot, block) {
