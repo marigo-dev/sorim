@@ -12,6 +12,7 @@ const LOG_ITEMS = [
 const food = require('./skills/food');
 const iron = require('./skills/iron');
 const memory = require('./skills/memory');
+const storage = require('./skills/storage');
 
 const LEVELS = [
     {
@@ -123,9 +124,30 @@ const LEVELS = [
     },
     {
         id: 'L16_CRAFT_IRON_KIT',
-        goal: 'Craft iron pickaxe, sword, axe, shield, then iron armor as ingots allow.',
+        goal: 'Craft iron pickaxe, sword, axe, and shield while preserving 8 iron ingots.',
         allowedActions: ['craft_iron_kit', 'craft', 'idle'],
-        complete: observation => iron.hasIronCoreKit(observation.inventory)
+        complete: observation => iron.hasIronCoreItems(observation.inventory)
+    },
+    {
+        id: 'L17_COLLECT_ARMOR_IRON',
+        goal: 'Collect 24 additional iron for full armor while preserving the core kit and 8 ingot reserve.',
+        allowedActions: ['mine_iron', 'eat_food', 'organize_storage', 'idle'],
+        complete: (observation, tree) =>
+            tree.progress.maxIronPotential >= 41
+    },
+    {
+        id: 'L18_SMELT_ARMOR_IRON',
+        goal: 'Smelt the armor iron until tools, armor budget, and reserve represent 41 ingots.',
+        allowedActions: ['smelt_item', 'mine_iron', 'prepare_mining_kit', 'idle'],
+        complete: observation => smeltedIronPotential(observation.inventory) >= 41
+    },
+    {
+        id: 'L19_CRAFT_IRON_ARMOR',
+        goal: 'Craft and equip full iron armor while preserving 8 iron ingots.',
+        allowedActions: ['craft_iron_armor', 'craft', 'idle'],
+        complete: observation =>
+            iron.hasFullIronArmor(observation.inventory) &&
+            (observation.inventory.iron_ingot || 0) >= 8
     }
 ];
 
@@ -157,6 +179,7 @@ class SkillTree {
                     'mine_iron',
                     'smelt_item',
                     'craft_iron_kit',
+                    'craft_iron_armor',
                     'idle'
                 ],
                 complete: () => false
@@ -315,14 +338,15 @@ class SkillTree {
         }
 
         if (level.id === 'L15_SMELT_IRON') {
+            const coreIronDeficit = 17 - smeltedIronPotential(inventory);
             if (
                 (inventory.raw_iron || 0) === 0 &&
-                (inventory.iron_ingot || 0) < 17 &&
-                this.progress.maxIronPotential < 17
+                coreIronDeficit > 0 &&
+                (this.progress.maxIronPotential < 17 || coreIronDeficit > 1)
             ) {
                 return {
                     action: 'mine_iron',
-                    count: 17 - (inventory.iron_ingot || 0),
+                    count: Math.max(1, coreIronDeficit),
                     reason: 'Level 15: replace missing iron before finishing the reserve'
                 };
             }
@@ -330,7 +354,7 @@ class SkillTree {
                 action: 'smelt_item',
                 input: 'raw_iron',
                 output: 'iron_ingot',
-                count: Math.max(1, Math.min(8, 17 - smeltedIronPotential(inventory))),
+                count: Math.max(1, Math.min(8, coreIronDeficit)),
                 reason: 'Level 15: smelt raw iron into ingots'
             };
         }
@@ -338,7 +362,44 @@ class SkillTree {
         if (level.id === 'L16_CRAFT_IRON_KIT') {
             return {
                 action: 'craft_iron_kit',
-                reason: 'Level 16: craft iron tools, shield, and armor'
+                reason: 'Level 16: craft iron tools and shield while preserving reserve'
+            };
+        }
+
+        if (level.id === 'L17_COLLECT_ARMOR_IRON') {
+            return {
+                action: 'mine_iron',
+                count: Math.max(1, 41 - smeltedIronPotential(inventory)),
+                reason: 'Level 17: collect 24 additional raw iron for full armor'
+            };
+        }
+
+        if (level.id === 'L18_SMELT_ARMOR_IRON') {
+            const armorIronDeficit = 41 - smeltedIronPotential(inventory);
+            if (
+                (inventory.raw_iron || 0) === 0 &&
+                armorIronDeficit > 0 &&
+                (this.progress.maxIronPotential < 41 || armorIronDeficit > 1)
+            ) {
+                return {
+                    action: 'mine_iron',
+                    count: Math.max(1, armorIronDeficit),
+                    reason: 'Level 18: replace missing armor iron before smelting'
+                };
+            }
+            return {
+                action: 'smelt_item',
+                input: 'raw_iron',
+                output: 'iron_ingot',
+                count: Math.max(1, Math.min(8, armorIronDeficit)),
+                reason: 'Level 18: smelt iron for full armor'
+            };
+        }
+
+        if (level.id === 'L19_CRAFT_IRON_ARMOR') {
+            return {
+                action: 'craft_iron_armor',
+                reason: 'Level 19: craft and equip full iron armor'
             };
         }
 
@@ -420,6 +481,7 @@ class SkillTree {
         if (action.action === 'mine_iron') return action;
         if (action.action === 'smelt_item') return action;
         if (action.action === 'craft_iron_kit') return action;
+        if (action.action === 'craft_iron_armor') return action;
         if (action.action === 'craft' && typeof action.item === 'string') return action;
         if (action.action === 'place' && typeof action.item === 'string') return action;
 
@@ -571,17 +633,7 @@ function hasIronInFurnaceTransition(inventory) {
 function shouldOrganizeInventory(inventory, observation) {
     if (observation.hasUsableChest !== true) return false;
     if (observation.storageReady === false) return false;
-    const itemTypes = Object.keys(inventory).length;
-    const disposable = ['egg', 'oak_sapling', 'oak_door', 'dirt', 'cobblestone']
-        .some(name => (inventory[name] || 0) > keepRoutineCount(name));
-    return itemTypes >= 12 || disposable;
-}
-
-function keepRoutineCount(itemName) {
-    if (itemName === 'dirt' || itemName === 'cobblestone') return 32;
-    if (itemName === 'oak_sapling') return 1;
-    if (itemName === 'oak_door') return 1;
-    return 0;
+    return storage.hasDepositableItems(inventory);
 }
 
 module.exports = SkillTree;

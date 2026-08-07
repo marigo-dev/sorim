@@ -36,6 +36,7 @@ The AI does not directly control Mineflayer APIs. It chooses from explicit tools
 - `mine_iron`
 - `smelt_item`
 - `craft_iron_kit`
+- `craft_iron_armor`
 - `build_blueprint`
 - `ensure_shared_storage`
 
@@ -63,13 +64,13 @@ The current AI-agent foundation includes:
 - craft stone pickaxe, stone axe, and stone sword
 - build a basic shelter
 - run simple survival checks for hunger, mobs, pits, night, and storage
-- prepare a mining kit, mine iron, smelt items, and craft an iron kit
+- prepare a mining kit, mine and smelt iron, craft the core iron kit, and equip full iron armor while preserving an 8-ingot reserve
 - execute creative-mode blueprints and showcase builds
 - run two-agent colony experiments with shared storage
 - ask an LLM for decisions when enabled
 - fall back to safe deterministic behavior when an AI response is invalid
 
-The native 26.2 survival chain has been exercised in live runs through shelter, food fallback, persistent base memory, and chest storage. Melee and ranged combat have controlled live tests. Long autonomous runs and the complete iron-age chain are still experimental. This is not yet a full human-level Minecraft player.
+The native 26.2 survival chain has been exercised in live runs through shelter, food fallback, persistent base memory, chest storage, the complete iron-age crafting chain, and full iron armor. Controlled server-side tests verified the equipped armor, an 8-ingot reserve, hostile detection, iron-sword combat, and survival on Easy difficulty. Long unsupervised runs in naturally generated terrain are still experimental. This is not yet a full human-level Minecraft player.
 
 ## Requirements
 
@@ -398,6 +399,9 @@ After starting the server and bot, watch for this sequence:
 7. Bot works toward a reserve of 16 edible items, cooks raw food when a furnace and fuel are available, and temporarily moves on when no mob or mature crop exists.
 8. Bot places a chest and deposits excess inventory while keeping survival tools and food.
 9. If night arrives and no bed exists, bot reduces risky outdoor tasks.
+10. Bot prepares torches and fuel, mines and smelts enough iron for its core kit and an 8-ingot reserve.
+11. Bot collects 24 additional iron, crafts and equips full iron armor, and keeps the reserve intact.
+12. On Easy difficulty, a nearby hostile interrupts routine work and is fought with the best available weapon.
 
 If the bot gets stuck, restart with debug logs:
 

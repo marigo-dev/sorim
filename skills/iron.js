@@ -48,9 +48,27 @@ async function craftIronKit(bot) {
     await tools.equipBestWeapon(bot);
 }
 
+async function craftIronArmor(bot) {
+    const missing = ARMOR.filter(item => countItem(bot, item) <= 0);
+    const required = missing.reduce((total, item) => total + ingotsFor(item), 0);
+    if (countItem(bot, 'iron_ingot') < required + 8) {
+        throw new Error(`Iron armor requires ${required} ingots plus an 8 ingot reserve`);
+    }
+
+    for (const item of missing) {
+        await craft.craftItem(bot, item, 1);
+        await equipArmor(bot, item);
+    }
+    await equipAllArmor(bot);
+}
+
 function hasIronCoreKit(inventory) {
-    return CORE_KIT.every(name => (inventory[name] || 0) >= 1) &&
+    return hasIronCoreItems(inventory) &&
         (inventory.iron_ingot || 0) >= 8;
+}
+
+function hasIronCoreItems(inventory) {
+    return CORE_KIT.every(name => (inventory[name] || 0) >= 1);
 }
 
 function hasFullIronArmor(inventory) {
@@ -60,6 +78,12 @@ function hasFullIronArmor(inventory) {
 function requiredCorePlanks(stickCount = 0) {
     const missingSticks = Math.max(0, 6 - stickCount);
     return 6 + Math.ceil(missingSticks / 4) * 2;
+}
+
+function requiredArmorIngots(inventory = {}) {
+    return ARMOR
+        .filter(item => (inventory[item] || 0) <= 0)
+        .reduce((total, item) => total + ingotsFor(item), 0);
 }
 
 async function ensureSticks(bot, minimum) {
@@ -91,6 +115,12 @@ async function equipArmor(bot, itemName) {
     if (item && slot) await bot.equip(item, slot);
 }
 
+async function equipAllArmor(bot) {
+    for (const item of ARMOR) {
+        await equipArmor(bot, item);
+    }
+}
+
 function ingotsFor(itemName) {
     return IRON_COSTS[itemName] || 0;
 }
@@ -119,8 +149,11 @@ function totalPlanks(bot) {
 
 module.exports = {
     craftIronKit,
+    craftIronArmor,
     hasIronCoreKit,
+    hasIronCoreItems,
     hasFullIronArmor,
     requiredCorePlanks,
+    requiredArmorIngots,
     ironInvestment
 };

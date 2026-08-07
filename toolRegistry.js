@@ -128,9 +128,15 @@ const TOOL_DEFINITIONS = [
     },
     {
         name: 'craft_iron_kit',
-        description: 'Craft iron pickaxe, sword, axe, shield, then iron armor as ingots allow.',
+        description: 'Craft iron pickaxe, sword, axe, and shield while preserving the reserve.',
         args: {},
         actions: ['craft_iron_kit']
+    },
+    {
+        name: 'craft_iron_armor',
+        description: 'Craft and equip full iron armor while preserving 8 iron ingots.',
+        args: {},
+        actions: ['craft_iron_armor']
     },
     {
         name: 'build_blueprint',
@@ -245,6 +251,7 @@ function actionToToolCall(action) {
         mine_iron: 'mine_iron',
         smelt_item: 'smelt_item',
         craft_iron_kit: 'craft_iron_kit',
+        craft_iron_armor: 'craft_iron_armor',
         build_blueprint: 'build_blueprint',
         build_showcase: 'build_showcase',
         ensure_shared_storage: 'ensure_shared_storage',
@@ -392,6 +399,15 @@ async function executeToolCall(bot, call) {
             return;
         }
         await iron.craftIronKit(bot);
+        return;
+    }
+
+    if (call.tool === 'craft_iron_armor') {
+        if (memory.getMineRoute().length > 0) {
+            await mining.returnToSurface(bot);
+            return;
+        }
+        await iron.craftIronArmor(bot);
         return;
     }
 

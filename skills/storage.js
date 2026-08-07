@@ -171,11 +171,18 @@ async function placeChest(bot) {
 }
 
 function shouldKeep(item) {
-    if (KEEP_ITEMS.has(item.name)) return true;
-    if (FOOD_ITEMS.has(item.name)) return true;
-    if (item.name === 'wheat' || item.name === 'wheat_seeds') return true;
-    if (['cobblestone', 'dirt', 'oak_planks', 'birch_planks'].includes(item.name)) return true;
+    const name = typeof item === 'string' ? item : item.name;
+    if (KEEP_ITEMS.has(name)) return true;
+    if (FOOD_ITEMS.has(name)) return true;
+    if (name === 'wheat' || name === 'wheat_seeds') return true;
+    if (['cobblestone', 'dirt', 'oak_planks', 'birch_planks'].includes(name)) return true;
     return false;
+}
+
+function hasDepositableItems(inventory) {
+    return Object.entries(inventory).some(([name, count]) =>
+        !shouldKeep(name) && count > keepCountFor(name)
+    );
 }
 
 function keepCountFor(itemName) {
@@ -345,5 +352,6 @@ function isAir(block) {
 module.exports = {
     organizeStorage,
     hasChestNearby,
-    isTemporarilyUnavailable
+    isTemporarilyUnavailable,
+    hasDepositableItems
 };
