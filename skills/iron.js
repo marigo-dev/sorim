@@ -1,4 +1,5 @@
 const craft = require('./craft');
+const mine = require('./mine');
 const tools = require('./tools');
 
 const CORE_KIT = [
@@ -23,8 +24,9 @@ const ARMOR_SLOTS = {
 };
 
 async function craftIronKit(bot) {
+    const plankMinimum = requiredCorePlanks(countItem(bot, 'stick'));
+    await ensurePlanks(bot, plankMinimum);
     await ensureSticks(bot, 6);
-    await ensurePlanks(bot, 6);
 
     for (const item of CORE_KIT) {
         if (countItem(bot, item) <= 0) {
@@ -52,6 +54,11 @@ function hasFullIronArmor(inventory) {
     return ARMOR.every(name => (inventory[name] || 0) >= 1);
 }
 
+function requiredCorePlanks(stickCount = 0) {
+    const missingSticks = Math.max(0, 6 - stickCount);
+    return 6 + Math.ceil(missingSticks / 4) * 2;
+}
+
 async function ensureSticks(bot, minimum) {
     while (countItem(bot, 'stick') < minimum) {
         await craft.craftItem(bot, 'stick', 2);
@@ -59,11 +66,20 @@ async function ensureSticks(bot, minimum) {
 }
 
 async function ensurePlanks(bot, minimum) {
+    if (totalPlanks(bot) < minimum && totalLogs(bot) === 0) {
+        await mine.mineBlock(bot, { target: 'any_log' });
+    }
     while (totalPlanks(bot) < minimum) {
         const log = bot.inventory.items().find(item => item.name.endsWith('_log'));
         if (!log) throw new Error('Shield icin plank veya log yok');
         await craft.craftItem(bot, log.name.replace(/_log$/, '_planks'), 4);
     }
+}
+
+function totalLogs(bot) {
+    return bot.inventory.items()
+        .filter(item => item.name.endsWith('_log'))
+        .reduce((total, item) => total + item.count, 0);
 }
 
 async function equipArmor(bot, itemName) {
@@ -99,5 +115,6 @@ function totalPlanks(bot) {
 module.exports = {
     craftIronKit,
     hasIronCoreKit,
-    hasFullIronArmor
+    hasFullIronArmor,
+    requiredCorePlanks
 };

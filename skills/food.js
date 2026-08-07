@@ -3,6 +3,7 @@ const movement = require('./movement');
 const tools = require('./tools');
 const craft = require('./craft');
 const smelting = require('./smelting');
+const shelter = require('./shelter');
 
 const FOOD_VALUES = {
     bread: 5,
@@ -62,20 +63,29 @@ async function eatBestFood(bot) {
 }
 
 async function findFood(bot) {
-    if (Date.now() < foodUnavailableUntil) {
+    await shelter.leaveBase(bot);
+    await prepareCollectedFood(bot);
+    const preparedInventory = countInventory(bot);
+    if (hasFoodStock(preparedInventory, 16)) return;
+    if (Date.now() < foodUnavailableUntil && !hasConvertibleFood(preparedInventory)) {
         console.log('[FOOD] no nearby food source; temporarily moving to the next goal.');
         return;
     }
 
-    await prepareCollectedFood(bot);
-
     const crop = nearestMatureCrop(bot);
     if (crop) {
-        const before = foodCount(countInventory(bot));
-        await harvestCrop(bot, crop);
+        let harvested = false;
+        try {
+            harvested = await harvestCrop(bot, crop);
+        } catch (error) {
+            console.log(`[FOOD] crop path failed: ${error.message}`);
+            await markFailedSearch(bot);
+            return;
+        }
         await collectNearbyDrops(bot);
+        if (harvested) await replantCrop(bot, crop.position, CROP_RULES[crop.name].seed);
         await prepareCollectedFood(bot);
-        if (foodCount(countInventory(bot)) > before) {
+        if (harvested) {
             failedSearches = 0;
             return;
         }
@@ -83,6 +93,7 @@ async function findFood(bot) {
 
     const animal = nearestFoodMob(bot);
     if (!animal) {
+        if (hasConvertibleFood(countInventory(bot))) return;
         await searchForFood(bot);
         return;
     }
@@ -146,6 +157,11 @@ function isTemporarilyUnavailable() {
     return Date.now() < foodUnavailableUntil;
 }
 
+function hasConvertibleFood(inventory) {
+    if ((inventory.wheat || 0) >= 3) return true;
+    return Object.keys(RAW_TO_COOKED).some(name => (inventory[name] || 0) > 0);
+}
+
 function bestFoodItem(bot) {
     return bot.inventory.items()
         .filter(item => (FOOD_VALUES[item.name] || 0) > 0)
@@ -182,14 +198,103 @@ function nearestMatureCrop(bot) {
 }
 
 async function harvestCrop(bot, crop) {
-    const rule = CROP_RULES[crop.name];
     console.log(`[FOOD] harvesting ${crop.name} ${crop.position.toString()}`);
-    await movement.moveNear(bot, crop.position, 1, 8000);
+    await moveToCropStand(bot, crop.position);
     const current = bot.blockAt(crop.position);
-    if (!current || current.name !== crop.name || !bot.canDigBlock(current)) return;
-    await bot.dig(current);
-    await movement.sleep(500);
-    await replantCrop(bot, crop.position, rule.seed);
+    if (!current || current.name !== crop.name) return false;
+    const distance = bot.entity.position.offset(0, 1.65, 0)
+        .distanceTo(current.position.offset(0.5, 0.5, 0.5));
+    console.log(`[FOOD] crop reach distance=${distance.toFixed(2)}`);
+    if (distance > 3.5) return false;
+    await digCropPacket(bot, current);
+    await movement.sleep(250);
+    return bot.blockAt(crop.position)?.name !== crop.name;
+}
+
+async function moveToCropStand(bot, cropPosition) {
+    console.log(`[FOOD] approach from=${bot.entity.position.floored().toString()} crop=${cropPosition.toString()}`);
+    try {
+        await movement.moveNear(bot, cropPosition.offset(0.5, 0, 0.5), 2.4, 7000);
+        if (cropReachDistance(bot, cropPosition) <= 3.5) return;
+    } catch (error) {
+        console.log(`[FOOD] near-crop path fallback: ${error.message}`);
+    }
+
+    const candidates = [
+        cropPosition.offset(1, 0, 0),
+        cropPosition.offset(-1, 0, 0),
+        cropPosition.offset(0, 0, 1),
+        cropPosition.offset(0, 0, -1)
+    ]
+        .filter(position => {
+            const feet = bot.blockAt(position);
+            const head = bot.blockAt(position.offset(0, 1, 0));
+            const floor = bot.blockAt(position.offset(0, -1, 0));
+            return isAir(feet) && isAir(head) && floor?.boundingBox === 'block';
+        })
+        .sort((left, right) =>
+            cropStandPenalty(bot, left) - cropStandPenalty(bot, right) ||
+            left.distanceTo(bot.entity.position) - right.distanceTo(bot.entity.position)
+        );
+
+    let lastError = null;
+    for (const stand of candidates) {
+        try {
+            await movement.moveBlock(bot, stand, 4500);
+            return;
+        } catch (error) {
+            lastError = error;
+            if (await walkToCropStand(bot, stand)) return;
+        }
+    }
+    throw lastError || new Error(`No crop stand near ${cropPosition.toString()}`);
+}
+
+function cropReachDistance(bot, position) {
+    return bot.entity.position.offset(0, 1.65, 0)
+        .distanceTo(position.offset(0.5, 0.5, 0.5));
+}
+
+function cropStandPenalty(bot, position) {
+    return bot.blockAt(position.offset(0, -1, 0))?.name === 'farmland' ? 1 : 0;
+}
+
+async function walkToCropStand(bot, stand) {
+    const deadline = Date.now() + 6500;
+    try {
+        while (Date.now() < deadline && bot.entity.position.distanceTo(stand) > 1.6) {
+            await bot.lookAt(stand.offset(0.5, 0.3, 0.5), true);
+            bot.setControlState('forward', true);
+            bot.setControlState('sprint', true);
+            bot.setControlState('jump', true);
+            await movement.sleep(250);
+        }
+    } finally {
+        movement.stop(bot);
+    }
+    console.log(`[FOOD] manual approach ended at=${bot.entity.position.floored().toString()} target=${stand.toString()}`);
+    return bot.entity.position.distanceTo(stand) <= 1.9;
+}
+
+async function digCropPacket(bot, block) {
+    bot._client.write('block_dig', {
+        status: 0,
+        location: block.position,
+        face: 1
+    });
+    bot.swingArm();
+    await movement.sleep(100);
+    bot._client.write('block_dig', {
+        status: 2,
+        location: block.position,
+        face: 1
+    });
+    const deadline = Date.now() + 2200;
+    while (Date.now() < deadline) {
+        if (bot.blockAt(block.position)?.name !== block.name) return;
+        await movement.sleep(100);
+    }
+    console.log(`[FOOD] server did not confirm crop break ${block.position.toString()}`);
 }
 
 async function replantCrop(bot, position, seedName) {
@@ -209,6 +314,10 @@ async function prepareCollectedFood(bot) {
     const breadCount = Math.floor((inventory.wheat || 0) / 3);
     if (breadCount > 0) {
         try {
+            const table = findNearbyBlock(bot, 'crafting_table', 16);
+            const shouldKeepHarvesting = nearestMatureCrop(bot) && (inventory.wheat || 0) < 24;
+            if (!table && shouldKeepHarvesting) return;
+            if (!table) await shelter.returnToBase(bot);
             await craft.craftItem(bot, 'bread', breadCount);
         } catch (error) {
             console.log(`[FOOD] bread preparation delayed: ${error.message}`);
@@ -307,12 +416,17 @@ async function nudgeToward(bot, position) {
     }
 }
 
+function isAir(block) {
+    return ['air', 'cave_air', 'void_air'].includes(block?.name);
+}
+
 module.exports = {
     eatBestFood,
     findFood,
     foodScore,
     foodCount,
     hasFoodStock,
+    hasConvertibleFood,
     isTemporarilyUnavailable,
     prepareCollectedFood
 };

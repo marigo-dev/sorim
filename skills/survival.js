@@ -289,6 +289,16 @@ async function escapePit(bot) {
     const origin = bot.entity.position.floored();
     console.log(`[SURVIVAL] escaping pit ${origin.toString()}`);
 
+    const mineRoute = memory.getMineRoute();
+    if (mineRoute.length > 1) {
+        const reached = await followMineRoute(bot, mineRoute, actionVersion);
+        if (reached) {
+            memory.clearMineRoute();
+            memory.clearSurfaceExit();
+            return;
+        }
+    }
+
     const surfaceExit = memory.getSurfaceExit();
     if (surfaceExit) {
         const reached = await climbTowardSurfaceExit(
@@ -316,6 +326,45 @@ async function escapePit(bot) {
     const carved = await carveEscapeStaircase(bot, surfaceExit, actionVersion);
     if (carved) return;
     await pillarUp(bot);
+}
+
+async function followMineRoute(bot, route, actionVersion) {
+    let index = nearestMineRouteIndex(bot, route);
+    console.log(`[SURVIVAL] following saved mine route from index=${index}`);
+    for (index -= 1; index >= 0; index--) {
+        actionControl.assertActive(bot, actionVersion);
+        const target = new Vec3(route[index].x, route[index].y, route[index].z);
+        try {
+            await movement.moveBlock(bot, target, 5000);
+        } catch {
+            movement.stop(bot);
+            await bot.lookAt(target.offset(0.5, 1, 0.5), true);
+            await jumpForward(bot);
+        }
+        if (bot.entity.position.distanceTo(target.offset(0.5, 0, 0.5)) > 2.5) {
+            return false;
+        }
+    }
+
+    const entry = new Vec3(route[0].x, route[0].y, route[0].z);
+    const reached = bot.entity.position.distanceTo(entry.offset(0.5, 0, 0.5)) <= 3;
+    if (reached) console.log(`[SURVIVAL] saved mine route exit reached ${entry.toString()}`);
+    return reached;
+}
+
+function nearestMineRouteIndex(bot, route) {
+    let bestIndex = route.length - 1;
+    let bestDistance = Infinity;
+    route.forEach((position, index) => {
+        const distance = bot.entity.position.distanceTo(
+            new Vec3(position.x, position.y, position.z)
+        );
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestIndex = index;
+        }
+    });
+    return bestIndex;
 }
 
 async function carveEscapeStaircase(bot, surfaceExit, actionVersion) {

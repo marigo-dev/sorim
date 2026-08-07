@@ -246,7 +246,7 @@ function findReachableStone(bot) {
         .map(position => bot.blockAt(position))
         .filter(Boolean)
         .filter(block => hasOpenFace(bot, block.position))
-        .filter(block => block.position.y >= feet.y - 1)
+        .filter(block => block.position.y >= feet.y)
         .filter(block => !isUnsafeFloorTarget(block.position, feet))
         .filter(block => block.position.distanceTo(bot.entity.position) <= 5)
         .sort((a, b) =>
@@ -299,10 +299,27 @@ async function digWithTimeout(bot, block) {
     } catch (error) {
         const current = bot.blockAt(block.position);
         if (!current || current.name !== block.name) return;
+        if (await digWithProtocolFallback(bot, current)) return;
         throw error;
     } finally {
         clearTimeout(timer);
     }
+}
+
+async function digWithProtocolFallback(bot, block) {
+    const duration = Math.max(250, Math.min(15000, Number(bot.digTime?.(block) || 1000) + 250));
+    console.log(`[STONE] protocol dig fallback ${block.position.toString()} wait=${duration}`);
+    bot._client.write('block_dig', { status: 0, location: block.position, face: 1 });
+    bot.swingArm();
+    await movement.sleep(duration);
+    bot._client.write('block_dig', { status: 2, location: block.position, face: 1 });
+
+    const deadline = Date.now() + 2500;
+    while (Date.now() < deadline) {
+        if (bot.blockAt(block.position)?.name !== block.name) return true;
+        await movement.sleep(100);
+    }
+    return false;
 }
 
 function digTimeoutMs(bot, block) {

@@ -80,7 +80,8 @@ const LEVELS = [
         allowedActions: ['eat_food', 'find_food', 'idle'],
         complete: observation =>
             food.hasFoodStock(observation.inventory, 16) ||
-            food.isTemporarilyUnavailable()
+            (food.isTemporarilyUnavailable() &&
+                !food.hasConvertibleFood(observation.inventory))
     },
     {
         id: 'L10_STORAGE_AND_BASE_MEMORY',
@@ -281,7 +282,8 @@ class SkillTree {
         }
 
         if (level.id === 'L12_PREPARE_MINING_KIT') {
-            if (!food.hasFoodStock(inventory, 16) && !food.isTemporarilyUnavailable()) {
+            if (!food.hasFoodStock(inventory, 16) &&
+                (!food.isTemporarilyUnavailable() || food.hasConvertibleFood(inventory))) {
                 return {
                     action: 'find_food',
                     reason: 'Level 12: collect food before mining'

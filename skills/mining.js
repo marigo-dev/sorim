@@ -1,47 +1,91 @@
 const { Vec3 } = require('vec3');
 const craft = require('./craft');
 const mine = require('./mine');
+const stone = require('./stone');
 const movement = require('./movement');
 const smelting = require('./smelting');
 const food = require('./food');
 const shelter = require('./shelter');
+const memory = require('./memory');
+const actionControl = require('./actionControl');
 
 const IRON_ORES = ['iron_ore', 'deepslate_iron_ore'];
 const LOG_ITEMS = ['oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log', 'cherry_log', 'mangrove_log'];
 const PLANK_ITEMS = ['oak_planks', 'birch_planks', 'spruce_planks', 'jungle_planks', 'acacia_planks', 'dark_oak_planks', 'cherry_planks', 'mangrove_planks'];
+const MINE_DIRECTIONS = [
+    new Vec3(1, 0, 0),
+    new Vec3(0, 0, 1),
+    new Vec3(-1, 0, 0),
+    new Vec3(0, 0, -1)
+];
+let mineDirectionIndex = 0;
 
-async function prepareMiningKit(bot) {
+async function prepareMiningKit(bot, actionVersion = actionControl.snapshot(bot)) {
+    actionControl.assertActive(bot, actionVersion);
+    await shelter.leaveBase(bot);
+    actionControl.assertActive(bot, actionVersion);
     await ensureFurnace(bot);
+    actionControl.assertActive(bot, actionVersion);
     await ensureFuel(bot);
+    actionControl.assertActive(bot, actionVersion);
     await ensureTorches(bot, 16);
+    actionControl.assertActive(bot, actionVersion);
     await ensureFuel(bot, 3);
+    actionControl.assertActive(bot, actionVersion);
     await ensureBlocks(bot, 16);
+    actionControl.assertActive(bot, actionVersion);
 }
 
 async function mineIron(bot, targetRawIron = 16) {
-    await prepareMiningKit(bot);
+    const actionVersion = actionControl.snapshot(bot);
+    await prepareMiningKit(bot, actionVersion);
+    actionControl.assertActive(bot, actionVersion);
     const before = countItem(bot, 'raw_iron');
     const target = Math.max(before + 1, targetRawIron);
     const start = bot.entity.position.floored();
+    const savedRoute = memory.getMineRoute();
+    const route = canResumeRoute(bot, savedRoute) ? savedRoute : [toPosition(start)];
+    if (route.length === 1) {
+        memory.setSurfaceExit(start);
+        memory.setMineRoute(route);
+    }
+    const direction = directionForRoute(route) ||
+        MINE_DIRECTIONS[mineDirectionIndex++ % MINE_DIRECTIONS.length];
     console.log(`[IRON_MINE] target raw_iron=${target} start=${start.toString()}`);
 
     try {
         for (let step = 0; step < 80 && countItem(bot, 'raw_iron') < target; step++) {
+            actionControl.assertActive(bot, actionVersion);
             if (bot.food <= 12 && food.foodScore(countInventory(bot)) > 0) {
                 await food.eatBestFood(bot);
+                actionControl.assertActive(bot, actionVersion);
             }
 
             const ore = findReachableIronOre(bot);
             if (ore) {
                 await mineOre(bot, ore);
+                actionControl.assertActive(bot, actionVersion);
                 continue;
             }
 
             await placeTorchIfNeeded(bot);
-            await carveMiningStep(bot, step);
+            actionControl.assertActive(bot, actionVersion);
+            const position = await carveMiningStep(bot, step, direction);
+            actionControl.assertActive(bot, actionVersion);
+            appendRoute(route, position);
+            memory.appendMineRoute(position);
         }
     } finally {
-        await returnTowardBase(bot, start);
+        if (actionControl.snapshot(bot) !== actionVersion) {
+            movement.stop(bot);
+            actionControl.assertActive(bot, actionVersion);
+        }
+        const returned = await returnMiningRoute(bot, route, actionVersion);
+        if (returned) {
+            await returnTowardBase(bot, new Vec3(route[0].x, route[0].y, route[0].z));
+            memory.clearMineRoute();
+            memory.clearSurfaceExit();
+        }
     }
 
     if (countItem(bot, 'raw_iron') <= before) {
@@ -51,9 +95,10 @@ async function mineIron(bot, targetRawIron = 16) {
 
 async function ensureFurnace(bot) {
     if (countItem(bot, 'furnace') > 0 || findNearbyBlock(bot, 'furnace', 16)) return;
-    while (countItem(bot, 'cobblestone') < 8) {
-        await mine.mineBlock(bot, { target: 'stone', expectedDrop: 'cobblestone' });
+    if (countItem(bot, 'cobblestone') < 8) {
+        await stone.collectStone(bot, 8 - countItem(bot, 'cobblestone'));
     }
+    if (countItem(bot, 'cobblestone') < 8) throw new Error('Furnace icin 8 cobblestone toplanamadi');
     await craft.craftItem(bot, 'furnace', 1);
 }
 
@@ -98,7 +143,7 @@ async function ensureTorches(bot, minimum) {
 async function ensureBlocks(bot, minimum) {
     const blocks = countItem(bot, 'cobblestone') + countItem(bot, 'dirt');
     if (blocks >= minimum) return;
-    await mine.mineBlock(bot, { target: 'stone', expectedDrop: 'cobblestone' });
+    await stone.collectStone(bot, minimum - blocks);
 }
 
 async function ensurePlanks(bot, minimum) {
@@ -126,8 +171,7 @@ async function mineOre(bot, ore) {
     console.log(`[IRON_MINE] raw_iron ${before} -> ${countItem(bot, 'raw_iron')}`);
 }
 
-async function carveMiningStep(bot, step) {
-    const direction = new Vec3(1, 0, 0);
+async function carveMiningStep(bot, step, direction) {
     const current = bot.entity.position.floored();
     const downEvery = step % 3 === 2 ? -1 : 0;
     const next = current.plus(direction).offset(0, downEvery, 0);
@@ -144,6 +188,7 @@ async function carveMiningStep(bot, step) {
     } catch {
         await movement.moveNear(bot, next, 1, 5000);
     }
+    return bot.entity.position.floored();
 }
 
 async function placeTorchIfNeeded(bot) {
@@ -201,6 +246,31 @@ async function returnTowardBase(bot, start) {
     } catch {
         await nudgeToward(bot, start);
     }
+}
+
+async function returnMiningRoute(bot, route, actionVersion) {
+    if (route.length === 0) return false;
+    let index = nearestRouteIndex(bot, route);
+    console.log(`[IRON_MINE] returning route points=${index + 1}`);
+
+    for (index -= 1; index >= 0; index--) {
+        actionControl.assertActive(bot, actionVersion);
+        const target = new Vec3(route[index].x, route[index].y, route[index].z);
+        try {
+            await movement.moveBlock(bot, target, 6500);
+        } catch {
+            await nudgeToward(bot, target);
+        }
+        if (bot.entity.position.distanceTo(target.offset(0.5, 0, 0.5)) > 2.5) {
+            console.log(`[IRON_MINE] route return paused at ${bot.entity.position.floored().toString()}`);
+            return false;
+        }
+    }
+
+    const entry = new Vec3(route[0].x, route[0].y, route[0].z);
+    const reached = bot.entity.position.distanceTo(entry.offset(0.5, 0, 0.5)) <= 3;
+    if (reached) console.log(`[IRON_MINE] route entry reached ${entry.toString()}`);
+    return reached;
 }
 
 function findReachableIronOre(bot) {
@@ -282,12 +352,74 @@ async function collectNearby(bot, itemName, before, origin) {
 async function nudgeToward(bot, position) {
     try {
         await bot.lookAt(position.offset(0.5, 0.5, 0.5), true);
+        if (position.y > bot.entity.position.y + 0.4) primeGroundedJump(bot);
         bot.setControlState('forward', true);
         bot.setControlState('jump', true);
-        await movement.sleep(1000);
+        bot.setControlState('sprint', true);
+        await movement.sleep(1600);
     } finally {
         bot.clearControlStates();
     }
+}
+
+function primeGroundedJump(bot) {
+    const feet = bot.entity.position.floored();
+    const floor = bot.blockAt(feet.offset(0, -1, 0));
+    const verticalSpeed = Math.abs(bot.entity.velocity?.y || 0);
+    if (floor?.boundingBox === 'block' && verticalSpeed < 0.08) {
+        bot.entity.onGround = true;
+        if (bot.entity.velocity) bot.entity.velocity.y = 0.42;
+    }
+}
+
+function canResumeRoute(bot, route) {
+    if (route.length < 2) return false;
+    const entry = new Vec3(route[0].x, route[0].y, route[0].z);
+    if (bot.entity.position.distanceTo(entry) <= 4) return false;
+    return route.some(position =>
+        bot.entity.position.distanceTo(new Vec3(position.x, position.y, position.z)) <= 5
+    );
+}
+
+function directionForRoute(route) {
+    if (route.length < 2) return null;
+    for (let index = route.length - 1; index > 0; index--) {
+        const dx = Math.sign(route[index].x - route[index - 1].x);
+        const dz = Math.sign(route[index].z - route[index - 1].z);
+        if (dx || dz) return new Vec3(dx, 0, dz);
+    }
+    return null;
+}
+
+function nearestRouteIndex(bot, route) {
+    let bestIndex = route.length - 1;
+    let bestDistance = Infinity;
+    route.forEach((position, index) => {
+        const distance = bot.entity.position.distanceTo(
+            new Vec3(position.x, position.y, position.z)
+        );
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestIndex = index;
+        }
+    });
+    return bestIndex;
+}
+
+function appendRoute(route, position) {
+    const next = toPosition(position);
+    const last = route[route.length - 1];
+    if (!last || last.x !== next.x || last.y !== next.y || last.z !== next.z) {
+        route.push(next);
+    }
+}
+
+function toPosition(position) {
+    return {
+        x: Math.floor(position.x),
+        y: Math.floor(position.y),
+        z: Math.floor(position.z)
+    };
 }
 
 function countInventory(bot) {

@@ -2,6 +2,7 @@ const { Vec3 } = require('vec3');
 const craft = require('./craft');
 const movement = require('./movement');
 const memory = require('./memory');
+const shelter = require('./shelter');
 
 const KEEP_ITEMS = new Set([
     'stone_pickaxe',
@@ -55,6 +56,7 @@ const LOG_TO_PLANKS = {
 let storageRetryAfter = 0;
 
 async function organizeStorage(bot) {
+    await shelter.ensureBaseEgress(bot);
     await returnNearBase(bot);
     const chestBlock = await ensureChest(bot);
     if (!chestBlock) throw new Error('Could not place chest');
@@ -125,6 +127,7 @@ async function ensurePlanks(bot, minimum) {
 async function findReachableChest(bot, maxDistance) {
     const chests = findNearbyBlocks(bot, 'chest', maxDistance);
     for (const chest of chests) {
+        if (isBaseEntrance(chest.position)) continue;
         if (!hasOpeningSpace(bot, chest.position)) continue;
         try {
             await movement.moveNear(bot, chest.position, 3, 5000);
@@ -170,12 +173,15 @@ async function placeChest(bot) {
 function shouldKeep(item) {
     if (KEEP_ITEMS.has(item.name)) return true;
     if (FOOD_ITEMS.has(item.name)) return true;
+    if (item.name === 'wheat' || item.name === 'wheat_seeds') return true;
     if (['cobblestone', 'dirt', 'oak_planks', 'birch_planks'].includes(item.name)) return true;
     return false;
 }
 
 function keepCountFor(itemName) {
     if (FOOD_ITEMS.has(itemName)) return 16;
+    if (itemName === 'wheat') return 48;
+    if (itemName === 'wheat_seeds') return 32;
     if (itemName === 'cobblestone' || itemName === 'dirt') return 32;
     if (itemName.endsWith('_planks')) return 16;
     return 1;
@@ -183,7 +189,7 @@ function keepCountFor(itemName) {
 
 function hasChestNearby(bot) {
     return findNearbyBlocks(bot, 'chest', 16)
-        .some(chest => hasOpeningSpace(bot, chest.position));
+        .some(chest => !isBaseEntrance(chest.position) && hasOpeningSpace(bot, chest.position));
 }
 
 function isTemporarilyUnavailable() {
@@ -227,6 +233,8 @@ function findChestPlacements(bot) {
                         target.z - bot.entity.position.z
                     );
                     if (horizontalDistance < 0.9 || horizontalDistance > 8) continue;
+                    if (isBaseEntrance(target)) continue;
+                    if (isInsideBaseFootprint(target)) continue;
                     if (wouldCollideWithBot(bot, target)) continue;
                     if (!isAir(bot.blockAt(target))) continue;
                     if (!hasOpeningSpace(bot, target) && !canClearOpeningSpace(bot, target)) continue;
@@ -247,6 +255,14 @@ function findChestPlacements(bot) {
 
     candidates.sort((a, b) => a.distance - b.distance);
     return candidates;
+}
+
+function isInsideBaseFootprint(position) {
+    const base = memory.getBase();
+    if (!base) return false;
+    return Math.abs(position.x - base.x) <= 1 &&
+        Math.abs(position.z - base.z) <= 1 &&
+        position.y >= base.y - 1 && position.y <= base.y + 2;
 }
 
 function findPlacementReference(bot, target) {
@@ -270,6 +286,14 @@ function findPlacementReference(bot, target) {
 function wouldCollideWithBot(bot, target) {
     const botFeet = bot.entity.position.floored();
     return target.equals(botFeet) || target.equals(botFeet.offset(0, 1, 0));
+}
+
+function isBaseEntrance(position) {
+    const base = memory.getBase();
+    if (!base) return false;
+    return position.x === base.x &&
+        position.z === base.z - 1 &&
+        (position.y === base.y || position.y === base.y + 1);
 }
 
 async function openUsableChest(bot, chestBlock) {

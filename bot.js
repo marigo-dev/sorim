@@ -9,6 +9,7 @@ const SkillTree = require('./skillTree');
 const movement = require('./skills/movement');
 const survival = require('./skills/survival');
 const storage = require('./skills/storage');
+const shelter = require('./skills/shelter');
 const memory = require('./skills/memory');
 const actionControl = require('./skills/actionControl');
 const toolRegistry = require('./toolRegistry');
@@ -143,6 +144,7 @@ async function loop() {
 
         busy = true;
         try {
+            await shelter.ensureBaseEgress(bot);
             const observation = observe();
             const level = skillTree.getLevel(observation);
             if (pendingSafetyCall) {

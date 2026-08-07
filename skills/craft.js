@@ -93,9 +93,10 @@ async function placeBlock(bot, itemName) {
 
 async function ensureCraftingTable(bot) {
     for (const nearby of findNearbyBlocks(bot, 'crafting_table', 16).slice(0, 8)) {
+        if (blockReachDistance(bot, nearby) <= 4.5) return nearby;
         try {
             await movement.moveNear(bot, nearby.position, 4, 5000);
-            return nearby;
+            if (blockReachDistance(bot, nearby) <= 4.5) return nearby;
         } catch (error) {
             console.log(`[CRAFT] nearby table is unreachable, trying a new one: ${error.message}`);
         }
@@ -108,6 +109,13 @@ async function ensureCraftingTable(bot) {
         if (placed) return placed;
     }
 
+    if (totalPlanks(bot) < 4) {
+        const log = bot.inventory.items().find(item => item.name.endsWith('_log'));
+        if (log) {
+            await craftItem(bot, log.name.replace(/_log$/, '_planks'), 4);
+        }
+    }
+
     if (totalPlanks(bot) >= 4) {
         await craftItem(bot, 'crafting_table', 1);
         await placeBlock(bot, 'crafting_table');
@@ -116,6 +124,11 @@ async function ensureCraftingTable(bot) {
     }
 
     throw new Error('Crafting table yok');
+}
+
+function blockReachDistance(bot, block) {
+    return bot.entity.position.offset(0, 1.65, 0)
+        .distanceTo(block.position.offset(0.5, 0.5, 0.5));
 }
 
 async function placeFreshCraftingTable(bot) {

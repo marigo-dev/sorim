@@ -5,6 +5,7 @@ const SAVE_DELAY_MS = 200;
 
 let base = null;
 let surfaceExit = null;
+let mineRoute = [];
 let placedBlocks = new Set();
 let memoryFile = null;
 let saveTimer = null;
@@ -13,6 +14,7 @@ function initialize(botName = 'marigo', options = {}) {
     cancelScheduledSave();
     base = null;
     surfaceExit = null;
+    mineRoute = [];
     placedBlocks = new Set();
 
     const directory = options.directory || path.join(__dirname, '..', 'data', 'memory');
@@ -25,6 +27,7 @@ function initialize(botName = 'marigo', options = {}) {
         const saved = JSON.parse(fs.readFileSync(memoryFile, 'utf8'));
         base = normalizePosition(saved.base);
         surfaceExit = normalizePosition(saved.surfaceExit);
+        mineRoute = normalizeRoute(saved.mineRoute);
         placedBlocks = new Set(
             Array.isArray(saved.placedBlocks)
                 ? saved.placedBlocks.filter(name => typeof name === 'string')
@@ -70,6 +73,32 @@ function clearSurfaceExit() {
     scheduleSave();
 }
 
+function setMineRoute(positions) {
+    const next = normalizeRoute(positions);
+    if (sameRoute(mineRoute, next)) return;
+    mineRoute = next;
+    scheduleSave();
+}
+
+function appendMineRoute(position) {
+    const next = normalizePosition(position);
+    if (!next) return;
+    const last = mineRoute[mineRoute.length - 1];
+    if (samePosition(last, next)) return;
+    mineRoute = [...mineRoute, next].slice(-256);
+    scheduleSave();
+}
+
+function getMineRoute() {
+    return mineRoute.map(position => ({ ...position }));
+}
+
+function clearMineRoute() {
+    if (mineRoute.length === 0) return;
+    mineRoute = [];
+    scheduleSave();
+}
+
 function rememberPlacedBlock(name) {
     if (!name || placedBlocks.has(name)) return;
     placedBlocks.add(name);
@@ -99,6 +128,7 @@ function flush() {
         version: 1,
         base,
         surfaceExit,
+        mineRoute,
         placedBlocks: [...placedBlocks].sort()
     }, null, 2);
 
@@ -133,6 +163,22 @@ function samePosition(left, right) {
         left.z === right.z;
 }
 
+function normalizeRoute(positions) {
+    if (!Array.isArray(positions)) return [];
+    const route = [];
+    for (const position of positions) {
+        const normalized = normalizePosition(position);
+        if (!normalized || samePosition(route[route.length - 1], normalized)) continue;
+        route.push(normalized);
+    }
+    return route.slice(-256);
+}
+
+function sameRoute(left, right) {
+    return left.length === right.length &&
+        left.every((position, index) => samePosition(position, right[index]));
+}
+
 module.exports = {
     initialize,
     flush,
@@ -142,6 +188,10 @@ module.exports = {
     setSurfaceExit,
     getSurfaceExit,
     clearSurfaceExit,
+    setMineRoute,
+    appendMineRoute,
+    getMineRoute,
+    clearMineRoute,
     rememberPlacedBlock,
     hasPlacedBlock
 };

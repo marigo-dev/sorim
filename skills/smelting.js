@@ -2,12 +2,16 @@ const { Vec3 } = require('vec3');
 const craft = require('./craft');
 const movement = require('./movement');
 const memory = require('./memory');
+const actionControl = require('./actionControl');
 
 const FUEL_ITEMS = ['coal', 'charcoal', 'oak_log', 'birch_log', 'spruce_log', 'oak_planks', 'birch_planks'];
 
 async function ensureFurnace(bot) {
     const nearby = findNearbyBlock(bot, 'furnace', 16);
-    if (nearby) return nearby;
+    if (nearby) {
+        memory.rememberPlacedBlock('furnace');
+        return nearby;
+    }
 
     if (countItem(bot, 'furnace') <= 0) {
         await craft.craftItem(bot, 'furnace', 1);
@@ -25,9 +29,15 @@ async function ensureFurnace(bot) {
             await bot.placeBlock(placement.reference, placement.face);
             await movement.sleep(500);
             const placed = bot.blockAt(placement.target);
-            if (placed?.name === 'furnace') return placed;
+            if (placed?.name === 'furnace') {
+                memory.rememberPlacedBlock('furnace');
+                return placed;
+            }
             const visible = findNearbyBlock(bot, 'furnace', 4);
-            if (visible) return visible;
+            if (visible) {
+                memory.rememberPlacedBlock('furnace');
+                return visible;
+            }
         } catch (error) {
             console.log(`[SMELT] furnace placement failed: ${error.message}`);
         }
@@ -37,7 +47,9 @@ async function ensureFurnace(bot) {
 }
 
 async function smeltItem(bot, inputName, outputName, count = 1) {
+    const actionVersion = actionControl.snapshot(bot);
     const furnaceBlock = await ensureFurnace(bot);
+    actionControl.assertActive(bot, actionVersion);
     const input = bot.inventory.items().find(item => item.name === inputName);
     if (!input) throw new Error(`${inputName} yok`);
 
@@ -47,8 +59,9 @@ async function smeltItem(bot, inputName, outputName, count = 1) {
         await takeOutputIfPresent(furnace);
         await clearDifferentInput(furnace, inputName);
         await ensureInput(furnace, input, count);
+        actionControl.assertActive(bot, actionVersion);
         await ensureFuel(bot, furnace);
-        await waitForOutput(bot, furnace, outputName, count);
+        await waitForOutput(bot, furnace, outputName, count, actionVersion);
     } finally {
         furnace.close();
     }
@@ -83,10 +96,11 @@ async function ensureFuel(bot, furnace) {
     await furnace.putFuel(fuel.type, null, Math.min(fuel.count, fuel.name.endsWith('_log') ? 1 : fuel.count));
 }
 
-async function waitForOutput(bot, furnace, outputName, count) {
+async function waitForOutput(bot, furnace, outputName, count, actionVersion) {
     let collected = 0;
     const deadline = Date.now() + Math.max(35000, 15000 + count * 14000);
     while (Date.now() < deadline) {
+        actionControl.assertActive(bot, actionVersion);
         const output = furnace.outputItem();
         if (output?.name === outputName) {
             const amount = Math.min(output.count, count - collected);

@@ -2,6 +2,7 @@ const { goals } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
 const movement = require('./movement');
 const actionControl = require('./actionControl');
+const shelter = require('./shelter');
 
 const LOGS = new Set([
     'oak_log',
@@ -17,6 +18,8 @@ const failedTrees = new Map();
 
 async function mineBlock(bot, action) {
     const actionVersion = actionControl.snapshot(bot);
+    actionControl.assertActive(bot, actionVersion);
+    await shelter.leaveBase(bot);
     actionControl.assertActive(bot, actionVersion);
     const targetName = action.target;
     const block = targetName === 'any_log' ? findBestLog(bot) : findBestBlock(bot, targetName);

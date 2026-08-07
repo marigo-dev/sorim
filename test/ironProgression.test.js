@@ -1,0 +1,70 @@
+const assert = require('node:assert/strict');
+const SkillTree = require('../skillTree');
+const iron = require('../skills/iron');
+
+function observation(inventory, overrides = {}) {
+    return {
+        health: 20,
+        food: 20,
+        position: { x: 0, y: 70, z: 0 },
+        inventory,
+        nearbyBlocks: [],
+        nearbyMobs: [],
+        hasUsableChest: true,
+        hasPlacedCraftingTable: true,
+        hasPlacedFurnace: true,
+        storageReady: true,
+        base: { x: 0, y: 70, z: 0 },
+        survivalReady: true,
+        ...overrides
+    };
+}
+
+const miningKit = {
+    stone_pickaxe: 1,
+    stone_axe: 1,
+    stone_sword: 1,
+    furnace: 1,
+    coal: 3,
+    torch: 16,
+    cobblestone: 16,
+    bread: 16,
+    oak_planks: 12,
+    stick: 6
+};
+
+const tree = new SkillTree();
+assert.equal(tree.getLevel(observation(miningKit)).id, 'L13_SAFE_IRON_MINE');
+assert.equal(
+    tree.getForcedAction(observation(miningKit), tree.getLevel(observation(miningKit))).action,
+    'mine_iron'
+);
+assert.equal(
+    new SkillTree().getLevel(observation({ ...miningKit, raw_iron: 16 })).id,
+    'L14_COLLECT_RAW_IRON'
+);
+assert.equal(
+    new SkillTree().getLevel(observation({ ...miningKit, raw_iron: 17 })).id,
+    'L15_SMELT_IRON'
+);
+assert.equal(
+    new SkillTree().getLevel(observation({ ...miningKit, iron_ingot: 17 })).id,
+    'L16_CRAFT_IRON_KIT'
+);
+assert.equal(
+    new SkillTree().getLevel(observation({
+        ...miningKit,
+        iron_pickaxe: 1,
+        iron_sword: 1,
+        iron_axe: 1,
+        shield: 1,
+        iron_ingot: 8
+    })).id,
+    'L11_STABLE_SURVIVAL'
+);
+
+assert.equal(iron.requiredCorePlanks(0), 10);
+assert.equal(iron.requiredCorePlanks(2), 8);
+assert.equal(iron.requiredCorePlanks(6), 6);
+
+console.log('Iron-age milestones and core material reserve passed.');

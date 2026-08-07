@@ -11,6 +11,12 @@ try {
     memory.initialize('test-bot', { directory });
     memory.setBase({ x: 10.9, y: 64.2, z: -4.1 });
     memory.setSurfaceExit({ x: 3, y: 71, z: 8 });
+    memory.setMineRoute([
+        { x: 3, y: 71, z: 8 },
+        { x: 4, y: 70, z: 8 },
+        { x: 4, y: 70, z: 8 }
+    ]);
+    memory.appendMineRoute({ x: 5, y: 69, z: 8 });
     memory.rememberPlacedBlock('crafting_table');
     memory.flush();
 
@@ -20,11 +26,18 @@ try {
 
     assert.deepEqual(memory.getBase(), { x: 10, y: 64, z: -5 });
     assert.deepEqual(memory.getSurfaceExit(), { x: 3, y: 71, z: 8 });
+    assert.deepEqual(memory.getMineRoute(), [
+        { x: 3, y: 71, z: 8 },
+        { x: 4, y: 70, z: 8 },
+        { x: 5, y: 69, z: 8 }
+    ]);
     assert.equal(memory.hasPlacedBlock('crafting_table'), true);
     assert.equal(memory.hasPlacedBlock('furnace'), false);
     memory.clearSurfaceExit();
+    memory.clearMineRoute();
     memory.flush();
     assert.equal(memory.getSurfaceExit(), null);
+    assert.deepEqual(memory.getMineRoute(), []);
     console.log('Persistent bot memory passed.');
 } finally {
     fs.rmSync(directory, { recursive: true, force: true });
