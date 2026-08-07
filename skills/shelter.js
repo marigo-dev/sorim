@@ -2,6 +2,7 @@ const { Vec3 } = require('vec3');
 const craft = require('./craft');
 const movement = require('./movement');
 const memory = require('./memory');
+const actionControl = require('./actionControl');
 
 const BUILD_BLOCKS = [
     'cobblestone',
@@ -10,18 +11,21 @@ const BUILD_BLOCKS = [
     'birch_planks',
     'spruce_planks'
 ];
+let activeShelterBase = null;
 
 async function buildSafeShelter(bot) {
+    const actionVersion = actionControl.snapshot(bot);
     const origin = bot.entity.position.floored();
-    const base = new Vec3(origin.x, origin.y, origin.z);
+    const base = activeShelterBase || new Vec3(origin.x, origin.y, origin.z);
+    activeShelterBase = base.clone();
 
     console.log(`[SHELTER] building first shelter base=${base.toString()}`);
-    await ensureDoor(bot);
     let placed = 0;
 
     for (let y = 0; y <= 2; y++) {
         for (let dx = -1; dx <= 1; dx++) {
             for (let dz = -1; dz <= 1; dz++) {
+                actionControl.assertActive(bot, actionVersion);
                 const edge = Math.abs(dx) === 1 || Math.abs(dz) === 1;
                 const roof = y === 2;
                 const floor = y === -1;
@@ -35,16 +39,24 @@ async function buildSafeShelter(bot) {
         }
     }
 
-    await placeDoor(bot, base.offset(0, 0, -1));
-    await placeUtilityInside(bot, 'crafting_table', base.offset(0, 0, 0));
-    await movement.moveNear(bot, base, 1, 10000);
-
     const shellScore = scoreShelterShell(bot, base);
     console.log(`[SHELTER] placed=${placed} shell=${shellScore}`);
     if (shellScore < 18) {
         throw new Error(`Shelter shell incomplete: ${shellScore}/22`);
     }
+
+    actionControl.assertActive(bot, actionVersion);
+    await ensureDoor(bot);
+    await placeDoor(bot, base.offset(0, 0, -1));
+    await placeUtilityInside(bot, 'crafting_table', base.offset(0, 0, 0));
+    await movement.moveNear(bot, base, 1, 10000);
     memory.setBase(base);
+    activeShelterBase = null;
+}
+
+function isBuildingNear(bot, range = 5) {
+    if (!activeShelterBase) return false;
+    return bot.entity.position.distanceTo(activeShelterBase) <= range;
 }
 
 async function returnToBase(bot) {
@@ -179,5 +191,6 @@ function isAir(block) {
 
 module.exports = {
     buildSafeShelter,
-    returnToBase
+    returnToBase,
+    isBuildingNear
 };

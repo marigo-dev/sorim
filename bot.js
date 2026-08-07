@@ -10,6 +10,7 @@ const movement = require('./skills/movement');
 const survival = require('./skills/survival');
 const storage = require('./skills/storage');
 const memory = require('./skills/memory');
+const actionControl = require('./skills/actionControl');
 const toolRegistry = require('./toolRegistry');
 
 const BOT_NAME = process.env.MC_USERNAME || 'marigo';
@@ -38,6 +39,8 @@ let queuedUserCommand = null;
 let autonomousMode = process.env.AUTONOMOUS_ON_START === 'true';
 let cancelRequested = false;
 let lastError = null;
+let activeToolName = null;
+let pendingSafetyCall = null;
 
 bot.once('spawn', async () => {
     console.log(`[BOOT] ${BOT_NAME} spawned. AI body runtime started.`);
@@ -98,7 +101,11 @@ bot.on('chat', async (username, message) => {
 
 bot.on('kicked', reason => console.log('[KICKED]', reason));
 bot.on('error', error => console.log('[BOT_ERROR]', error.message));
-bot.on('death', () => console.log('[DEATH] Bot died; waiting for automatic respawn.'));
+bot.on('death', () => {
+    console.log('[DEATH] Bot died; cancelling the active action before respawn.');
+    pendingSafetyCall = null;
+    haltCurrentAction('death');
+});
 bot.on('end', () => {
     running = false;
     console.log('[END] Bot connection closed.');
@@ -106,6 +113,25 @@ bot.on('end', () => {
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+
+const safetyWatchdog = setInterval(() => {
+    if (!running || !autonomousMode || !busy || cancelRequested || !bot.entity || bot.health <= 0) return;
+    if (activeToolName === 'fight_mob') return;
+    const threat = survival.nearestHostile(bot, 12);
+    if (!threat) return;
+
+    console.log(
+        `[SAFETY_INTERRUPT] cancelling=${activeToolName || 'unknown'} ` +
+        `threat=${threat.name} distance=${threat.distance.toFixed(1)}`
+    );
+    pendingSafetyCall = {
+        tool: 'fight_mob',
+        args: { entityId: threat.id },
+        reason: `Reactive threat interrupt: ${threat.name}`
+    };
+    haltCurrentAction(`hostile ${threat.name}`);
+}, 300);
+safetyWatchdog.unref();
 
 async function loop() {
     while (running) {
@@ -116,11 +142,20 @@ async function loop() {
         try {
             const observation = observe();
             const level = skillTree.getLevel(observation);
+            if (pendingSafetyCall) {
+                const safetyCall = pendingSafetyCall;
+                pendingSafetyCall = null;
+                console.log(`[SAFETY_PENDING] tool=${JSON.stringify(safetyCall)} inv=${observation.inventoryText}`);
+                await executeTool(safetyCall);
+                lastError = null;
+                continue;
+            }
+
             if (queuedUserCommand) {
                 const commandCall = queuedUserCommand;
                 queuedUserCommand = null;
                 console.log(`[USER_COMMAND] tool=${JSON.stringify(commandCall)} inv=${observation.inventoryText}`);
-                await toolRegistry.executeToolCall(bot, commandCall);
+                await executeTool(commandCall);
                 lastError = null;
                 continue;
             }
@@ -145,7 +180,7 @@ async function loop() {
             if (immediate) {
                 const safetyCall = toolRegistry.normalizeToolCall(immediate);
                 console.log(`[SAFETY] tool=${JSON.stringify(safetyCall)} inv=${observation.inventoryText}`);
-                await toolRegistry.executeToolCall(bot, safetyCall);
+                await executeTool(safetyCall);
                 lastError = null;
                 continue;
             }
@@ -174,7 +209,7 @@ async function loop() {
             toolCall = toolCall || toolRegistry.fallbackToolCall(skillTree, observation, level);
 
             console.log(`[AI_LOOP] source=${source} level=${level.id} tool=${JSON.stringify(toolCall)} inv=${observation.inventoryText}`);
-            await toolRegistry.executeToolCall(bot, toolCall);
+            await executeTool(toolCall);
             lastError = null;
         } catch (error) {
             if (cancelRequested) {
@@ -239,8 +274,8 @@ function install26_2AttackShim(bot) {
 
     bot.attack = function attack26_2(target, swing = true) {
         if (!target?.id || !bot._client) return originalAttack(target, swing);
-        if (swing) bot.swingArm();
         bot._client.write('attack', { entityId: target.id });
+        if (swing) bot.swingArm();
     };
 }
 
@@ -568,13 +603,23 @@ function isExpectedMovementCancel(error) {
         message.includes('Digging aborted');
 }
 
-function haltCurrentAction() {
+function haltCurrentAction(reason = 'manual stop') {
+    actionControl.cancel(bot, reason);
     cancelRequested = true;
     movement.stop(bot);
     try {
         bot.stopDigging();
     } catch {
         // The bot may not be digging right now.
+    }
+}
+
+async function executeTool(call) {
+    activeToolName = call?.tool || null;
+    try {
+        await toolRegistry.executeToolCall(bot, call);
+    } finally {
+        activeToolName = null;
     }
 }
 

@@ -24,11 +24,25 @@ async function craftStoneTools(bot) {
 }
 
 async function ensureCraftingTable(bot) {
+    if (hasItem(bot, 'crafting_table', 1)) {
+        await moveToOpenWorkspace(bot);
+        await craft.placeBlock(bot, 'crafting_table');
+        return;
+    }
+
     const id = bot.registry.blocksByName.crafting_table?.id;
-    const nearby = id ? bot.findBlock({ matching: id, maxDistance: 16 }) : null;
-    if (nearby) {
+    const nearbyTables = id
+        ? bot.findBlocks({ matching: id, maxDistance: 16, count: 32 })
+            .map(position => bot.blockAt(position))
+            .filter(Boolean)
+            .sort((a, b) =>
+                a.position.distanceTo(bot.entity.position) -
+                b.position.distanceTo(bot.entity.position)
+            )
+        : [];
+    for (const nearby of nearbyTables.slice(0, 8)) {
         try {
-            await movement.moveNear(bot, nearby.position, 3, 6000);
+            await movement.moveNear(bot, nearby.position, 4, 5000);
             return;
         } catch (error) {
             console.log(`[TOOLS] table is unreachable, trying a new one: ${error.message}`);
@@ -37,9 +51,7 @@ async function ensureCraftingTable(bot) {
 
     await moveToOpenWorkspace(bot);
 
-    if (!hasItem(bot, 'crafting_table', 1)) {
-        await craft.craftItem(bot, 'crafting_table', 1);
-    }
+    await craft.craftItem(bot, 'crafting_table', 1);
     await craft.placeBlock(bot, 'crafting_table');
 }
 
@@ -96,14 +108,14 @@ function inventorySlots(bot) {
 
 async function moveToOpenWorkspace(bot) {
     const origin = bot.entity.position.floored();
-    if (isOpenStand(bot, origin) && hasSkyRoom(bot, origin)) return;
+    if (isOpenStand(bot, origin)) return;
 
     const candidates = [];
     for (let dx = -6; dx <= 6; dx++) {
         for (let dz = -6; dz <= 6; dz++) {
             for (let dy = 4; dy >= -2; dy--) {
                 const position = origin.offset(dx, dy, dz);
-                if (isOpenStand(bot, position) && hasSkyRoom(bot, position)) {
+                if (isOpenStand(bot, position)) {
                     candidates.push(position);
                 }
             }
@@ -126,13 +138,6 @@ function isOpenStand(bot, position) {
     const head = bot.blockAt(position.offset(0, 1, 0));
     const floor = bot.blockAt(position.offset(0, -1, 0));
     return isAir(feet) && isAir(head) && floor?.boundingBox === 'block';
-}
-
-function hasSkyRoom(bot, position) {
-    for (let y = 0; y <= 3; y++) {
-        if (!isAir(bot.blockAt(position.offset(0, y, 0)))) return false;
-    }
-    return true;
 }
 
 function isAir(block) {

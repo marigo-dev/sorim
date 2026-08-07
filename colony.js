@@ -309,8 +309,8 @@ function install26_2AttackShim(bot) {
 
     bot.attack = function attack26_2(target, swing = true) {
         if (!target?.id || !bot._client) return originalAttack(target, swing);
-        if (swing) bot.swingArm();
         bot._client.write('attack', { entityId: target.id });
+        if (swing) bot.swingArm();
     };
 }
 

@@ -10,6 +10,7 @@ const MAPPINGS_1_21_11_TO_26_1 = {
 };
 
 const MAPPINGS_26_1_TO_26_2 = {
+    entities: { at: [130], to: [131] },
     items: {
         at: [26, 92, 95, 98, 102, 106, 110, 114, 118, 122, 126, 130, 1025, 1167, 1313, 1421],
         to: [53, 126, 119, 129, 137, 145, 153, 122, 133, 141, 149, 157, 1053, 1196, 1343, 1452]
@@ -23,6 +24,123 @@ const MAPPINGS_26_1_TO_26_2 = {
         to: [27160, 27790, 27795, 27794, 27793, 27792, 27803, 27802, 27801, 27800, 27807, 27806, 27805, 27804, 28048, 27968, 27888, 27808, 28466, 28460, 28454, 28448, 27786, 27788, 27787, 27789, 27799, 27798, 27797, 27796, 28368, 28288, 28208, 28128, 28490, 28484, 28478, 28472, 28496, 28688, 28624, 28752, 28944, 28880, 29008, 29200, 29136, 29264, 29456, 29392, 29520, 30209, 30208, 30249]
     }
 };
+
+// Protocol order from the vanilla 26.2 data-component registry report.
+// Slot component ids are registry ids, so every insertion must be represented
+// here or all following component payloads are decoded with the wrong codec.
+const SLOT_COMPONENTS_26_2 = [
+    'custom_data',
+    'max_stack_size',
+    'max_damage',
+    'damage',
+    'unbreakable',
+    'use_effects',
+    'custom_name',
+    'minimum_attack_charge',
+    'damage_type',
+    'item_name',
+    'item_model',
+    'lore',
+    'rarity',
+    'enchantments',
+    'can_place_on',
+    'can_break',
+    'attribute_modifiers',
+    'custom_model_data',
+    'tooltip_display',
+    'repair_cost',
+    'creative_slot_lock',
+    'enchantment_glint_override',
+    'intangible_projectile',
+    'food',
+    'consumable',
+    'use_remainder',
+    'use_cooldown',
+    'damage_resistant',
+    'tool',
+    'weapon',
+    'attack_range',
+    'enchantable',
+    'equippable',
+    'repairable',
+    'glider',
+    'tooltip_style',
+    'death_protection',
+    'blocks_attacks',
+    'piercing_weapon',
+    'kinetic_weapon',
+    'swing_animation',
+    'additional_trade_cost',
+    'stored_enchantments',
+    'dye',
+    'dyed_color',
+    'map_color',
+    'map_id',
+    'map_decorations',
+    'map_post_processing',
+    'charged_projectiles',
+    'bundle_contents',
+    'potion_contents',
+    'potion_duration_scale',
+    'suspicious_stew_effects',
+    'writable_book_content',
+    'written_book_content',
+    'trim',
+    'debug_stick_state',
+    'entity_data',
+    'bucket_entity_data',
+    'block_entity_data',
+    'instrument',
+    'provides_trim_material',
+    'ominous_bottle_amplifier',
+    'jukebox_playable',
+    'provides_banner_patterns',
+    'recipes',
+    'lodestone_tracker',
+    'firework_explosion',
+    'fireworks',
+    'profile',
+    'note_block_sound',
+    'banner_patterns',
+    'base_color',
+    'pot_decorations',
+    'container',
+    'block_state',
+    'bees',
+    'sulfur_cube_content',
+    'lock',
+    'container_loot',
+    'break_sound',
+    'villager/variant',
+    'wolf/variant',
+    'wolf/sound_variant',
+    'wolf/collar',
+    'fox/variant',
+    'salmon/size',
+    'parrot/variant',
+    'tropical_fish/pattern',
+    'tropical_fish/base_color',
+    'tropical_fish/pattern_color',
+    'mooshroom/variant',
+    'rabbit/variant',
+    'pig/variant',
+    'pig/sound_variant',
+    'cow/variant',
+    'cow/sound_variant',
+    'chicken/variant',
+    'chicken/sound_variant',
+    'zombie_nautilus/variant',
+    'frog/variant',
+    'horse/variant',
+    'painting/variant',
+    'llama/variant',
+    'axolotl/variant',
+    'cat/variant',
+    'cat/sound_variant',
+    'cat/collar',
+    'sheep/color',
+    'shulker/color'
+];
 
 if (ENABLED) {
     install26_2Shim();
@@ -101,9 +219,34 @@ function make26_2Data(base) {
 }
 
 function apply26_2RegistryMappings(base, data) {
+    remapEntities(base, data);
     remapItems(base, data);
     remapBlocks(base, data);
     remapRecipes(base, data);
+}
+
+function remapEntities(base, data) {
+    const entities = {};
+    const entitiesByName = {};
+
+    for (const entity of Object.values(base.entities || {})) {
+        if (!entity || typeof entity.id !== 'number') continue;
+        const mappedId = mapEntityId(entity.id);
+        const mappedEntity = { ...entity, id: mappedId, internalId: mappedId };
+        entities[mappedId] = mappedEntity;
+        entitiesByName[mappedEntity.name] = mappedEntity;
+    }
+
+    data.entities = entities;
+    data.entitiesByName = entitiesByName;
+
+    const mobs = {};
+    for (const entity of Object.values(base.mobs || {})) {
+        if (!entity || typeof entity.id !== 'number') continue;
+        const mappedId = mapEntityId(entity.id);
+        mobs[mappedId] = { ...entity, id: mappedId, internalId: mappedId };
+    }
+    data.mobs = mobs;
 }
 
 function remapItems(base, data) {
@@ -192,6 +335,10 @@ function mapItemId(id) {
     return mapRange(mapRange(id, MAPPINGS_1_21_11_TO_26_1.items), MAPPINGS_26_1_TO_26_2.items);
 }
 
+function mapEntityId(id) {
+    return mapRange(id, MAPPINGS_26_1_TO_26_2.entities);
+}
+
 function mapBlockId(id) {
     return mapRange(mapRange(id, MAPPINGS_1_21_11_TO_26_1.blocks), MAPPINGS_26_1_TO_26_2.blocks);
 }
@@ -211,10 +358,60 @@ function mapRange(id, mapping) {
 
 function patch26_2Protocol(baseProtocol) {
     const protocol = JSON.parse(JSON.stringify(baseProtocol));
+    patchSlotComponents(protocol);
     patchLoginSuccess(protocol);
     patchPlayClientbound(protocol);
     patchPlayServerbound(protocol);
     return protocol;
+}
+
+function patchSlotComponents(protocol) {
+    const componentMapper = protocol.types?.SlotComponentType?.[1]?.mappings;
+    const componentFields = protocol.types?.SlotComponent?.[1]?.[1]?.type?.[1]?.fields;
+    if (!componentMapper || !componentFields) {
+        throw new Error('Unexpected minecraft-data slot component layout');
+    }
+
+    protocol.types.SlotComponentType[1].mappings = Object.fromEntries(
+        SLOT_COMPONENTS_26_2.map((name, id) => [String(id), name])
+    );
+
+    componentFields.additional_trade_cost = 'varint';
+    componentFields.dye = 'varint';
+    componentFields.sulfur_cube_content = 'ItemStackTemplate26_2';
+
+    // Vanilla holders use a single positive registry varint. Direct custom
+    // registry entries are not yet decoded, but consuming the common form
+    // keeps ordinary inventory packets aligned.
+    componentFields['wolf/sound_variant'] = 'varint';
+    componentFields['pig/sound_variant'] = 'varint';
+    componentFields['cow/sound_variant'] = 'varint';
+    componentFields['chicken/sound_variant'] = 'varint';
+    componentFields['cat/sound_variant'] = 'varint';
+
+    protocol.types.ItemStackTemplate26_2 = [
+        'container',
+        [
+            { name: 'itemId', type: 'varint' },
+            { name: 'itemCount', type: 'varint' },
+            { name: 'addedComponentCount', type: 'varint' },
+            { name: 'removedComponentCount', type: 'varint' },
+            {
+                name: 'components',
+                type: ['array', { count: 'addedComponentCount', type: 'SlotComponent' }]
+            },
+            {
+                name: 'removeComponents',
+                type: [
+                    'array',
+                    {
+                        count: 'removedComponentCount',
+                        type: ['container', [{ name: 'type', type: 'SlotComponentType' }]]
+                    }
+                ]
+            }
+        ]
+    ];
 }
 
 function patchLoginSuccess(protocol) {
@@ -235,6 +432,7 @@ function patchPlayClientbound(protocol) {
     protocol.play.toClient.types.packet_recipe_book_settings = rawPacket();
     protocol.play.toClient.types.packet_advancements = rawPacket();
     protocol.play.toClient.types.packet_explosion = rawPacket();
+    protocol.play.toClient.types.packet_world_particles = rawPacket();
     protocol.play.toClient.types.packet_entity_metadata = [
         'container',
         [
@@ -414,7 +612,6 @@ function patchPlayClientbound(protocol) {
 
     protocol.play.toClient.types.packet_game_rule_values = 'void';
     protocol.play.toClient.types.packet_low_disk_space_warning = 'void';
-    protocol.play.toClient.types.packet_set_player_inventory = rawPacket();
     setPacketMappings(protocol.play.toClient.types.packet, names);
 }
 
@@ -653,3 +850,7 @@ function copyProperties(source, target) {
         if (descriptor) Object.defineProperty(target, key, descriptor);
     }
 }
+
+module.exports = {
+    SLOT_COMPONENTS_26_2
+};

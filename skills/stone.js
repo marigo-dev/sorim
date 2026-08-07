@@ -1,7 +1,7 @@
 const { Vec3 } = require('vec3');
-const createItem = require('prismarine-item');
 const movement = require('./movement');
 const memory = require('./memory');
+const actionControl = require('./actionControl');
 
 const DIRECTIONS = [
     new Vec3(1, 0, 0),
@@ -12,6 +12,7 @@ const DIRECTIONS = [
 let directionIndex = 0;
 
 async function collectStone(bot, count = 16) {
+    const actionVersion = actionControl.snapshot(bot);
     await ensureSupportedStart(bot);
     const start = bot.entity.position.floored();
     memory.setSurfaceExit(start);
@@ -25,6 +26,7 @@ async function collectStone(bot, count = 16) {
     console.log(`[STONE] target cobblestone=${target}, start=${start.toString()} direction=${direction.toString()}`);
     try {
         for (let step = 0; step < 32 && countItem(bot, 'cobblestone') < target; step++) {
+            actionControl.assertActive(bot, actionVersion);
             const exposed = findReachableStone(bot);
             if (exposed && noProgressMines < 5) {
                 const gained = await mineReachableStone(bot, exposed);
@@ -46,6 +48,11 @@ async function collectStone(bot, count = 16) {
             }
         }
     } finally {
+        const wasCancelled = actionControl.snapshot(bot) !== actionVersion;
+        if (wasCancelled) {
+            movement.stop(bot);
+            throw new Error(`Action cancelled: ${bot.sorimCancelReason || 'safety override'}`);
+        }
         try {
             await movement.withTimeout(
                 returnToSurface(bot, start, shaft),
@@ -239,6 +246,7 @@ function findReachableStone(bot) {
         .map(position => bot.blockAt(position))
         .filter(Boolean)
         .filter(block => hasOpenFace(bot, block.position))
+        .filter(block => block.position.y >= feet.y - 1)
         .filter(block => !isUnsafeFloorTarget(block.position, feet))
         .filter(block => block.position.distanceTo(bot.entity.position) <= 5)
         .sort((a, b) =>
@@ -288,6 +296,10 @@ async function digWithTimeout(bot, block) {
 
     try {
         await Promise.race([bot.dig(block), timeout]);
+    } catch (error) {
+        const current = bot.blockAt(block.position);
+        if (!current || current.name !== block.name) return;
+        throw error;
     } finally {
         clearTimeout(timer);
     }
@@ -311,21 +323,25 @@ async function collectNearby(bot, itemName, before, origin) {
             )[0];
         if (drop) {
             try {
-                await movement.moveNear(bot, drop.position, 1, 3000);
+                await movement.moveBlock(bot, drop.position.floored(), 3000);
             } catch {
                 await jumpToward(bot, drop.position);
             }
+        } else {
+            try {
+                await movement.moveBlock(bot, origin, 2500);
+            } catch {
+                await jumpToward(bot, origin);
+            }
         }
-        await movement.sleep(200);
+        await movement.sleep(350);
     }
 
     if (countItem(bot, itemName) <= before) {
         const dropStillNear = hasNearbyDrop(bot, origin, 6);
         if (dropStillNear) {
             await jumpToward(bot, origin);
-            await movement.sleep(400);
-        } else {
-            repairInventoryCount(bot, itemName, before + 1);
+            await movement.sleep(800);
         }
     }
 }
@@ -333,18 +349,6 @@ async function collectNearby(bot, itemName, before, origin) {
 function hasNearbyDrop(bot, origin, radius) {
     return Object.values(bot.entities || {})
         .some(entity => entity.name === 'item' && entity.position.distanceTo(origin) <= radius);
-}
-
-function repairInventoryCount(bot, itemName, expected) {
-    const current = countItem(bot, itemName);
-    if (current >= expected) return;
-    const itemInfo = bot.registry.itemsByName[itemName];
-    if (!itemInfo) return;
-    const Item = createItem(bot.registry);
-    const slot = bot.inventory.firstEmptyInventorySlot();
-    if (slot == null || slot < 0) return;
-    bot.inventory.updateSlot(slot, new Item(itemInfo.id, expected - current));
-    console.log(`[STONE] repaired local inventory ${itemName} ${current} -> ${expected}`);
 }
 
 async function jumpToward(bot, position) {

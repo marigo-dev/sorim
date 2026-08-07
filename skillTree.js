@@ -33,13 +33,17 @@ const LEVELS = [
         id: 'L1_COLLECT_WOOD',
         goal: 'Collect at least 4 logs. Search for trees and cut trunk logs.',
         allowedActions: ['mine', 'explore', 'idle'],
-        complete: (observation, tree) => tree.progress.maxWoodUnits >= 4
+        complete: (observation, tree) =>
+            tree.progress.maxWoodUnits >= 4 ||
+            hasCraftedWoodProgress(observation.inventory)
     },
     {
         id: 'L2_CRAFT_PLANKS',
         goal: 'Craft at least 16 planks from logs; unlock the early tool chain.',
         allowedActions: ['craft', 'idle'],
-        complete: (observation, tree) => tree.progress.maxPlanks >= 16
+        complete: (observation, tree) =>
+            tree.progress.maxPlanks >= 16 ||
+            hasPickaxeProgress(observation.inventory)
     },
     {
         id: 'L3_CRAFT_TABLE',
@@ -48,6 +52,7 @@ const LEVELS = [
         complete: (observation, tree) =>
             (observation.inventory.wooden_pickaxe || 0) >= 1 ||
             hasStoneTools(observation.inventory) ||
+            hasStoneAgeProgress(observation.inventory) ||
             tree.progress.hasCraftingTable ||
             observation.hasPlacedCraftingTable === true ||
             observation.nearbyBlocks.some(block => block.name === 'crafting_table' && block.distance <= 16)
@@ -56,7 +61,7 @@ const LEVELS = [
         id: 'L4_CRAFT_WOODEN_PICKAXE',
         goal: 'Craft a wooden pickaxe.',
         allowedActions: ['craft', 'place', 'idle'],
-        complete: observation => (observation.inventory.wooden_pickaxe || 0) >= 1
+        complete: observation => hasPickaxeProgress(observation.inventory)
     },
     {
         id: 'L5_COLLECT_STONE',
@@ -64,7 +69,8 @@ const LEVELS = [
         allowedActions: ['collect_stone', 'idle'],
         complete: (observation, tree) =>
             (observation.inventory.cobblestone || 0) >= 16 ||
-            tree.progress.maxCobblestone >= 16
+            tree.progress.maxCobblestone >= 16 ||
+            hasStoneAgeProgress(observation.inventory)
     },
     {
         id: 'L6_CRAFT_STONE_TOOLS',
@@ -75,7 +81,7 @@ const LEVELS = [
     {
         id: 'L7_BUILD_SAFE_SHELTER',
         goal: 'Build the first enclosed safe shelter and store its base coordinates.',
-        allowedActions: ['build_shelter', 'idle'],
+        allowedActions: ['mine', 'craft', 'build_shelter', 'idle'],
         complete: observation => Boolean(observation.base)
     },
     {
@@ -247,6 +253,23 @@ class SkillTree {
         }
 
         if (level.id === 'L7_BUILD_SAFE_SHELTER') {
+            const buildBlocks = shelterBuildBlocks(inventory);
+            if (buildBlocks < 28) {
+                const logName = LOG_ITEMS.find(name => (inventory[name] || 0) > 0);
+                if (logName) {
+                    return {
+                        action: 'craft',
+                        item: plankForLog(logName),
+                        count: Math.max(4, 28 - buildBlocks),
+                        reason: 'Level 7: prepare enough blocks for the shelter shell'
+                    };
+                }
+                return {
+                    action: 'mine',
+                    target: nearestVisibleLog(observation)?.name || 'any_log',
+                    reason: 'Level 7: collect wood for shelter materials'
+                };
+            }
             return {
                 action: 'build_shelter',
                 reason: 'Level 7: build first safe shelter'
@@ -466,6 +489,12 @@ function totalPlanks(inventory) {
         .reduce((sum, [, count]) => sum + count, 0);
 }
 
+function shelterBuildBlocks(inventory) {
+    return (inventory.cobblestone || 0) +
+        (inventory.dirt || 0) +
+        totalPlanks(inventory);
+}
+
 function plankForLog(logName) {
     return logName.replace(/_log$/, '_planks');
 }
@@ -473,6 +502,25 @@ function plankForLog(logName) {
 function hasStoneTools(inventory) {
     return ['stone_pickaxe', 'stone_axe', 'stone_sword']
         .every(name => (inventory[name] || 0) >= 1);
+}
+
+function hasCraftedWoodProgress(inventory) {
+    return totalPlanks(inventory) > 0 ||
+        (inventory.stick || 0) > 0 ||
+        (inventory.crafting_table || 0) > 0 ||
+        hasPickaxeProgress(inventory);
+}
+
+function hasPickaxeProgress(inventory) {
+    return ['wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe', 'diamond_pickaxe', 'netherite_pickaxe']
+        .some(name => (inventory[name] || 0) > 0);
+}
+
+function hasStoneAgeProgress(inventory) {
+    return Object.entries(inventory)
+        .some(([name, count]) =>
+            count > 0 && /^(stone|iron|diamond|netherite)_(pickaxe|axe|sword)$/.test(name)
+        );
 }
 
 function foodScore(inventory) {
