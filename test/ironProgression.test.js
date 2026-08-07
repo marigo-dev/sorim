@@ -195,6 +195,17 @@ assert.equal(
     ).action,
     'organize_storage'
 );
+const lowFoodFarmTree = new SkillTree();
+const lowFoodFarmObservation = observation(
+    { ...stableInventory, bread: 0 },
+    { farmReady: true }
+);
+const lowFoodFarmLevel = lowFoodFarmTree.getLevel(lowFoodFarmObservation);
+assert.equal(lowFoodFarmLevel.id, 'L9_FOOD_LOOP');
+assert.equal(
+    lowFoodFarmTree.getForcedAction(lowFoodFarmObservation, lowFoodFarmLevel).action,
+    'maintain_food_supply'
+);
 const spentReserveInventory = { ...stableInventory, iron_ingot: 0 };
 const replaceReserveLevel = armorTree.getLevel(observation(spentReserveInventory));
 assert.equal(replaceReserveLevel.id, 'L19_SMELT_ARMOR_IRON');

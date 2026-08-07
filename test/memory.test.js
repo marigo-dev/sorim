@@ -10,6 +10,7 @@ try {
     let memory = require(modulePath);
     memory.initialize('test-bot', { directory });
     memory.setBase({ x: 10.9, y: 64.2, z: -4.1 });
+    memory.setFarmCenter({ x: -12.2, y: 63.9, z: 7.8 });
     memory.setSurfaceExit({ x: 3, y: 71, z: 8 });
     memory.setMineRoute([
         { x: 3, y: 71, z: 8 },
@@ -26,6 +27,7 @@ try {
     memory.initialize('test-bot', { directory });
 
     assert.deepEqual(memory.getBase(), { x: 10, y: 64, z: -5 });
+    assert.deepEqual(memory.getFarmCenter(), { x: -13, y: 63, z: 7 });
     assert.deepEqual(memory.getSurfaceExit(), { x: 3, y: 71, z: 8 });
     assert.deepEqual(memory.getMineRoute(), [
         { x: 3, y: 71, z: 8 },
@@ -36,9 +38,11 @@ try {
     assert.equal(memory.hasPlacedBlock('furnace'), false);
     assert.equal(memory.getProgress('maxIronPotential'), 17);
     memory.clearSurfaceExit();
+    memory.clearFarmCenter();
     memory.clearMineRoute();
     memory.flush();
     assert.equal(memory.getSurfaceExit(), null);
+    assert.equal(memory.getFarmCenter(), null);
     assert.deepEqual(memory.getMineRoute(), []);
     console.log('Persistent bot memory passed.');
 } finally {

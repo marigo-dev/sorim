@@ -268,6 +268,8 @@ function observe() {
         hasBed: homestead.hasBed(bot),
         farmReady: homestead.hasFarm(bot),
         hasMatureCrop: homestead.hasMatureCrop(bot),
+        farmCapacity: homestead.farmCapacity(bot),
+        growingCrops: homestead.growingCropCount(bot),
         storageReady: !storage.isTemporarilyUnavailable(),
         base: memory.getBase(),
         survivalReady: true,

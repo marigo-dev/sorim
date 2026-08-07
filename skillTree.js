@@ -81,7 +81,7 @@ const LEVELS = [
     {
         id: 'L9_FOOD_LOOP',
         goal: 'Keep at least 16 edible items in reserve; if no food is nearby, temporarily move on.',
-        allowedActions: ['eat_food', 'find_food', 'idle'],
+        allowedActions: ['eat_food', 'find_food', 'maintain_food_supply', 'idle'],
         complete: observation =>
             food.hasFoodStock(observation.inventory, 16) ||
             (food.isTemporarilyUnavailable() &&
@@ -188,6 +188,7 @@ class SkillTree {
                     'craft',
                     'eat_food',
                     'find_food',
+                    'maintain_food_supply',
                     'organize_storage',
                     'prepare_mining_kit',
                     'mine_iron',
@@ -307,6 +308,12 @@ class SkillTree {
                 return {
                     action: 'eat_food',
                     reason: 'Level 9: use food reserve'
+                };
+            }
+            if (observation.farmReady) {
+                return {
+                    action: 'maintain_food_supply',
+                    reason: 'Level 9: use and expand the base food farm'
                 };
             }
             return {
@@ -442,8 +449,10 @@ class SkillTree {
 
             if (!food.hasFoodStock(inventory, 16) && !food.isTemporarilyUnavailable()) {
                 return {
-                    action: 'find_food',
-                    reason: 'Routine: food reserve is low'
+                    action: observation.farmReady ? 'maintain_food_supply' : 'find_food',
+                    reason: observation.farmReady
+                        ? 'Routine: maintain the base food farm'
+                        : 'Routine: food reserve is low'
                 };
             }
 
@@ -502,6 +511,7 @@ class SkillTree {
         if (action.action === 'build_shelter') return action;
         if (action.action === 'eat_food') return action;
         if (action.action === 'find_food') return action;
+        if (action.action === 'maintain_food_supply') return action;
         if (action.action === 'fight_mob') return action;
         if (action.action === 'escape_pit') return action;
         if (action.action === 'return_base') return action;

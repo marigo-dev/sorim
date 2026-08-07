@@ -29,6 +29,7 @@ const DEBUG_PREFIXES = [
     '[SHARED]',
     '[STORAGE]',
     '[FOOD]',
+    '[HOMESTEAD]',
     '[MEMORY]'
 ];
 

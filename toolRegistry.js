@@ -74,6 +74,12 @@ const TOOL_DEFINITIONS = [
         actions: ['find_food']
     },
     {
+        name: 'maintain_food_supply',
+        description: 'Harvest, replant, expand, or safely wait for the base food farm.',
+        args: {},
+        actions: ['maintain_food_supply']
+    },
+    {
         name: 'fight_mob',
         description: 'Fight a hostile mob by entity id. Usually selected by the safety supervisor.',
         args: { entityId: 'number optional' },
@@ -254,6 +260,7 @@ function actionToToolCall(action) {
         build_shelter: 'build_shelter',
         eat_food: 'eat_food',
         find_food: 'find_food',
+        maintain_food_supply: 'maintain_food_supply',
         fight_mob: 'fight_mob',
         escape_pit: 'escape_pit',
         return_base: 'return_base',
@@ -356,6 +363,11 @@ async function executeToolCall(bot, call) {
 
     if (call.tool === 'find_food') {
         await food.findFood(bot);
+        return;
+    }
+
+    if (call.tool === 'maintain_food_supply') {
+        await food.maintainFoodSupply(bot);
         return;
     }
 

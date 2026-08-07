@@ -22,6 +22,8 @@ const PLANK_NAMES = [
     'dark_oak_planks', 'cherry_planks', 'mangrove_planks'
 ];
 const TILLABLE = new Set(['dirt', 'grass_block', 'dirt_path', 'farmland']);
+const FARM_RADIUS = 4;
+const FOOD_FARM_TARGET = 48;
 
 async function secureBed(bot) {
     const actionVersion = actionControl.snapshot(bot);
@@ -75,7 +77,41 @@ async function establishWheatFarm(bot) {
         throw new Error(`Farm incomplete: planted=${planted}`);
     }
     memory.setProgress('farmReady', 1);
+    memory.setFarmCenter(site);
     console.log(`[HOMESTEAD] hydrated wheat farm ready center=${site.toString()} planted=${planted}`);
+}
+
+async function expandWheatFarm(bot, target = FOOD_FARM_TARGET) {
+    const actionVersion = actionControl.snapshot(bot);
+    const center = findFarmCenter(bot);
+    if (!center) throw new Error('Existing wheat farm center could not be found');
+    await ensureHoe(bot);
+
+    const boundedTarget = Math.max(8, Math.min(80, Number(target) || FOOD_FARM_TARGET));
+    let capacity = farmCapacity(bot, center);
+    let planted = 0;
+    for (const position of farmPlotPositions(center)) {
+        actionControl.assertActive(bot, actionVersion);
+        if (capacity >= boundedTarget || countItem(bot, 'wheat_seeds') <= 0) break;
+
+        const above = bot.blockAt(position);
+        if (above?.name === 'wheat') continue;
+        if (!isAir(above)) continue;
+
+        const before = bot.blockAt(position.offset(0, -1, 0));
+        if (!TILLABLE.has(before?.name)) continue;
+        const farmland = await tillPosition(bot, position);
+        if (!farmland) continue;
+        if (before?.name !== 'farmland') capacity++;
+        if (await plantSeed(bot, farmland)) planted++;
+    }
+
+    if (capacity >= 6) {
+        memory.setProgress('farmReady', 1);
+        memory.setFarmCenter(center);
+    }
+    console.log(`[HOMESTEAD] farm expansion capacity=${capacity}/${boundedTarget} planted=${planted}`);
+    return { capacity, planted, target: boundedTarget };
 }
 
 function hasBed(bot) {
@@ -94,8 +130,9 @@ function hasBed(bot) {
 function hasFarm(bot) {
     const farmlandId = bot.registry.blocksByName.farmland?.id;
     if (!Number.isInteger(farmlandId)) return false;
-    const farmland = bot.findBlocks({ matching: farmlandId, maxDistance: 24, count: 16 });
-    if (farmland.length >= 6 && (
+    const center = findFarmCenter(bot);
+    const farmlandCount = center ? farmCapacity(bot, center) : 0;
+    if (farmlandCount >= 6 && (
         memory.getProgress('farmReady') >= 1 || countNearbyCrops(bot, 24) >= 6
     )) {
         return true;
@@ -104,6 +141,7 @@ function hasFarm(bot) {
     if (!isNearBase(bot, 40)) return true;
 
     memory.setProgress('farmReady', 0);
+    memory.clearFarmCenter();
     return false;
 }
 
@@ -113,6 +151,46 @@ function hasMatureCrop(bot) {
     return bot.findBlocks({ matching: wheatId, maxDistance: 24, count: 32 })
         .map(position => bot.blockAt(position))
         .some(block => Number(block?.getProperties?.().age) >= 7);
+}
+
+function growingCropCount(bot) {
+    const center = findFarmCenter(bot);
+    if (!center) return 0;
+    return farmPlotPositions(center)
+        .map(position => bot.blockAt(position))
+        .filter(block => block?.name === 'wheat')
+        .filter(block => Number(block.getProperties?.().age) < 7)
+        .length;
+}
+
+function farmCapacity(bot, center = findFarmCenter(bot)) {
+    if (!center) return 0;
+    return farmPlotPositions(center)
+        .filter(position => bot.blockAt(position.offset(0, -1, 0))?.name === 'farmland')
+        .length;
+}
+
+function findFarmCenter(bot) {
+    const remembered = memory.getFarmCenter();
+    if (remembered) {
+        const center = new Vec3(remembered.x, remembered.y, remembered.z);
+        if (
+            bot.blockAt(center.offset(0, -1, 0))?.name === 'water' &&
+            farmCapacityAt(bot, center) >= 6
+        ) {
+            return center;
+        }
+    }
+
+    const waterId = bot.registry.blocksByName.water?.id;
+    if (!Number.isInteger(waterId)) return null;
+    const candidate = bot.findBlocks({ matching: waterId, maxDistance: 32, count: 32 })
+        .map(position => position.offset(0, 1, 0))
+        .map(center => ({ center, capacity: farmCapacityAt(bot, center) }))
+        .filter(entry => entry.capacity >= 6)
+        .sort((left, right) => right.capacity - left.capacity)[0]?.center || null;
+    if (candidate) memory.setFarmCenter(candidate);
+    return candidate;
 }
 
 async function ensureMatchingWool(bot, minimum) {
@@ -303,6 +381,30 @@ function farmRing(center) {
     return positions;
 }
 
+function farmPlotPositions(center, radius = FARM_RADIUS) {
+    const positions = [];
+    for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+            if (dx === 0 && dz === 0) continue;
+            positions.push(center.offset(dx, 0, dz));
+        }
+    }
+    return positions.sort((left, right) => {
+        const leftDx = Math.abs(left.x - center.x);
+        const leftDz = Math.abs(left.z - center.z);
+        const rightDx = Math.abs(right.x - center.x);
+        const rightDz = Math.abs(right.z - center.z);
+        return Math.max(leftDx, leftDz) - Math.max(rightDx, rightDz) ||
+            left.distanceTo(center) - right.distanceTo(center);
+    });
+}
+
+function farmCapacityAt(bot, center) {
+    return farmPlotPositions(center)
+        .filter(position => bot.blockAt(position.offset(0, -1, 0))?.name === 'farmland')
+        .length;
+}
+
 function countFarmBlocks(bot, center) {
     return farmRing(center)
         .filter(position => bot.blockAt(position.offset(0, -1, 0))?.name === 'farmland')
@@ -468,7 +570,12 @@ async function waitForBlock(bot, position, blockName, timeoutMs) {
 module.exports = {
     secureBed,
     establishWheatFarm,
+    expandWheatFarm,
     hasBed,
     hasFarm,
-    hasMatureCrop
+    hasMatureCrop,
+    growingCropCount,
+    farmCapacity,
+    findFarmCenter,
+    farmPlotPositions
 };

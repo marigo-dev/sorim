@@ -4,6 +4,7 @@ const path = require('node:path');
 const SAVE_DELAY_MS = 200;
 
 let base = null;
+let farmCenter = null;
 let surfaceExit = null;
 let mineRoute = [];
 let placedBlocks = new Set();
@@ -14,6 +15,7 @@ let saveTimer = null;
 function initialize(botName = 'marigo', options = {}) {
     cancelScheduledSave();
     base = null;
+    farmCenter = null;
     surfaceExit = null;
     mineRoute = [];
     placedBlocks = new Set();
@@ -28,6 +30,7 @@ function initialize(botName = 'marigo', options = {}) {
     try {
         const saved = JSON.parse(fs.readFileSync(memoryFile, 'utf8'));
         base = normalizePosition(saved.base);
+        farmCenter = normalizePosition(saved.farmCenter);
         surfaceExit = normalizePosition(saved.surfaceExit);
         mineRoute = normalizeRoute(saved.mineRoute);
         placedBlocks = new Set(
@@ -56,6 +59,24 @@ function getBase() {
 
 function hasBase() {
     return Boolean(base);
+}
+
+function setFarmCenter(position) {
+    const next = normalizePosition(position);
+    if (!next || samePosition(farmCenter, next)) return;
+    farmCenter = next;
+    console.log(`[MEMORY] farmCenter=${farmCenter.x},${farmCenter.y},${farmCenter.z}`);
+    scheduleSave();
+}
+
+function getFarmCenter() {
+    return farmCenter ? { ...farmCenter } : null;
+}
+
+function clearFarmCenter() {
+    if (!farmCenter) return;
+    farmCenter = null;
+    scheduleSave();
 }
 
 function setSurfaceExit(position) {
@@ -141,8 +162,9 @@ function flush() {
     const directory = path.dirname(memoryFile);
     const temporaryFile = `${memoryFile}.tmp`;
     const payload = JSON.stringify({
-        version: 2,
+        version: 3,
         base,
+        farmCenter,
         surfaceExit,
         mineRoute,
         placedBlocks: [...placedBlocks].sort(),
@@ -211,6 +233,9 @@ module.exports = {
     setBase,
     getBase,
     hasBase,
+    setFarmCenter,
+    getFarmCenter,
+    clearFarmCenter,
     setSurfaceExit,
     getSurfaceExit,
     clearSurfaceExit,

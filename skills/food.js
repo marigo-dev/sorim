@@ -62,11 +62,18 @@ async function eatBestFood(bot) {
     await bot.consume();
 }
 
-async function findFood(bot) {
+async function findFood(bot, options = {}) {
     await shelter.leaveBase(bot);
     await prepareCollectedFood(bot);
     const preparedInventory = countInventory(bot);
     if (hasFoodStock(preparedInventory, 16)) return;
+    if (!options.skipFarm) {
+        const homestead = require('./homestead');
+        if (homestead.hasFarm(bot)) {
+            await maintainFoodSupply(bot, { alreadyOutside: true });
+            return;
+        }
+    }
     if (Date.now() < foodUnavailableUntil && !hasConvertibleFood(preparedInventory)) {
         console.log('[FOOD] no nearby food source; temporarily moving to the next goal.');
         return;
@@ -136,6 +143,55 @@ async function findFood(bot) {
     } else {
         await markFailedSearch(bot);
     }
+}
+
+async function maintainFoodSupply(bot, options = {}) {
+    const homestead = require('./homestead');
+    if (!options.alreadyOutside) await shelter.leaveBase(bot);
+    await prepareCollectedFood(bot);
+    if (hasFoodStock(countInventory(bot), 16)) return;
+
+    const center = homestead.findFarmCenter(bot);
+    if (!center) {
+        await findFood(bot, { skipFarm: true });
+        return;
+    }
+
+    let harvested = 0;
+    for (; harvested < 16; harvested++) {
+        const crop = nearestMatureCrop(bot);
+        if (!crop) break;
+        try {
+            if (!await harvestCrop(bot, crop)) break;
+            await collectNearbyDrops(bot);
+            await replantCrop(bot, crop.position, CROP_RULES[crop.name].seed);
+        } catch (error) {
+            console.log(`[FOOD] farm maintenance delayed: ${error.message}`);
+            break;
+        }
+    }
+
+    if (harvested > 0) {
+        failedSearches = 0;
+        await prepareCollectedFood(bot);
+        console.log(`[FOOD] farm harvest batch=${harvested}`);
+    }
+    if (hasFoodStock(countInventory(bot), 16)) return;
+
+    const capacity = homestead.farmCapacity(bot, center);
+    if (capacity < 48 && countItem(bot, 'wheat_seeds') > 0) {
+        const expansion = await homestead.expandWheatFarm(bot, 48);
+        if (expansion.planted > 0) return;
+    }
+
+    if (homestead.growingCropCount(bot) > 0) {
+        await shelter.returnToBase(bot);
+        console.log('[FOOD] crops are growing; waiting safely at base instead of roaming.');
+        await movement.sleep(5000);
+        return;
+    }
+
+    await findFood(bot, { skipFarm: true });
 }
 
 function foodScore(inventory) {
@@ -413,6 +469,12 @@ function countInventory(bot) {
     return counts;
 }
 
+function countItem(bot, itemName) {
+    return bot.inventory.items()
+        .filter(item => item.name === itemName)
+        .reduce((total, item) => total + item.count, 0);
+}
+
 async function nudgeToward(bot, position) {
     try {
         await bot.lookAt(position.offset(0, 0.5, 0), true);
@@ -432,6 +494,7 @@ function isAir(block) {
 module.exports = {
     eatBestFood,
     findFood,
+    maintainFoodSupply,
     foodScore,
     foodCount,
     hasFoodStock,
