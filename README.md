@@ -221,8 +221,25 @@ https://ollama.com/download
 Pull a model:
 
 ```bash
-ollama pull qwen3:4b
+ollama pull hermes3:8b
 ```
+
+### One-click Windows launch
+
+After installing Java, Node.js, and Ollama and pulling the model, double-click
+`start-sorim.bat` or run:
+
+```powershell
+.\start-sorim.bat
+```
+
+The launcher checks the Paper server, starts it when necessary, checks Ollama,
+warms the selected model, and then starts Marigo. In this development workspace
+it automatically uses `mc-server-26-2-test` on `127.0.0.1:25566`. In a clean
+clone it uses the published `mc-server` directory on `127.0.0.1:25565`.
+
+The launcher enables AI tool selection but does not begin autonomous progression
+without permission. Join the server and send `marigo otonom basla` in chat.
 
 Start the bot:
 
@@ -230,14 +247,14 @@ PowerShell:
 
 ```powershell
 $env:LLM_PROVIDER='ollama'
-$env:OLLAMA_MODEL='qwen3:4b'
+$env:OLLAMA_MODEL='hermes3:8b'
 npm start
 ```
 
 Bash:
 
 ```bash
-LLM_PROVIDER=ollama OLLAMA_MODEL=qwen3:4b npm start
+LLM_PROVIDER=ollama OLLAMA_MODEL=hermes3:8b npm start
 ```
 
 Expected behavior:
@@ -325,14 +342,15 @@ LLM:
 | --- | --- | --- |
 | `USE_LLM` | `true` | Keep this enabled for normal AI-agent runs |
 | `LLM_PROVIDER` | `ollama` | `ollama`, `openai`, `openai-compatible`; `none` is only for diagnostics |
-| `LLM_TIMEOUT_MS` | `12000` | LLM request timeout |
+| `LLM_TIMEOUT_MS` | `30000` | AI planning request timeout |
+| `CHAT_TIMEOUT_MS` | `45000` | AI chat request timeout; allows a cold local model to load |
 | `LLM_MODEL` | empty | Shared model override |
 | `OLLAMA_URL` | `http://127.0.0.1:11434/api/generate` | Ollama native generate endpoint |
-| `OLLAMA_MODEL` | `qwen3:4b` | Ollama model |
+| `OLLAMA_MODEL` | `hermes3:8b` | Ollama model |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible base URL |
 | `OPENAI_API_KEY` | empty | API key for OpenAI-compatible provider |
 | `OPENAI_MODEL` | `gpt-4.1-mini` | OpenAI-compatible model |
-| `USE_LLM_PLANNER` | `false` | Let the LLM select high-level tools; deterministic fallback remains active |
+| `USE_LLM_PLANNER` | `false` | Let the LLM select high-level tools; `start-sorim.bat` enables it |
 
 Copy `.env.example` values into your shell or preferred environment loader as a starting point. Node.js does not automatically load this file.
 

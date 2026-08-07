@@ -4,7 +4,7 @@ const USE_LLM = process.env.USE_LLM !== 'false';
 const LLM_PROVIDER = (process.env.LLM_PROVIDER || (USE_LLM ? 'ollama' : 'none')).toLowerCase();
 
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434/api/generate';
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || process.env.LLM_MODEL || 'qwen3:4b';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || process.env.LLM_MODEL || 'hermes3:8b';
 
 const OPENAI_BASE_URL = stripTrailingSlash(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1');
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
@@ -65,7 +65,7 @@ async function askOllama(prompt) {
             num_predict: 180
         }
     }, {
-        timeout: Number(process.env.LLM_TIMEOUT_MS || 12000)
+        timeout: Number(process.env.LLM_TIMEOUT_MS || 30000)
     });
 
     return parseJson(response.data?.response || response.data?.thinking || '');
@@ -85,11 +85,11 @@ async function askOllamaChatReply(prompt) {
             required: ['reply']
         },
         options: {
-            temperature: 0.3,
-            num_predict: Number(process.env.CHAT_MAX_TOKENS || 90)
+            temperature: 0.1,
+            num_predict: Number(process.env.CHAT_MAX_TOKENS || 60)
         }
     }, {
-        timeout: Number(process.env.CHAT_TIMEOUT_MS || process.env.LLM_TIMEOUT_MS || 15000)
+        timeout: Number(process.env.CHAT_TIMEOUT_MS || process.env.LLM_TIMEOUT_MS || 45000)
     });
 
     const raw = response.data?.response || response.data?.thinking || '';
@@ -116,7 +116,7 @@ async function askOpenAiCompatible(prompt) {
         temperature: 0.1,
         max_tokens: 120
     }, {
-        timeout: Number(process.env.LLM_TIMEOUT_MS || 12000),
+        timeout: Number(process.env.LLM_TIMEOUT_MS || 30000),
         headers: {
             Authorization: `Bearer ${OPENAI_API_KEY}`,
             'Content-Type': 'application/json'
@@ -147,7 +147,7 @@ async function askOpenAiCompatibleChatReply(prompt) {
         max_tokens: Number(process.env.CHAT_MAX_TOKENS || 90),
         response_format: { type: 'json_object' }
     }, {
-        timeout: Number(process.env.CHAT_TIMEOUT_MS || process.env.LLM_TIMEOUT_MS || 15000),
+        timeout: Number(process.env.CHAT_TIMEOUT_MS || process.env.LLM_TIMEOUT_MS || 45000),
         headers: {
             Authorization: `Bearer ${OPENAI_API_KEY}`,
             'Content-Type': 'application/json'
@@ -186,7 +186,6 @@ function buildPrompt(level, observation, tools) {
 function buildChatPrompt({ username, message, observation, level }) {
     const language = detectChatLanguage(message);
     const status = [
-        `level=${level?.id || 'unknown'}`,
         `goal=${level?.goal || 'unknown'}`,
         `health=${observation.health}/20`,
         `food=${observation.food}/20`,
@@ -200,8 +199,12 @@ function buildChatPrompt({ username, message, observation, level }) {
         'You are Marigo, an AI-controlled Minecraft survival bot.',
         'Reply as Marigo, not as an assistant explaining a task.',
         `Reply language: ${language}.`,
+        'Use only literal facts from the supplied status. Never infer or invent biomes, actions, locations, progress, or completed tasks.',
+        'If the player asks what you are doing, answer only with the goal and relevant inventory facts.',
+        'Speak naturally with correct grammar and no filler words.',
+        'Do not mention internal level identifiers unless the player explicitly asks for technical status.',
         'Do not repeat the player message.',
-        'Use one short Minecraft chat sentence. No reasoning, no markdown, no emoji.',
+        'Use one short Minecraft chat sentence, ideally under 20 words. No reasoning, no markdown, no emoji.',
         'Return only JSON with one field named reply.',
         `Player ${username} says: ${message}`,
         `Your current status: ${status}`,
