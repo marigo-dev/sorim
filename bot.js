@@ -121,8 +121,19 @@ process.on('SIGTERM', shutdown);
 
 const safetyWatchdog = setInterval(() => {
     if (!running || !autonomousMode || !busy || cancelRequested || !bot.entity || bot.health <= 0) return;
-    if (['fight_mob', 'evade_hostile', 'escape_pit'].includes(activeToolName)) return;
-    if (activeToolName === 'emergency_shelter' || survival.isEmergencyShelter(bot)) return;
+    if (survival.needsAir(bot) && activeToolName !== 'escape_water') {
+        console.log(`[SAFETY_INTERRUPT] cancelling=${activeToolName || 'unknown'} danger=drowning`);
+        pendingSafetyCall = toolRegistry.normalizeToolCall({
+            action: 'escape_water',
+            reason: 'Oxygen safety override'
+        });
+        haltCurrentAction('drowning');
+        return;
+    }
+    if (['fight_mob', 'evade_hostile', 'escape_pit', 'escape_water'].includes(activeToolName)) return;
+    // A completed refuge is safe. An unfinished refuge is still exposed and
+    // must be interruptible when a hostile approaches during digging.
+    if (survival.isEmergencyShelter(bot)) return;
     const threat = survival.nearestHostile(bot, 12);
     if (!survival.shouldInterruptForThreat(bot, threat)) return;
 
@@ -140,10 +151,12 @@ safetyWatchdog.unref();
 async function loop() {
     while (running) {
         await sleep(LOOP_DELAY_MS);
+        if (!running) break;
         if (!bot.entity || busy || bot.health <= 0) continue;
 
         busy = true;
         try {
+            movement.resyncCollision(bot);
             await shelter.ensureBaseEgress(bot);
             const observation = observe();
             const level = skillTree.getLevel(observation);
@@ -190,7 +203,11 @@ async function loop() {
                 continue;
             }
 
-            const availableTools = toolRegistry.toolsForLevel(level);
+            const availableTools = toolRegistry.constrainToolsForObservation(
+                toolRegistry.toolsForLevel(level),
+                level,
+                observation
+            );
             let source = 'fallback';
             let toolCall = null;
 
@@ -239,7 +256,7 @@ async function loop() {
 function observe() {
     const inventory = countInventory();
     const position = bot.entity?.position;
-    const nearbyBlocks = scanUsefulBlocks(32);
+    const nearbyBlocks = scanUsefulBlocks(48);
     const nearbyMobs = Object.values(bot.entities || {})
         .filter(entity => entity !== bot.entity && entity.position && entity.position.distanceTo(position) <= 24)
         .map(entity => ({
@@ -349,18 +366,30 @@ function inventoryText(inventory) {
 }
 
 function scanUsefulBlocks(maxDistance) {
+    const logNames = Object.keys(bot.registry.blocksByName || {})
+        .filter(name => name.endsWith('_log'));
     const names = [
-        'oak_log', 'birch_log', 'spruce_log', 'jungle_log',
-        'acacia_log', 'dark_oak_log', 'cherry_log', 'mangrove_log',
+        ...logNames,
         'stone', 'cobblestone', 'coal_ore', 'iron_ore', 'deepslate_iron_ore',
         'crafting_table', 'furnace', 'chest', 'torch'
     ];
-    const ids = names
-        .map(name => bot.registry.blocksByName[name]?.id)
-        .filter(Boolean);
-    if (ids.length === 0) return [];
+    const usefulNames = new Set(names);
+    const logPositions = bot.findBlocks({
+        matching: block => Boolean(block?.name?.endsWith('_log')),
+        maxDistance,
+        count: 32
+    });
+    const generalPositions = bot.findBlocks({
+        matching: block => usefulNames.has(block?.name),
+        maxDistance,
+        count: 96
+    });
+    const positions = [...logPositions, ...generalPositions]
+        .filter((position, index, all) =>
+            all.findIndex(candidate => candidate.equals(position)) === index
+        );
 
-    return bot.findBlocks({ matching: ids, maxDistance, count: 128 })
+    return positions
         .map(position => bot.blockAt(position))
         .filter(Boolean)
         .map(block => ({
@@ -370,7 +399,10 @@ function scanUsefulBlocks(maxDistance) {
             z: block.position.z,
             distance: Number(block.position.distanceTo(bot.entity.position).toFixed(1))
         }))
-        .sort((a, b) => a.distance - b.distance)
+        .sort((a, b) => {
+            const logPriority = Number(b.name.endsWith('_log')) - Number(a.name.endsWith('_log'));
+            return logPriority || a.distance - b.distance;
+        })
         .slice(0, 24);
 }
 

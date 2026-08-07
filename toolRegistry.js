@@ -104,6 +104,12 @@ const TOOL_DEFINITIONS = [
         actions: ['escape_pit']
     },
     {
+        name: 'escape_water',
+        description: 'Surface immediately and swim toward dry ground before drowning.',
+        args: {},
+        actions: ['escape_water']
+    },
+    {
         name: 'return_base',
         description: 'Return to the remembered base location.',
         args: {},
@@ -226,8 +232,17 @@ function toolsForLevel(level) {
     const allowed = new Set(level.allowedActions);
     return TOOL_DEFINITIONS.filter(tool =>
             tool.actions.some(action => allowed.has(action)) ||
-        ['wait_safe', 'return_base', 'escape_pit', 'fight_mob', 'evade_hostile', 'emergency_shelter', 'eat_food'].includes(tool.name)
+        ['wait_safe', 'return_base', 'escape_pit', 'escape_water', 'fight_mob', 'evade_hostile', 'emergency_shelter', 'eat_food'].includes(tool.name)
     );
+}
+
+function constrainToolsForObservation(tools, level, observation) {
+    const visibleLog = (observation?.nearbyBlocks || [])
+        .some(block => block?.name?.endsWith('_log'));
+    if (level?.id === 'L1_COLLECT_WOOD' && visibleLog) {
+        return tools.filter(tool => tool.name !== 'explore');
+    }
+    return tools;
 }
 
 function normalizeToolCall(input) {
@@ -277,6 +292,7 @@ function actionToToolCall(action) {
         evade_hostile: 'evade_hostile',
         emergency_shelter: 'emergency_shelter',
         escape_pit: 'escape_pit',
+        escape_water: 'escape_water',
         return_base: 'return_base',
         wait_safe: 'wait_safe',
         sleep_bed: 'sleep_bed',
@@ -402,6 +418,11 @@ async function executeToolCall(bot, call) {
 
     if (call.tool === 'escape_pit') {
         await survival.escapePit(bot);
+        return;
+    }
+
+    if (call.tool === 'escape_water') {
+        await survival.escapeWater(bot);
         return;
     }
 
@@ -549,6 +570,7 @@ function sleep(ms) {
 module.exports = {
     TOOL_DEFINITIONS,
     toolsForLevel,
+    constrainToolsForObservation,
     normalizeToolCall,
     validateToolCall,
     actionToToolCall,

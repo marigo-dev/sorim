@@ -516,6 +516,7 @@ class SkillTree {
         if (action.action === 'evade_hostile') return action;
         if (action.action === 'emergency_shelter') return action;
         if (action.action === 'escape_pit') return action;
+        if (action.action === 'escape_water') return action;
         if (action.action === 'return_base') return action;
         if (action.action === 'organize_storage') return action;
         if (action.action === 'secure_bed') return action;

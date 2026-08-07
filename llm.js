@@ -170,7 +170,7 @@ function buildPrompt(level, observation, tools) {
         `Food: ${observation.food}/20`,
         `Position: ${JSON.stringify(observation.position)}`,
         `Inventory: ${observation.inventoryText}`,
-        `Nearby blocks: ${JSON.stringify(observation.nearbyBlocks.slice(0, 8))}`,
+        `Nearby blocks: ${JSON.stringify(uniqueNearbyBlocks(observation.nearbyBlocks, 16))}`,
         `Nearby mobs: ${JSON.stringify(observation.nearbyMobs.slice(0, 8))}`,
         `Base: ${JSON.stringify(observation.base || null)}`,
         `Last error: ${observation.lastError || 'none'}`,
@@ -181,6 +181,15 @@ function buildPrompt(level, observation, tools) {
         '{"tool":"place_block","args":{"item":"crafting_table"},"reason":"crafting table must be placed"}',
         'Tool call JSON:'
     ].join('\n');
+}
+
+function uniqueNearbyBlocks(blocks, limit) {
+    const seen = new Set();
+    return (blocks || []).filter(block => {
+        if (!block?.name || seen.has(block.name)) return false;
+        seen.add(block.name);
+        return true;
+    }).slice(0, limit);
 }
 
 function buildChatPrompt({ username, message, observation, level }) {

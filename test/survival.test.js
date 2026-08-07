@@ -41,6 +41,21 @@ try {
         ).action,
         'emergency_shelter'
     );
+    const submerged = makeBot(6000);
+    submerged.entity.isInWater = true;
+    submerged.oxygenLevel = 12;
+    submerged.blockAt = position => position.y === 65
+        ? { name: 'water', boundingBox: 'empty' }
+        : { name: 'stone', boundingBox: 'block' };
+    assert.equal(survival.needsAir(submerged), true);
+    assert.equal(
+        survival.chooseImmediateAction(
+            submerged,
+            observation(20),
+            { id: 'L1_COLLECT_WOOD' }
+        ).action,
+        'escape_water'
+    );
     memory.setSurfaceExit({ x: 0, y: 64, z: 0 });
     const earlyMorningPit = makeBot(6000);
     earlyMorningPit.entity.position = new Vec3(0, 61, 0);
@@ -52,7 +67,51 @@ try {
         ).action,
         'escape_pit'
     );
+    const oneBlockBelowExit = makeBot(6000);
+    oneBlockBelowExit.entity.position = new Vec3(0, 63, 0);
+    assert.equal(
+        survival.chooseImmediateAction(
+            oneBlockBelowExit,
+            observation(20, { dirt: 1 }),
+            { id: 'L1_COLLECT_WOOD' }
+        ).action,
+        'escape_pit',
+        'One block below a remembered surface exit is still underground'
+    );
+    const threatenedInShaft = makeBot(14000);
+    threatenedInShaft.entity.position = new Vec3(0, 61, 0);
+    threatenedInShaft.blockAt = position =>
+        position.x === 0 && position.z === 0 && position.y >= 63
+            ? { name: 'air', boundingBox: 'empty' }
+            : { name: 'stone', boundingBox: 'block' };
+    threatenedInShaft.entities.zombie = {
+        id: 8,
+        name: 'zombie',
+        type: 'mob',
+        position: new Vec3(0, 64, 0)
+    };
+    assert.equal(
+        survival.chooseImmediateAction(
+            threatenedInShaft,
+            observation(18, { dirt: 2 }),
+            { id: 'L1_COLLECT_WOOD' }
+        ).action,
+        'escape_pit',
+        'A hostile above a recovery shaft must not cause an evade loop underground'
+    );
     memory.clearSurfaceExit();
+    const shallowDayPit = makeBot(6000);
+    shallowDayPit.entity.position = new Vec3(0, 70, 0);
+    shallowDayPit.blockAt = () => ({ name: 'stone', boundingBox: 'block' });
+    assert.equal(
+        survival.chooseImmediateAction(
+            shallowDayPit,
+            observation(20, { dirt: 2 }),
+            { id: 'L1_COLLECT_WOOD' }
+        ).action,
+        'escape_pit',
+        'A shallow sealed pit must not trap surface navigation'
+    );
     memory.setBase({ x: 0, y: 64, z: 0 });
 
     const night = makeBot(14000);

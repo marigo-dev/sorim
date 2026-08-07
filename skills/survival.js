@@ -58,6 +58,22 @@ const EARLY_GAME_LEVELS = new Set([
 ]);
 
 function chooseImmediateAction(bot, observation, level = null) {
+    if (needsAir(bot)) {
+        return {
+            action: 'escape_water',
+            reason: 'Head is underwater; surface and reach dry ground'
+        };
+    }
+
+    // Hostiles standing above a sealed recovery shaft cannot be evaded from
+    // inside it. Finish the climb first so combat movement can work again.
+    if (shouldReachSurfaceForWork(bot, observation, level) && isInPit(bot)) {
+        return {
+            action: 'escape_pit',
+            reason: 'Trapped below the remembered surface; finish recovery first'
+        };
+    }
+
     const hostile = nearestHostile(bot, 10);
     if (hostile && (observation.health <= 18 || hostile.distance <= 7)) {
         return chooseThreatAction(bot, hostile, observation.health);
@@ -215,6 +231,7 @@ async function buildEmergencyShelter(bot) {
 
 function isEmergencyShelter(bot) {
     if (!bot.entity) return false;
+    if (!memory.getSurfaceExit()) return false;
     const feet = bot.entity.position.floored();
     const roof = bot.blockAt(feet.offset(0, 2, 0));
     if (roof?.boundingBox !== 'block') return false;
@@ -298,8 +315,9 @@ function isNearBase(bot, range) {
 function shouldEscapePit(bot, observation) {
     if (memory.hasBase() && isNearBase(bot, 5)) return false;
     if (shelter.isBuildingNear(bot)) return false;
+    if (isNight(bot) && isEmergencyShelter(bot)) return false;
     const surfaceExit = memory.getSurfaceExit();
-    if (surfaceExit && bot.entity.position.y >= surfaceExit.y - 1) return false;
+    if (surfaceExit && bot.entity.position.y >= surfaceExit.y - 0.1) return false;
     if (!isInPit(bot)) return false;
 
     const hurtAndTrapped = observation.health < 14;
@@ -309,7 +327,7 @@ function shouldEscapePit(bot, observation) {
         !memory.hasBase();
     if (hasEnoughStoneForNextStep) return false;
 
-    return bot.entity.position.y < 50;
+    return true;
 }
 
 function shouldReachSurfaceForWork(bot, observation, level) {
@@ -318,7 +336,7 @@ function shouldReachSurfaceForWork(bot, observation, level) {
     if (
         surfaceExit &&
         EARLY_GAME_LEVELS.has(level?.id) &&
-        bot.entity.position.y < surfaceExit.y - 1
+        bot.entity.position.y < surfaceExit.y - 0.1
     ) {
         return true;
     }
@@ -333,7 +351,7 @@ function shouldReachSurfaceForWork(bot, observation, level) {
 
     if (level?.id === 'L7_BUILD_SAFE_SHELTER' && !memory.hasBase()) {
         if (shelter.isBuildingNear(bot)) return false;
-        if (surfaceExit) return bot.entity.position.y < surfaceExit.y - 1;
+        if (surfaceExit) return bot.entity.position.y < surfaceExit.y - 0.1;
         return bot.entity.position.y < 55;
     }
     if (bot.entity.position.y >= 58) return false;
@@ -408,34 +426,115 @@ async function evadeHostile(bot, entityId) {
     const entity = bot.entities[entityId] || nearestHostile(bot, 12)?.entity;
     if (!entity) return;
     console.log(`[SURVIVAL] evading ${entityName(entity)}`);
+    const actionVersion = actionControl.snapshot(bot);
+    const deadline = Date.now() + 25000;
 
-    for (let attempt = 0; attempt < 14 && bot.health > 0; attempt++) {
-        const liveEntity = bot.entities[entity.id];
-        if (!liveEntity || liveEntity.isValid === false) return;
-        const distance = liveEntity.position.distanceTo(bot.entity.position);
-        if (distance >= 16) return;
+    try {
+        for (let attempt = 0; attempt < 10 && bot.health > 0 && Date.now() < deadline; attempt++) {
+            actionControl.assertActive(bot, actionVersion);
+            const liveEntity = bot.entities[entity.id];
+            if (!liveEntity || liveEntity.isValid === false) return;
+            const distance = liveEntity.position.distanceTo(bot.entity.position);
+            if (distance >= 16) return;
 
-        if (distance <= 6) {
-            if (distance <= 3.2 && MELEE_HOSTILES.has(entityName(liveEntity)) && bot.health > 6) {
-                await bot.lookAt(liveEntity.position.offset(0, 1.1, 0), true);
-                bot.attack(liveEntity);
-                await movement.sleep(250);
+            if (distance <= 6) {
+                if (distance <= 3.2 && MELEE_HOSTILES.has(entityName(liveEntity)) && bot.health > 6) {
+                    await bot.lookAt(liveEntity.position.offset(0, 1.1, 0), true);
+                    bot.attack(liveEntity);
+                    await movement.sleep(250);
+                }
+                await backAway(bot, liveEntity.position, 650);
+                continue;
+            }
+
+            const target = findSafeRetreatPosition(bot, liveEntity.position);
+            if (target) {
+                try {
+                    await movement.moveNear(bot, target, 1, 3000);
+                    continue;
+                } catch {
+                    movement.stop(bot);
+                }
             }
             await backAway(bot, liveEntity.position, 650);
-            continue;
+        }
+    } finally {
+        movement.stop(bot);
+    }
+    console.log('[SURVIVAL] evade window ended; returning control to the planner');
+}
+
+function needsAir(bot) {
+    if (!bot.entity) return false;
+    const feet = bot.entity.position.floored();
+    const head = bot.blockAt(feet.offset(0, 1, 0));
+    const headSubmerged = ['water', 'bubble_column'].includes(head?.name);
+    const oxygenFalling = Number.isFinite(bot.oxygenLevel) && bot.oxygenLevel < 20;
+    return Boolean(bot.entity.isInWater && (headSubmerged || oxygenFalling));
+}
+
+async function escapeWater(bot) {
+    const actionVersion = actionControl.snapshot(bot);
+    const shore = findNearestDryStand(bot, 16);
+    const deadline = Date.now() + 14000;
+    movement.stop(bot);
+    console.log(
+        `[SURVIVAL] escaping water oxygen=${bot.oxygenLevel ?? 'unknown'} ` +
+        `shore=${shore?.toString() || 'surface-only'}`
+    );
+
+    try {
+        const lookTarget = shore
+            ? shore.offset(0.5, 1, 0.5)
+            : bot.entity.position.offset(0, 8, 0);
+        await bot.lookAt(lookTarget, true);
+        bot.setControlState('jump', true);
+        if (shore) {
+            bot.setControlState('forward', true);
+            bot.setControlState('sprint', true);
         }
 
-        const target = findSafeRetreatPosition(bot, liveEntity.position);
-        if (target) {
-            try {
-                await movement.moveNear(bot, target, 1, 4500);
-                continue;
-            } catch {
-                movement.stop(bot);
+        while (Date.now() < deadline && bot.health > 0) {
+            actionControl.assertActive(bot, actionVersion);
+            const breathing = !needsAir(bot);
+            const reachedShore = shore &&
+                horizontalDistance(bot.entity.position, shore) <= 1.8 &&
+                !bot.entity.isInWater;
+            if (reachedShore || (breathing && (!shore || bot.entity.onGround))) {
+                console.log(
+                    `[SURVIVAL] water escape complete oxygen=${bot.oxygenLevel ?? 'unknown'} ` +
+                    `position=${bot.entity.position.floored().toString()}`
+                );
+                return;
+            }
+            await movement.sleep(100);
+        }
+    } finally {
+        bot.clearControlStates();
+        movement.stop(bot);
+    }
+}
+
+function findNearestDryStand(bot, radius) {
+    const origin = bot.entity.position.floored();
+    const candidates = [];
+    for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+            if (Math.hypot(dx, dz) < 2 || Math.hypot(dx, dz) > radius) continue;
+            for (let dy = -2; dy <= 4; dy++) {
+                const position = origin.offset(dx, dy, dz);
+                const feet = bot.blockAt(position);
+                const head = bot.blockAt(position.offset(0, 1, 0));
+                const floor = bot.blockAt(position.offset(0, -1, 0));
+                if (!isAir(feet) || !isAir(head) || floor?.boundingBox !== 'block') continue;
+                if (['water', 'lava', 'magma_block'].includes(floor.name)) continue;
+                candidates.push(position);
             }
         }
-        await backAway(bot, liveEntity.position, 650);
     }
+    return candidates.sort((left, right) =>
+        left.distanceTo(origin) - right.distanceTo(origin)
+    )[0] || null;
 }
 
 function hasCombatWeapon(bot) {
@@ -578,8 +677,11 @@ async function escapePit(bot) {
             exit.y - bot.entity.position.y <= 5
         ) {
             const reached = await climbEmergencyShaft(bot, exit, actionVersion);
-            if (reached) memory.clearSurfaceExit();
-            return;
+            if (reached) {
+                memory.clearSurfaceExit();
+                return;
+            }
+            console.log('[SURVIVAL] vertical shaft climb incomplete; carving a side exit');
         }
         const reached = await climbTowardSurfaceExit(
             bot,
@@ -1103,16 +1205,17 @@ function findNearbyExits(bot, origin) {
 }
 
 async function pillarUp(bot, targetY = Infinity) {
-    const block = bot.inventory.items().find(item =>
-        ['dirt', 'cobblestone', 'oak_planks', 'birch_planks'].includes(item.name)
-    );
-    if (!block) {
+    if (!hasRecoveryBlock(bot)) {
         await jumpForward(bot);
         return;
     }
 
     for (let i = 0; i < 4; i++) {
         if (bot.entity.position.y >= targetY - 0.1) break;
+        const block = bot.inventory.items().find(item =>
+            ['dirt', 'cobblestone', 'oak_planks', 'birch_planks'].includes(item.name)
+        );
+        if (!block) break;
         const beforeY = bot.entity.position.y;
         const feet = bot.entity.position.floored();
         await digIfNeeded(bot, feet.offset(0, 1, 0));
@@ -1141,7 +1244,10 @@ async function pillarUp(bot, targetY = Infinity) {
                 'Pillar placement timed out'
             );
             placed = true;
-            await movement.sleep(500);
+            // A jump briefly rises almost two blocks. Judge recovery from the
+            // settled standing position, not that airborne peak.
+            await movement.sleep(700);
+            await waitForGround(bot, 1000);
         } catch (error) {
             if (bot.entity.position.y >= beforeY + 0.7) {
                 placed = true;
@@ -1234,6 +1340,8 @@ module.exports = {
     nearestHostile,
     fightMob,
     evadeHostile,
+    needsAir,
+    escapeWater,
     buildEmergencyShelter,
     isEmergencyShelter,
     escapePit,

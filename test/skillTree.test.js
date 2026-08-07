@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const SkillTree = require('../skillTree');
+const toolRegistry = require('../toolRegistry');
 const actionControl = require('../skills/actionControl');
 
 function observation(inventory, overrides = {}) {
@@ -120,5 +121,13 @@ assert.throws(
     () => actionControl.assertActive(bot, version),
     /Action cancelled: test interrupt/
 );
+
+const visibleTreeTools = toolRegistry.constrainToolsForObservation(
+    toolRegistry.toolsForLevel({ allowedActions: ['mine', 'explore', 'idle'] }),
+    { id: 'L1_COLLECT_WOOD' },
+    observation({}, { nearbyBlocks: [{ name: 'oak_log', distance: 12 }] })
+);
+assert.equal(visibleTreeTools.some(tool => tool.name === 'explore'), false);
+assert.equal(visibleTreeTools.some(tool => tool.name === 'mine_block'), true);
 
 console.log('Skill tree milestones and action cancellation passed.');

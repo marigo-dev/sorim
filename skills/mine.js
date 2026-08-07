@@ -80,7 +80,7 @@ async function mineBlock(bot, action) {
 async function approachTreeByWaypoints(bot, position, actionVersion) {
     let stalled = 0;
     let previousDistance = horizontalDistance(bot.entity.position, position);
-    for (let step = 0; step < 8 && previousDistance > 10; step++) {
+    for (let step = 0; step < 40 && previousDistance > 10; step++) {
         actionControl.assertActive(bot, actionVersion);
         const origin = bot.entity.position;
         const dx = position.x - origin.x;
@@ -98,18 +98,65 @@ async function approachTreeByWaypoints(bot, position, actionVersion) {
             actionControl.assertActive(bot, actionVersion);
             movement.stop(bot);
             console.log(`[TREE] waypoint delayed ${waypoint.toString()}: ${error.message}`);
-            await movement.moveTowardSafely(bot, waypoint, 12);
+            movement.resyncCollision(bot);
+            const beforeFallback = bot.entity.position.clone();
+            let openedStep = null;
+            try {
+                openedStep = await movement.clearStepToward(bot, position, 3);
+            } catch (clearError) {
+                console.log(`[TREE] traversal step unavailable: ${clearError.message}`);
+            }
+            if (openedStep) {
+                try {
+                    await movement.moveBlock(bot, openedStep, 5000);
+                } catch {
+                    movement.stop(bot);
+                }
+            }
+            await movement.moveTowardDirectly(bot, position, 3200);
+            movement.resyncCollision(bot);
+            if (bot.entity.position.distanceTo(beforeFallback) < 1) {
+                await movement.moveTowardSafely(bot, waypoint, 12);
+            }
         }
 
         const nextDistance = horizontalDistance(bot.entity.position, position);
         stalled = nextDistance >= previousDistance - 1 ? stalled + 1 : 0;
         previousDistance = nextDistance;
-        if (stalled >= 2) return false;
+        if (stalled >= 2) {
+            movement.resyncCollision(bot);
+            const beforeRecovery = horizontalDistance(bot.entity.position, position);
+            let openedStep = null;
+            try {
+                openedStep = await movement.clearStepToward(bot, position, 3);
+            } catch (error) {
+                console.log(`[TREE] stalled traversal clear unavailable: ${error.message}`);
+            }
+            if (openedStep) {
+                try {
+                    await movement.moveBlock(bot, openedStep, 5000);
+                } catch {
+                    movement.stop(bot);
+                }
+            }
+            await movement.moveTowardDirectly(bot, position, 3200);
+            movement.resyncCollision(bot);
+            const afterRecovery = horizontalDistance(bot.entity.position, position);
+            console.log(
+                `[TREE] stalled recovery distance=${beforeRecovery.toFixed(1)}->${afterRecovery.toFixed(1)}`
+            );
+            if (afterRecovery > beforeRecovery - 0.7) return false;
+            previousDistance = afterRecovery;
+            stalled = 0;
+        }
     }
 
     try {
         await movement.moveNear(bot, position, 3, 12000);
-        return true;
+        const finalDistance = bot.entity.position.distanceTo(position.offset(0.5, 0, 0.5));
+        if (finalDistance <= 4.5) return true;
+        console.log(`[TREE] path resolved before arrival distance=${finalDistance.toFixed(1)}`);
+        return approachTreeDirectly(bot, position, actionVersion);
     } catch (error) {
         actionControl.assertActive(bot, actionVersion);
         movement.stop(bot);
