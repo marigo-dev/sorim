@@ -18,6 +18,7 @@ try {
     ]);
     memory.appendMineRoute({ x: 5, y: 69, z: 8 });
     memory.rememberPlacedBlock('crafting_table');
+    memory.setProgress('maxIronPotential', 17);
     memory.flush();
 
     delete require.cache[modulePath];
@@ -33,6 +34,7 @@ try {
     ]);
     assert.equal(memory.hasPlacedBlock('crafting_table'), true);
     assert.equal(memory.hasPlacedBlock('furnace'), false);
+    assert.equal(memory.getProgress('maxIronPotential'), 17);
     memory.clearSurfaceExit();
     memory.clearMineRoute();
     memory.flush();

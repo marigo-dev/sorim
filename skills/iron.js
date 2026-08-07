@@ -23,6 +23,17 @@ const ARMOR_SLOTS = {
     iron_boots: 'feet'
 };
 
+const IRON_COSTS = {
+    iron_pickaxe: 3,
+    iron_sword: 2,
+    iron_axe: 3,
+    shield: 1,
+    iron_helmet: 5,
+    iron_chestplate: 8,
+    iron_leggings: 7,
+    iron_boots: 4
+};
+
 async function craftIronKit(bot) {
     const plankMinimum = requiredCorePlanks(countItem(bot, 'stick'));
     await ensurePlanks(bot, plankMinimum);
@@ -32,14 +43,6 @@ async function craftIronKit(bot) {
         if (countItem(bot, item) <= 0) {
             await craft.craftItem(bot, item, 1);
         }
-    }
-
-    for (const item of ARMOR) {
-        if (countItem(bot, 'iron_ingot') - ingotsFor(item) < 8) break;
-        if (countItem(bot, item) <= 0) {
-            await craft.craftItem(bot, item, 1);
-        }
-        await equipArmor(bot, item);
     }
 
     await tools.equipBestWeapon(bot);
@@ -89,12 +92,14 @@ async function equipArmor(bot, itemName) {
 }
 
 function ingotsFor(itemName) {
-    return {
-        iron_helmet: 5,
-        iron_chestplate: 8,
-        iron_leggings: 7,
-        iron_boots: 4
-    }[itemName] || 0;
+    return IRON_COSTS[itemName] || 0;
+}
+
+function ironInvestment(inventory) {
+    return Object.entries(IRON_COSTS)
+        .reduce((total, [itemName, cost]) =>
+            total + Math.min(1, inventory[itemName] || 0) * cost,
+        0);
 }
 
 function countItem(bot, itemName) {
@@ -116,5 +121,6 @@ module.exports = {
     craftIronKit,
     hasIronCoreKit,
     hasFullIronArmor,
-    requiredCorePlanks
+    requiredCorePlanks,
+    ironInvestment
 };

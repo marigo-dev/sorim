@@ -67,12 +67,16 @@ async function smeltItem(bot, inputName, outputName, count = 1) {
     const actionVersion = actionControl.snapshot(bot);
     const furnaceBlock = await ensureFurnace(bot);
     actionControl.assertActive(bot, actionVersion);
-    const input = bot.inventory.items().find(item => item.name === inputName);
-    if (!input) throw new Error(`${inputName} yok`);
 
     const furnace = await openFurnaceSafely(bot, furnaceBlock);
     try {
-        await takeOutputIfPresent(furnace);
+        const pendingOutput = await takeOutputIfPresent(furnace);
+        await movement.sleep(250);
+        const input = bot.inventory.items().find(item => item.name === inputName);
+        if (!input) {
+            if (pendingOutput > 0) return;
+            throw new Error(`${inputName} yok ve furnace output bos`);
+        }
         await clearDifferentInput(furnace, inputName);
         await ensureInput(furnace, input, count);
         actionControl.assertActive(bot, actionVersion);
@@ -162,9 +166,12 @@ function blockReachDistance(bot, block) {
 }
 
 async function takeOutputIfPresent(furnace) {
-    if (furnace.outputItem()) {
+    const output = furnace.outputItem();
+    if (output) {
         await furnace.takeOutput();
+        return output.count;
     }
+    return 0;
 }
 
 async function clearDifferentInput(furnace, inputName) {

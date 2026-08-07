@@ -34,7 +34,8 @@ async function craftItem(bot, itemName, count = 1) {
                 continue;
             }
             if (isSlotTimeoutError(error) || isCraftVisibilityError(error)) {
-                throw new Error(`${itemName} was not confirmed by the server inventory: ${error.message}`);
+                await retryCraftAfterVisibilityDelay(bot, item, itemName, before, table);
+                continue;
             }
             if (!table || !isWindowOpenError(error)) throw error;
             console.log(`[CRAFT] crafting table was unusable, trying a fresh one: ${error.message}`);
@@ -45,6 +46,25 @@ async function craftItem(bot, itemName, count = 1) {
             await waitForItemCount(bot, itemName, before + currentRecipe.result.count, 5000);
         }
         await movement.sleep(250);
+    }
+}
+
+async function retryCraftAfterVisibilityDelay(bot, item, itemName, before, table) {
+    await movement.sleep(1000);
+    if (countItem(bot, itemName) > before) return;
+
+    const liveTable = table?.position ? bot.blockAt(table.position) : table;
+    const recipe = bot.recipesFor(item.id, null, 1, liveTable)[0] ||
+        bot.recipesFor(item.id, null, 1, null)[0];
+    if (!recipe) throw new Error(`${itemName} retry recipe is unavailable`);
+
+    try {
+        await bot.craft(recipe, 1, liveTable);
+        await waitForItemCount(bot, itemName, before + recipe.result.count, 7000);
+    } catch (error) {
+        await movement.sleep(750);
+        if (countItem(bot, itemName) > before) return;
+        throw new Error(`${itemName} was not confirmed after retry: ${error.message}`);
     }
 }
 

@@ -51,14 +51,45 @@ assert.equal(
     new SkillTree().getLevel(observation({ ...miningKit, raw_iron: 9, iron_ingot: 7 })).id,
     'L15_SMELT_IRON'
 );
+assert.equal(
+    new SkillTree().getLevel(observation({
+        ...miningKit,
+        coal: 0,
+        raw_iron: 9,
+        iron_ingot: 8
+    })).id,
+    'L15_SMELT_IRON'
+);
 const smeltingTree = new SkillTree();
 assert.equal(smeltingTree.getLevel(observation({ ...miningKit, raw_iron: 17 })).id, 'L15_SMELT_IRON');
 assert.equal(
     smeltingTree.getLevel(observation({ ...miningKit, raw_iron: 9, iron_ingot: 7 })).id,
     'L15_SMELT_IRON'
 );
+const reconcileLevel = smeltingTree.getLevel(observation({
+    ...miningKit,
+    coal: 0,
+    raw_iron: 0,
+    iron_ingot: 16
+}));
+assert.equal(reconcileLevel.id, 'L15_SMELT_IRON');
+assert.equal(
+    smeltingTree.getForcedAction(
+        observation({ ...miningKit, coal: 0, raw_iron: 0, iron_ingot: 16 }),
+        reconcileLevel
+    ).action,
+    'smelt_item'
+);
 assert.equal(
     new SkillTree().getLevel(observation({ ...miningKit, iron_ingot: 17 })).id,
+    'L16_CRAFT_IRON_KIT'
+);
+assert.equal(
+    new SkillTree().getLevel(observation({
+        ...miningKit,
+        iron_ingot: 14,
+        iron_pickaxe: 1
+    })).id,
     'L16_CRAFT_IRON_KIT'
 );
 assert.equal(
@@ -76,5 +107,12 @@ assert.equal(
 assert.equal(iron.requiredCorePlanks(0), 10);
 assert.equal(iron.requiredCorePlanks(2), 8);
 assert.equal(iron.requiredCorePlanks(6), 6);
+assert.equal(iron.ironInvestment({ iron_pickaxe: 1 }), 3);
+assert.equal(iron.ironInvestment({
+    iron_pickaxe: 1,
+    iron_sword: 1,
+    iron_axe: 1,
+    shield: 1
+}), 9);
 
 console.log('Iron-age milestones and core material reserve passed.');

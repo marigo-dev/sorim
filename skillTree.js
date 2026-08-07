@@ -11,6 +11,7 @@ const LOG_ITEMS = [
 
 const food = require('./skills/food');
 const iron = require('./skills/iron');
+const memory = require('./skills/memory');
 
 const LEVELS = [
     {
@@ -117,7 +118,7 @@ const LEVELS = [
         goal: 'Smelt raw iron into iron ingots using furnace and fuel.',
         allowedActions: ['smelt_item', 'mine_iron', 'prepare_mining_kit', 'idle'],
         complete: observation =>
-            (observation.inventory.iron_ingot || 0) >= 17 ||
+            smeltedIronPotential(observation.inventory) >= 17 ||
             iron.hasIronCoreKit(observation.inventory)
     },
     {
@@ -134,7 +135,7 @@ class SkillTree {
             maxWoodUnits: 0,
             maxPlanks: 0,
             maxCobblestone: 0,
-            maxIronPotential: 0,
+            maxIronPotential: memory.getProgress('maxIronPotential'),
             hasCraftingTable: false
         };
     }
@@ -314,7 +315,11 @@ class SkillTree {
         }
 
         if (level.id === 'L15_SMELT_IRON') {
-            if ((inventory.raw_iron || 0) === 0 && (inventory.iron_ingot || 0) < 17) {
+            if (
+                (inventory.raw_iron || 0) === 0 &&
+                (inventory.iron_ingot || 0) < 17 &&
+                this.progress.maxIronPotential < 17
+            ) {
                 return {
                     action: 'mine_iron',
                     count: 17 - (inventory.iron_ingot || 0),
@@ -325,7 +330,7 @@ class SkillTree {
                 action: 'smelt_item',
                 input: 'raw_iron',
                 output: 'iron_ingot',
-                count: Math.max(1, Math.min(8, 17 - (inventory.iron_ingot || 0))),
+                count: Math.max(1, Math.min(8, 17 - smeltedIronPotential(inventory))),
                 reason: 'Level 15: smelt raw iron into ingots'
             };
         }
@@ -436,6 +441,7 @@ class SkillTree {
             this.progress.maxPlanks = 0;
             this.progress.maxCobblestone = 0;
             this.progress.maxIronPotential = 0;
+            memory.setProgress('maxIronPotential', 0);
             this.progress.hasCraftingTable = false;
             return;
         }
@@ -456,6 +462,7 @@ class SkillTree {
             this.progress.maxIronPotential,
             rawIronPotential(observation.inventory)
         );
+        memory.setProgress('maxIronPotential', this.progress.maxIronPotential);
         if (
             observation.nearbyBlocks.some(block => block.name === 'crafting_table' && block.distance <= 16)
         ) {
@@ -530,6 +537,7 @@ function foodScore(inventory) {
 function hasMiningKit(observation) {
     const inventory = observation.inventory;
     if (iron.hasIronCoreKit(inventory)) return true;
+    if (rawIronPotential(inventory) > 0) return true;
     const hasFurnace = (inventory.furnace || 0) > 0 ||
         observation.nearbyBlocks.some(block => block.name === 'furnace' && block.distance <= 16) ||
         observation.hasPlacedFurnace === true ||
@@ -545,7 +553,13 @@ function hasMiningKit(observation) {
 }
 
 function rawIronPotential(inventory) {
-    return (inventory.raw_iron || 0) + (inventory.iron_ingot || 0);
+    return (inventory.raw_iron || 0) +
+        (inventory.iron_ingot || 0) +
+        iron.ironInvestment(inventory);
+}
+
+function smeltedIronPotential(inventory) {
+    return (inventory.iron_ingot || 0) + iron.ironInvestment(inventory);
 }
 
 function hasIronInFurnaceTransition(inventory) {

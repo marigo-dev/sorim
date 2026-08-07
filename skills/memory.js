@@ -7,6 +7,7 @@ let base = null;
 let surfaceExit = null;
 let mineRoute = [];
 let placedBlocks = new Set();
+let progression = {};
 let memoryFile = null;
 let saveTimer = null;
 
@@ -16,6 +17,7 @@ function initialize(botName = 'marigo', options = {}) {
     surfaceExit = null;
     mineRoute = [];
     placedBlocks = new Set();
+    progression = {};
 
     const directory = options.directory || path.join(__dirname, '..', 'data', 'memory');
     const safeName = String(botName).replace(/[^a-zA-Z0-9_-]/g, '_') || 'marigo';
@@ -33,6 +35,7 @@ function initialize(botName = 'marigo', options = {}) {
                 ? saved.placedBlocks.filter(name => typeof name === 'string')
                 : []
         );
+        progression = normalizeProgression(saved.progression);
         console.log(`[MEMORY] loaded ${memoryFile}`);
     } catch (error) {
         console.log(`[MEMORY] ignored unreadable state: ${error.message}`);
@@ -109,6 +112,19 @@ function hasPlacedBlock(name) {
     return placedBlocks.has(name);
 }
 
+function setProgress(name, value) {
+    if (typeof name !== 'string' || !Number.isFinite(value)) return;
+    const normalized = Math.max(0, value);
+    if (progression[name] === normalized) return;
+    progression[name] = normalized;
+    scheduleSave();
+}
+
+function getProgress(name) {
+    const value = progression[name];
+    return Number.isFinite(value) ? value : 0;
+}
+
 function scheduleSave() {
     if (!memoryFile || saveTimer) return;
     saveTimer = setTimeout(() => {
@@ -125,11 +141,12 @@ function flush() {
     const directory = path.dirname(memoryFile);
     const temporaryFile = `${memoryFile}.tmp`;
     const payload = JSON.stringify({
-        version: 1,
+        version: 2,
         base,
         surfaceExit,
         mineRoute,
-        placedBlocks: [...placedBlocks].sort()
+        placedBlocks: [...placedBlocks].sort(),
+        progression
     }, null, 2);
 
     fs.mkdirSync(directory, { recursive: true });
@@ -179,6 +196,15 @@ function sameRoute(left, right) {
         left.every((position, index) => samePosition(position, right[index]));
 }
 
+function normalizeProgression(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    return Object.fromEntries(
+        Object.entries(value)
+            .filter(([name, amount]) => typeof name === 'string' && Number.isFinite(amount))
+            .map(([name, amount]) => [name, Math.max(0, amount)])
+    );
+}
+
 module.exports = {
     initialize,
     flush,
@@ -193,5 +219,7 @@ module.exports = {
     getMineRoute,
     clearMineRoute,
     rememberPlacedBlock,
-    hasPlacedBlock
+    hasPlacedBlock,
+    setProgress,
+    getProgress
 };
