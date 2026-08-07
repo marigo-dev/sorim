@@ -14,6 +14,8 @@ const iron = require('./skills/iron');
 const memory = require('./skills/memory');
 const storage = require('./skills/storage');
 
+const FULL_IRON_TARGET = 44;
+
 const LEVELS = [
     {
         id: 'L1_COLLECT_WOOD',
@@ -92,6 +94,12 @@ const LEVELS = [
         complete: observation => observation.hasUsableChest === true
     },
     {
+        id: 'L11_SECURE_BED',
+        goal: 'Collect three matching wool, craft a bed, and place it near the base.',
+        allowedActions: ['secure_bed', 'mine', 'idle'],
+        complete: observation => observation.hasBed === true
+    },
+    {
         id: 'L12_PREPARE_MINING_KIT',
         goal: 'Prepare furnace, fuel, torches, food, stone tools, and block stock for iron mining.',
         allowedActions: ['prepare_mining_kit', 'eat_food', 'find_food', 'mine', 'craft', 'idle'],
@@ -129,20 +137,26 @@ const LEVELS = [
         complete: observation => iron.hasIronCoreItems(observation.inventory)
     },
     {
-        id: 'L17_COLLECT_ARMOR_IRON',
-        goal: 'Collect 24 additional iron for full armor while preserving the core kit and 8 ingot reserve.',
+        id: 'L17_ESTABLISH_WHEAT_FARM',
+        goal: 'Use a bucket, water, hoe, and seeds to establish a hydrated wheat farm near base.',
+        allowedActions: ['establish_wheat_farm', 'mine_iron', 'smelt_item', 'craft', 'idle'],
+        complete: observation => observation.farmReady === true
+    },
+    {
+        id: 'L18_COLLECT_ARMOR_IRON',
+        goal: 'Collect enough additional iron for full armor, the farm bucket, and an 8 ingot reserve.',
         allowedActions: ['mine_iron', 'eat_food', 'organize_storage', 'idle'],
         complete: (observation, tree) =>
-            tree.progress.maxIronPotential >= 41
+            tree.progress.maxIronPotential >= FULL_IRON_TARGET
     },
     {
-        id: 'L18_SMELT_ARMOR_IRON',
-        goal: 'Smelt the armor iron until tools, armor budget, and reserve represent 41 ingots.',
+        id: 'L19_SMELT_ARMOR_IRON',
+        goal: 'Smelt iron until tools, bucket, armor budget, and reserve represent 44 ingots.',
         allowedActions: ['smelt_item', 'mine_iron', 'prepare_mining_kit', 'idle'],
-        complete: observation => smeltedIronPotential(observation.inventory) >= 41
+        complete: observation => smeltedIronPotential(observation.inventory) >= FULL_IRON_TARGET
     },
     {
-        id: 'L19_CRAFT_IRON_ARMOR',
+        id: 'L20_CRAFT_IRON_ARMOR',
         goal: 'Craft and equip full iron armor while preserving 8 iron ingots.',
         allowedActions: ['craft_iron_armor', 'craft', 'idle'],
         complete: observation =>
@@ -166,7 +180,7 @@ class SkillTree {
         this.updateProgress(observation);
         return LEVELS.find(level => !level.complete(observation, this)) ||
             {
-                id: 'L11_STABLE_SURVIVAL',
+                id: 'L21_STABLE_SURVIVAL',
                 goal: 'Core loop complete. Maintain food, wood, planks, and storage.',
                 allowedActions: [
                     'mine',
@@ -180,6 +194,7 @@ class SkillTree {
                     'smelt_item',
                     'craft_iron_kit',
                     'craft_iron_armor',
+                    'establish_wheat_farm',
                     'idle'
                 ],
                 complete: () => false
@@ -307,6 +322,13 @@ class SkillTree {
             };
         }
 
+        if (level.id === 'L11_SECURE_BED') {
+            return {
+                action: 'secure_bed',
+                reason: 'Level 11: secure and place a bed at base'
+            };
+        }
+
         if (level.id === 'L12_PREPARE_MINING_KIT') {
             if (!food.hasFoodStock(inventory, 16) &&
                 (!food.isTemporarilyUnavailable() || food.hasConvertibleFood(inventory))) {
@@ -366,25 +388,32 @@ class SkillTree {
             };
         }
 
-        if (level.id === 'L17_COLLECT_ARMOR_IRON') {
+        if (level.id === 'L17_ESTABLISH_WHEAT_FARM') {
             return {
-                action: 'mine_iron',
-                count: Math.max(1, 41 - smeltedIronPotential(inventory)),
-                reason: 'Level 17: collect 24 additional raw iron for full armor'
+                action: 'establish_wheat_farm',
+                reason: 'Level 17: establish a hydrated wheat farm'
             };
         }
 
-        if (level.id === 'L18_SMELT_ARMOR_IRON') {
-            const armorIronDeficit = 41 - smeltedIronPotential(inventory);
+        if (level.id === 'L18_COLLECT_ARMOR_IRON') {
+            return {
+                action: 'mine_iron',
+                count: Math.max(1, FULL_IRON_TARGET - smeltedIronPotential(inventory)),
+                reason: 'Level 18: collect additional raw iron for full armor'
+            };
+        }
+
+        if (level.id === 'L19_SMELT_ARMOR_IRON') {
+            const armorIronDeficit = FULL_IRON_TARGET - smeltedIronPotential(inventory);
             if (
                 (inventory.raw_iron || 0) === 0 &&
                 armorIronDeficit > 0 &&
-                (this.progress.maxIronPotential < 41 || armorIronDeficit > 1)
+                (this.progress.maxIronPotential < FULL_IRON_TARGET || armorIronDeficit > 1)
             ) {
                 return {
                     action: 'mine_iron',
                     count: Math.max(1, armorIronDeficit),
-                    reason: 'Level 18: replace missing armor iron before smelting'
+                    reason: 'Level 19: replace missing armor iron before smelting'
                 };
             }
             return {
@@ -392,18 +421,18 @@ class SkillTree {
                 input: 'raw_iron',
                 output: 'iron_ingot',
                 count: Math.max(1, Math.min(8, armorIronDeficit)),
-                reason: 'Level 18: smelt iron for full armor'
+                reason: 'Level 19: smelt iron for full armor'
             };
         }
 
-        if (level.id === 'L19_CRAFT_IRON_ARMOR') {
+        if (level.id === 'L20_CRAFT_IRON_ARMOR') {
             return {
                 action: 'craft_iron_armor',
-                reason: 'Level 19: craft and equip full iron armor'
+                reason: 'Level 20: craft and equip full iron armor'
             };
         }
 
-        if (level.id === 'L11_STABLE_SURVIVAL') {
+        if (level.id === 'L21_STABLE_SURVIVAL') {
             if (!iron.hasIronCoreKit(inventory)) {
                 return {
                     action: 'prepare_mining_kit',
@@ -477,6 +506,8 @@ class SkillTree {
         if (action.action === 'escape_pit') return action;
         if (action.action === 'return_base') return action;
         if (action.action === 'organize_storage') return action;
+        if (action.action === 'secure_bed') return action;
+        if (action.action === 'establish_wheat_farm') return action;
         if (action.action === 'prepare_mining_kit') return action;
         if (action.action === 'mine_iron') return action;
         if (action.action === 'smelt_item') return action;

@@ -88,6 +88,30 @@ assert.equal(
     'L5_COLLECT_STONE'
 );
 
+const bedTree = new SkillTree();
+const preBedInventory = {
+    ...stoneToolInventory,
+    bread: 16,
+    oak_planks: 12
+};
+const bedLevel = bedTree.getLevel(observation(preBedInventory, {
+    base: { x: 0, y: 70, z: 0 },
+    hasUsableChest: true,
+    hasBed: false
+}));
+assert.equal(bedLevel.id, 'L11_SECURE_BED');
+assert.equal(
+    bedTree.getForcedAction(
+        observation(preBedInventory, {
+            base: { x: 0, y: 70, z: 0 },
+            hasUsableChest: true,
+            hasBed: false
+        }),
+        bedLevel
+    ).action,
+    'secure_bed'
+);
+
 const bot = {};
 const version = actionControl.snapshot(bot);
 actionControl.assertActive(bot, version);

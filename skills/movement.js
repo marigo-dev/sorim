@@ -6,7 +6,8 @@ function configure(bot) {
     movements.canDig = false;
     movements.allow1by1towers = false;
     movements.allowFreeMotion = true;
-    movements.allowParkour = true;
+    movements.allowParkour = false;
+    movements.maxDropDown = 2;
     bot.pathfinder.setMovements(movements);
 }
 
@@ -35,16 +36,39 @@ async function explore(bot, action = {}) {
 
     console.log(`[MOVE] Exploring target=${target} x=${position.x} z=${position.z}`);
     try {
+        const verticalAllowance = target === 'stone' ? 8 : 5;
+        const goalRange = target === 'wood' ? 8 : 3;
+        const navigation = bot.pathfinder.goto(
+            new goals.GoalNear(position.x, position.y, position.z, goalRange)
+        );
         await withTimeout(
-            bot.pathfinder.goto(new goals.GoalNearXZ(position.x, position.z, target === 'wood' ? 8 : 3)),
+            withVerticalGuard(
+                bot,
+                navigation,
+                origin.y - verticalAllowance,
+                origin.y + verticalAllowance + 4
+            ),
             target === 'wood' ? 26000 : 18000,
             'Exploration timed out'
         );
     } catch (error) {
+        stop(bot);
         console.log(`[MOVE] Exploration could not complete: ${error.message}`);
-        await bot.lookAt(position.offset(0.5, 0.5, 0.5), true);
-        await manualNudge(bot, target === 'wood' ? 7000 : 2200);
     }
+}
+
+function withVerticalGuard(bot, navigation, minimumY, maximumY) {
+    let timer = null;
+    const guard = new Promise((_, reject) => {
+        timer = setInterval(() => {
+            const y = bot.entity?.position?.y;
+            if (!Number.isFinite(y) || (y >= minimumY && y <= maximumY)) return;
+            stop(bot);
+            reject(new Error(`Exploration left safe Y range (${y.toFixed(1)})`));
+        }, 100);
+    });
+    return Promise.race([navigation, guard])
+        .finally(() => clearInterval(timer));
 }
 
 async function manualNudge(bot, durationMs = 1200) {

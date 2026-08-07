@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 process.env.MC_VERSION = '26.2';
 process.env.ENABLE_EXPERIMENTAL_26_2 = 'true';
 
-const { SLOT_COMPONENTS_26_2 } = require('../protocol26Shim');
+const { EventEmitter } = require('events');
+const { SLOT_COMPONENTS_26_2, createMineflayerTimePluginShim } = require('../protocol26Shim');
 const minecraftData = require('minecraft-data');
 const minecraftProtocol = require('minecraft-protocol');
 
@@ -61,3 +62,18 @@ assert.equal(decoded.metadata.size, encoded.length);
 assert.deepEqual(decoded.data, packet);
 
 console.log('26.2 protocol shim inventory codec passed.');
+
+const fakeClient = new EventEmitter();
+const fakeBot = { _client: fakeClient, emit() {} };
+createMineflayerTimePluginShim()(fakeBot);
+fakeClient.emit('update_time', {
+    age: 100n,
+    clocks: [{ clockId: 0, time: 37000, partialTick: 0, tickRate: 1 }]
+});
+assert.equal(fakeBot.time.timeOfDay, 13000);
+assert.equal(fakeBot.time.isDay, false);
+fakeClient.emit('update_time', { age: 101n, clocks: [] });
+assert.equal(fakeBot.time.timeOfDay, 13000);
+assert.equal(fakeBot.time.age, 101);
+
+console.log('26.2 incremental world clock handling passed.');

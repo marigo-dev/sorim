@@ -37,6 +37,8 @@ The AI does not directly control Mineflayer APIs. It chooses from explicit tools
 - `smelt_item`
 - `craft_iron_kit`
 - `craft_iron_armor`
+- `secure_bed`
+- `establish_wheat_farm`
 - `build_blueprint`
 - `ensure_shared_storage`
 
@@ -64,13 +66,15 @@ The current AI-agent foundation includes:
 - craft stone pickaxe, stone axe, and stone sword
 - build a basic shelter
 - run simple survival checks for hunger, mobs, pits, night, and storage
+- obtain and place a bed, return to it at night, and sleep on the surface
+- create a hydrated 3x3 wheat plot, harvest mature crops, and replant seeds
 - prepare a mining kit, mine and smelt iron, craft the core iron kit, and equip full iron armor while preserving an 8-ingot reserve
 - execute creative-mode blueprints and showcase builds
 - run two-agent colony experiments with shared storage
 - ask an LLM for decisions when enabled
 - fall back to safe deterministic behavior when an AI response is invalid
 
-The native 26.2 survival chain has been exercised in live runs through shelter, food fallback, persistent base memory, chest storage, the complete iron-age crafting chain, and full iron armor. Controlled server-side tests verified the equipped armor, an 8-ingot reserve, hostile detection, iron-sword combat, and survival on Easy difficulty. Long unsupervised runs in naturally generated terrain are still experimental. This is not yet a full human-level Minecraft player.
+The native 26.2 survival chain has been exercised in live runs through shelter, food fallback, persistent base memory, chest storage, bed placement and sleep, a hydrated wheat plot, the complete iron-age crafting chain, and full iron armor. Controlled server-side tests verified crop harvest and replanting, the equipped armor, an 8-ingot reserve, hostile detection, iron-sword combat, and survival on Easy difficulty. Long unsupervised runs in naturally generated terrain are still experimental. This is not yet a full human-level Minecraft player.
 
 ## Requirements
 
@@ -177,7 +181,7 @@ $env:MC_VERSION='26.2'
 npm start
 ```
 
-The shim currently covers the 26.2 registry, inventory component, entity, particle, and attack packet differences exercised by the survival skills. Future Paper or Minecraft protocol changes may require new mappings.
+The shim currently covers the 26.2 registry, inventory component, incremental world-clock, entity, particle, and attack packet differences exercised by the survival skills. Future Paper or Minecraft protocol changes may require new mappings.
 
 ### Optional 1.21 bridge mode
 
@@ -399,9 +403,12 @@ After starting the server and bot, watch for this sequence:
 7. Bot works toward a reserve of 16 edible items, cooks raw food when a furnace and fuel are available, and temporarily moves on when no mob or mature crop exists.
 8. Bot places a chest and deposits excess inventory while keeping survival tools and food.
 9. If night arrives and no bed exists, bot reduces risky outdoor tasks.
-10. Bot prepares torches and fuel, mines and smelts enough iron for its core kit and an 8-ingot reserve.
-11. Bot collects 24 additional iron, crafts and equips full iron armor, and keeps the reserve intact.
-12. On Easy difficulty, a nearby hostile interrupts routine work and is fought with the best available weapon.
+10. Bot obtains three matching wool, crafts and places a bed, then sleeps there when night arrives on the surface.
+11. Bot preserves the iron reserve while making a bucket, collects water, creates eight hydrated farmland blocks, and plants wheat.
+12. Mature wheat is harvested and immediately replanted; food collection continues while edible item count is below 16.
+13. Bot prepares torches and fuel, mines and smelts enough iron for its core kit and an 8-ingot reserve.
+14. Bot collects the additional armor iron, crafts and equips full iron armor, and keeps the reserve intact.
+15. On Easy difficulty, a nearby hostile interrupts routine work and is fought with the best available weapon.
 
 If the bot gets stuck, restart with debug logs:
 

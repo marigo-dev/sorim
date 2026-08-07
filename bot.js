@@ -11,6 +11,7 @@ const survival = require('./skills/survival');
 const storage = require('./skills/storage');
 const shelter = require('./skills/shelter');
 const memory = require('./skills/memory');
+const homestead = require('./skills/homestead');
 const actionControl = require('./skills/actionControl');
 const toolRegistry = require('./toolRegistry');
 
@@ -264,6 +265,9 @@ function observe() {
         hasUsableChest: storage.hasChestNearby(bot),
         hasPlacedCraftingTable: memory.hasPlacedBlock('crafting_table'),
         hasPlacedFurnace: memory.hasPlacedBlock('furnace'),
+        hasBed: homestead.hasBed(bot),
+        farmReady: homestead.hasFarm(bot),
+        hasMatureCrop: homestead.hasMatureCrop(bot),
         storageReady: !storage.isTemporarilyUnavailable(),
         base: memory.getBase(),
         survivalReady: true,

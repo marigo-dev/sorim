@@ -8,6 +8,7 @@ const tools = require('./skills/tools');
 const shelter = require('./skills/shelter');
 const survival = require('./skills/survival');
 const food = require('./skills/food');
+const homestead = require('./skills/homestead');
 const storage = require('./skills/storage');
 const mining = require('./skills/mining');
 const memory = require('./skills/memory');
@@ -101,6 +102,18 @@ const TOOL_DEFINITIONS = [
         description: 'Sleep in a nearby bed.',
         args: {},
         actions: ['sleep_bed']
+    },
+    {
+        name: 'secure_bed',
+        description: 'Collect matching wool, craft a bed, and place it near the remembered base.',
+        args: {},
+        actions: ['secure_bed']
+    },
+    {
+        name: 'establish_wheat_farm',
+        description: 'Create a hydrated 3x3 wheat farm using a hoe, bucket, water, and seeds.',
+        args: {},
+        actions: ['establish_wheat_farm']
     },
     {
         name: 'organize_storage',
@@ -246,6 +259,8 @@ function actionToToolCall(action) {
         return_base: 'return_base',
         wait_safe: 'wait_safe',
         sleep_bed: 'sleep_bed',
+        secure_bed: 'secure_bed',
+        establish_wheat_farm: 'establish_wheat_farm',
         organize_storage: 'organize_storage',
         prepare_mining_kit: 'prepare_mining_kit',
         mine_iron: 'mine_iron',
@@ -361,6 +376,16 @@ async function executeToolCall(bot, call) {
 
     if (call.tool === 'sleep_bed') {
         await survival.sleepInBed(bot);
+        return;
+    }
+
+    if (call.tool === 'secure_bed') {
+        await homestead.secureBed(bot);
+        return;
+    }
+
+    if (call.tool === 'establish_wheat_farm') {
+        await homestead.establishWheatFarm(bot);
         return;
     }
 

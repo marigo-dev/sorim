@@ -779,12 +779,17 @@ function createMineflayerTimePluginShim() {
         };
 
         bot._client.on('update_time', (packet) => {
-            const firstClock = Array.isArray(packet.clocks) ? packet.clocks[0] : null;
-            const time = toBigInt(packet.time ?? firstClock?.time ?? 0);
             const age = toBigInt(packet.age ?? 0);
+            const clocks = Array.isArray(packet.clocks) ? packet.clocks : [];
+            const dayClock = clocks.find(clock => Number(clock.clockId) === 0) || null;
+            const explicitTime = packet.time ?? dayClock?.time;
+            const previousTime = bot.time.bigTime ?? 0n;
+            const time = explicitTime === undefined ? previousTime : toBigInt(explicitTime);
             const doDaylightCycle = packet.tickDayTime !== undefined
                 ? !!packet.tickDayTime
-                : (firstClock?.tickRate ?? 1) > 0;
+                : dayClock
+                    ? (dayClock.tickRate ?? 1) > 0
+                    : (bot.time.doDaylightCycle ?? true);
             const finalTime = doDaylightCycle ? time : (time < 0n ? -time : time);
 
             bot.time.doDaylightCycle = doDaylightCycle;
@@ -852,5 +857,6 @@ function copyProperties(source, target) {
 }
 
 module.exports = {
-    SLOT_COMPONENTS_26_2
+    SLOT_COMPONENTS_26_2,
+    createMineflayerTimePluginShim
 };

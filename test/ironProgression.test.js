@@ -16,6 +16,9 @@ function observation(inventory, overrides = {}) {
         storageReady: true,
         base: { x: 0, y: 70, z: 0 },
         survivalReady: true,
+        hasBed: true,
+        farmReady: true,
+        hasMatureCrop: false,
         ...overrides
     };
 }
@@ -116,9 +119,10 @@ assert.equal(
         iron_sword: 1,
         iron_axe: 1,
         shield: 1,
+        bucket: 1,
         iron_ingot: 8
     })).id,
-    'L17_COLLECT_ARMOR_IRON'
+    'L18_COLLECT_ARMOR_IRON'
 );
 
 const ironCore = {
@@ -127,25 +131,33 @@ const ironCore = {
     iron_sword: 1,
     iron_axe: 1,
     shield: 1,
+    bucket: 1,
     iron_ingot: 8
 };
+const farmTree = new SkillTree();
+const farmLevel = farmTree.getLevel(observation(ironCore, { farmReady: false }));
+assert.equal(farmLevel.id, 'L17_ESTABLISH_WHEAT_FARM');
+assert.equal(
+    farmTree.getForcedAction(observation(ironCore, { farmReady: false }), farmLevel).action,
+    'establish_wheat_farm'
+);
 const armorTree = new SkillTree();
 const collectArmorLevel = armorTree.getLevel(observation(ironCore));
-assert.equal(collectArmorLevel.id, 'L17_COLLECT_ARMOR_IRON');
+assert.equal(collectArmorLevel.id, 'L18_COLLECT_ARMOR_IRON');
 assert.equal(
     armorTree.getForcedAction(observation(ironCore), collectArmorLevel).count,
     24
 );
 assert.equal(
     armorTree.getLevel(observation({ ...ironCore, raw_iron: 24 })).id,
-    'L18_SMELT_ARMOR_IRON'
+    'L19_SMELT_ARMOR_IRON'
 );
 assert.equal(
     armorTree.getLevel(observation({ ...ironCore, iron_ingot: 32 })).id,
-    'L19_CRAFT_IRON_ARMOR'
+    'L20_CRAFT_IRON_ARMOR'
 );
 const finalFurnaceLevel = armorTree.getLevel(observation({ ...ironCore, iron_ingot: 31 }));
-assert.equal(finalFurnaceLevel.id, 'L18_SMELT_ARMOR_IRON');
+assert.equal(finalFurnaceLevel.id, 'L19_SMELT_ARMOR_IRON');
 assert.equal(
     armorTree.getForcedAction(
         observation({ ...ironCore, iron_ingot: 31 }),
@@ -161,7 +173,7 @@ assert.equal(
         iron_helmet: 1,
         iron_boots: 1
     })).id,
-    'L11_STABLE_SURVIVAL'
+    'L21_STABLE_SURVIVAL'
 );
 const stableInventory = {
     ...ironCore,
@@ -185,7 +197,7 @@ assert.equal(
 );
 const spentReserveInventory = { ...stableInventory, iron_ingot: 0 };
 const replaceReserveLevel = armorTree.getLevel(observation(spentReserveInventory));
-assert.equal(replaceReserveLevel.id, 'L18_SMELT_ARMOR_IRON');
+assert.equal(replaceReserveLevel.id, 'L19_SMELT_ARMOR_IRON');
 assert.equal(
     armorTree.getForcedAction(
         observation(spentReserveInventory),
@@ -206,5 +218,7 @@ assert.equal(iron.ironInvestment({
 }), 9);
 assert.equal(iron.requiredArmorIngots({}), 24);
 assert.equal(iron.requiredArmorIngots({ iron_chestplate: 1 }), 16);
+assert.equal(iron.ironInvestment({ bucket: 1 }), 3);
+assert.equal(iron.ironInvestment({ water_bucket: 1 }), 3);
 
 console.log('Iron-age milestones and core material reserve passed.');

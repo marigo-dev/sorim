@@ -303,7 +303,16 @@ async function replantCrop(bot, position, seedName) {
     if (!seed || farmland?.name !== 'farmland') return;
     try {
         await bot.equip(seed, 'hand');
-        await bot.placeBlock(farmland, new Vec3(0, 1, 0));
+        await movement.sleep(300);
+        await bot.activateBlock(
+            farmland,
+            new Vec3(0, 1, 0),
+            new Vec3(0.5, 1, 0.5)
+        );
+        await movement.sleep(300);
+        if (bot.blockAt(position)?.name !== 'wheat') {
+            console.log(`[FOOD] replant was not confirmed ${position.toString()}`);
+        }
     } catch (error) {
         console.log(`[FOOD] replant skipped: ${error.message}`);
     }

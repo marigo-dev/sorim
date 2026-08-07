@@ -126,10 +126,12 @@ function ingotsFor(itemName) {
 }
 
 function ironInvestment(inventory) {
-    return Object.entries(IRON_COSTS)
+    const equipment = Object.entries(IRON_COSTS)
         .reduce((total, [itemName, cost]) =>
             total + Math.min(1, inventory[itemName] || 0) * cost,
         0);
+    const bucket = (inventory.bucket || 0) > 0 || (inventory.water_bucket || 0) > 0 ? 3 : 0;
+    return equipment + bucket;
 }
 
 function countItem(bot, itemName) {

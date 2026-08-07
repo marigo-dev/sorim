@@ -22,7 +22,9 @@ const HOSTILES = new Set([
 
 const NIGHT_BLOCKED_LEVELS = new Set([
     'L9_FOOD_LOOP',
-    'L11_STABLE_SURVIVAL'
+    'L11_SECURE_BED',
+    'L17_ESTABLISH_WHEAT_FARM',
+    'L21_STABLE_SURVIVAL'
 ]);
 
 const SURFACE_WORK_LEVELS = new Set([
@@ -32,9 +34,10 @@ const SURFACE_WORK_LEVELS = new Set([
     'L12_PREPARE_MINING_KIT',
     'L15_SMELT_IRON',
     'L16_CRAFT_IRON_KIT',
-    'L18_SMELT_ARMOR_IRON',
-    'L19_CRAFT_IRON_ARMOR',
-    'L11_STABLE_SURVIVAL'
+    'L17_ESTABLISH_WHEAT_FARM',
+    'L19_SMELT_ARMOR_IRON',
+    'L20_CRAFT_IRON_ARMOR',
+    'L21_STABLE_SURVIVAL'
 ]);
 
 const MELEE_HOSTILES = new Set([
@@ -167,7 +170,7 @@ function shouldReachSurfaceForWork(bot, observation, level) {
     }
     if (bot.entity.position.y >= 58) return false;
     if (
-        level?.id === 'L11_STABLE_SURVIVAL' &&
+        level?.id === 'L21_STABLE_SURVIVAL' &&
         woodUnits(observation.inventory) < 2
     ) {
         return true;
@@ -706,6 +709,11 @@ async function sleepInBed(bot) {
             await movement.sleep(1000);
         }
     } catch (error) {
+        await movement.sleep(500);
+        if (!isNight(bot)) {
+            console.log('[SURVIVAL] sleep confirmed by morning clock update');
+            return;
+        }
         console.log(`[SURVIVAL] could not sleep in bed: ${error.message}`);
         await waitSafe(bot, 3000);
     }
