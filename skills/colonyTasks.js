@@ -2,6 +2,11 @@ const { Vec3 } = require('vec3');
 
 const colonyMemory = require('./colonyMemory');
 const sharedStorage = require('./sharedStorage');
+const LeaseManager = require('../agent/leaseManager');
+
+const leaseManager = new LeaseManager(colonyMemory, {
+    defaultTtlMs: Number(process.env.COLONY_LEASE_TTL_MS || 120000)
+});
 
 const LOG_ITEMS = [
     'oak_log',
@@ -11,7 +16,8 @@ const LOG_ITEMS = [
     'acacia_log',
     'dark_oak_log',
     'cherry_log',
-    'mangrove_log'
+    'mangrove_log',
+    'pale_oak_log'
 ];
 
 const PLANK_ITEMS = [
@@ -22,7 +28,8 @@ const PLANK_ITEMS = [
     'acacia_planks',
     'dark_oak_planks',
     'cherry_planks',
-    'mangrove_planks'
+    'mangrove_planks',
+    'pale_oak_planks'
 ];
 
 const FOOD_ITEMS = [
@@ -42,7 +49,8 @@ const FOOD_ITEMS = [
 ];
 
 function bootstrap(center, agents) {
-    colonyMemory.reset(vectorToObject(center));
+    colonyMemory.prepareSettlement(vectorToObject(center));
+    colonyMemory.initializeSettlement(vectorToObject(center));
     colonyMemory.setSharedStorage({
         position: vectorToObject(center),
         categories: ['building_blocks', 'food', 'tools', 'ores'],
@@ -90,32 +98,109 @@ async function ensureSharedStorageReady(bot, center) {
     return sharedStorage.ensureSharedStorage(bot, center);
 }
 
-function selectTask(bot, agent) {
+function selectTask(bot, agent, options = {}) {
     const inventory = countInventory(bot);
     const shared = colonyMemory.load().sharedStorage?.inventory || {};
 
     const deposit = selectDeposit(inventory);
     if (deposit) {
-        return {
+        const call = {
             tool: 'deposit_shared_storage',
             args: deposit,
             reason: `${agent.role}: deposit useful colony resource`
         };
+        return options.claim === false ? call : leaseTask(call, agent);
     }
 
+    let selected = null;
     if (agent.role === 'builder') {
-        return selectBuilderTask(shared, inventory);
+        selected = selectBuilderTask(shared, inventory);
     }
-
     if (agent.role === 'farmer_miner') {
-        return selectFarmerMinerTask(shared, inventory);
+        selected = selectFarmerMinerTask(shared, inventory);
     }
-
-    return {
+    if (agent.role === 'farmer') selected = selectFarmerTask(inventory);
+    if (agent.role === 'rancher') {
+        selected = tool('care_for_animals', {}, 'rancher: feed and breed colony livestock');
+    }
+    if (agent.role === 'miner') selected = selectMinerTask(shared, inventory);
+    if (agent.role === 'lumberjack') selected = selectLumberjackTask(inventory);
+    if (agent.role === 'fisher') selected = tool('fish', {}, 'fisher: supply the colony from open water');
+    if (agent.role === 'quartermaster') {
+        selected = tool('count_shared_storage', {}, 'quartermaster: audit shared colony stock');
+    }
+    selected = selected || {
         tool: 'wait_safe',
         args: { ms: 1000 },
         reason: `${agent.role}: no colony task`
     };
+    return options.claim === false ? selected : leaseTask(selected, agent);
+}
+
+function leaseTask(call, agent) {
+    if (!call || ['wait_safe', 'count_shared_storage'].includes(call.tool)) return call;
+    const key = taskLeaseKey(call);
+    const lease = leaseManager.claim(key, agent.name, {
+        role: agent.role,
+        tool: call.tool,
+        args: call.args || {}
+    });
+    if (!lease) {
+        return tool('wait_safe', { ms: 1200 }, `${agent.role}: work is leased to another citizen`);
+    }
+    return { ...call, lease };
+}
+
+function taskLeaseKey(call) {
+    const args = Object.entries(call.args || {}).sort(([left], [right]) => left.localeCompare(right));
+    return `task:${call.tool}:${JSON.stringify(Object.fromEntries(args))}`;
+}
+
+function releaseLease(call, owner) {
+    return call?.lease?.key ? leaseManager.release(call.lease.key, owner) : false;
+}
+
+function releaseAgentLeases(owner) {
+    return leaseManager.releaseOwner(owner);
+}
+
+function selectFarmerTask(inventory) {
+    const foodName = FOOD_ITEMS.find(name => (inventory[name] || 0) > 0);
+    if (foodName) {
+        return tool('deposit_shared_storage', {
+            item: foodName,
+            count: inventory[foodName]
+        }, 'farmer: deposit produced food');
+    }
+    return tool('maintain_food_supply', {}, 'farmer: maintain crops, then tend livestock while crops grow');
+}
+
+function selectMinerTask(shared, inventory) {
+    if ((inventory.raw_iron || 0) > 0) {
+        return tool('deposit_shared_storage', { item: 'raw_iron', count: inventory.raw_iron }, 'miner: deposit raw iron');
+    }
+    if ((inventory.cobblestone || 0) > 32 && (shared.cobblestone || 0) < 32) {
+        return tool('deposit_shared_storage', {
+            item: 'cobblestone',
+            count: Math.min(16, inventory.cobblestone - 32)
+        }, 'miner: maintain building stock while keeping a mining reserve');
+    }
+    if ((shared.cobblestone || 0) < 32) return tool('collect_stone', { count: 16 }, 'miner: gather starter stone');
+    return tool('mine_iron', { count: 16 }, 'miner: operate the colony iron mine');
+}
+
+function selectLumberjackTask(inventory) {
+    const logName = LOG_ITEMS.find(name => (inventory[name] || 0) > 0);
+    if (logName && inventory[logName] >= 16) {
+        return tool('deposit_shared_storage', { item: logName, count: inventory[logName] }, 'lumberjack: deposit logs');
+    }
+    const saplingName = Object.keys(inventory).find(name => name.endsWith('_sapling') && inventory[name] >= 1);
+    if (saplingName) return tool('replant_sapling', {}, 'lumberjack: replant outside protected builds');
+    return tool('mine_block', { target: 'any_log' }, 'lumberjack: harvest a safe natural tree');
+}
+
+function tool(name, args, reason) {
+    return { tool: name, args, reason };
 }
 
 function selectBuilderTask(shared, inventory) {
@@ -272,6 +357,9 @@ module.exports = {
     ensureDefaultRequests,
     ensureSharedStorageReady,
     selectTask,
+    taskLeaseKey,
+    releaseLease,
+    releaseAgentLeases,
     parseCenter,
     countInventory
 };

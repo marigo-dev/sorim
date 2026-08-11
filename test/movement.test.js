@@ -58,8 +58,8 @@ async function main() {
         }
     };
     assert.equal(movement.resyncCollision(embedded), true);
-    assert.equal(embedded.entity.position.y, 65);
-    assert.equal(embedded.entity.onGround, true);
+    assert.equal(embedded.entity.position.y, 64, 'collision recovery must not teleport the client body');
+    assert.equal(embedded.entity.onGround, false);
 
     const headEmbedded = {
         entity: {
@@ -73,7 +73,66 @@ async function main() {
         }
     };
     assert.equal(movement.resyncCollision(headEmbedded), true);
-    assert.equal(headEmbedded.entity.position.y, 66);
+    assert.equal(headEmbedded.entity.position.y, 64, 'head collision must release controls without fake vertical movement');
+
+    const blockAtStep = position => {
+        const key = `${position.x},${position.y},${position.z}`;
+        if (key === '1,64,0') {
+            return { name: 'stone', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+        }
+        if (position.y === 63) return { name: 'stone', boundingBox: 'block' };
+        return { name: 'air', boundingBox: 'empty' };
+    };
+    const obstacleBot = {
+        entity: { position: new Vec3(0, 64, 0), yaw: -Math.PI / 2 },
+        blockAt: blockAtStep
+    };
+    assert.equal(movement.frontObstacle(obstacleBot, new Vec3(4, 64, 0)), 'step');
+
+    const diagonalBot = {
+        entity: { position: new Vec3(0, 64, 0), yaw: -Math.PI * 0.75 },
+        blockAt: position => {
+            if (position.x === 1 && position.y === 64 && position.z === 1) {
+                return { name: 'stone', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+            }
+            if (position.y === 63) return { name: 'stone', boundingBox: 'block' };
+            return { name: 'air', boundingBox: 'empty' };
+        }
+    };
+    assert.equal(
+        movement.frontObstacle(diagonalBot, new Vec3(4, 64, 4)),
+        'step',
+        'diagonal body contact must detect a climbable block'
+    );
+
+    const wallBot = {
+        ...obstacleBot,
+        blockAt: position => {
+            if (position.x === 1 && [64, 65].includes(position.y)) {
+                return { name: 'stone', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+            }
+            return blockAtStep(position);
+        }
+    };
+    assert.equal(movement.frontObstacle(wallBot, new Vec3(4, 64, 0)), 'wall');
+
+    let cancelledGoal = false;
+    let clearedControls = false;
+    const noPathBot = {
+        entity: { position: new Vec3(0, 64, 0), yaw: -Math.PI / 2 },
+        blockAt: () => ({ name: 'air', boundingBox: 'empty' }),
+        pathfinder: {
+            goto: async () => { throw new Error('No path to the goal!'); },
+            setGoal: goal => { if (goal === null) cancelledGoal = true; }
+        },
+        clearControlStates: () => { clearedControls = true; }
+    };
+    await assert.rejects(
+        movement.moveNear(noPathBot, new Vec3(4, 64, 0), 1, 100),
+        /No path/
+    );
+    assert.equal(cancelledGoal, true, 'failed navigation must cancel its old pathfinder goal');
+    assert.equal(clearedControls, true, 'failed navigation must release movement controls');
     console.log('Movement exploration target interruption passed.');
 }
 

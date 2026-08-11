@@ -9,10 +9,11 @@ const shelter = require('./shelter');
 const memory = require('./memory');
 const actionControl = require('./actionControl');
 const survival = require('./survival');
+const blockPolicy = require('../safety/blockPolicy');
 
 const IRON_ORES = ['iron_ore', 'deepslate_iron_ore'];
-const LOG_ITEMS = ['oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log', 'cherry_log', 'mangrove_log'];
-const PLANK_ITEMS = ['oak_planks', 'birch_planks', 'spruce_planks', 'jungle_planks', 'acacia_planks', 'dark_oak_planks', 'cherry_planks', 'mangrove_planks'];
+const LOG_ITEMS = ['oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log', 'cherry_log', 'mangrove_log', 'pale_oak_log'];
+const PLANK_ITEMS = ['oak_planks', 'birch_planks', 'spruce_planks', 'jungle_planks', 'acacia_planks', 'dark_oak_planks', 'cherry_planks', 'mangrove_planks', 'pale_oak_planks'];
 const MINE_DIRECTIONS = [
     new Vec3(1, 0, 0),
     new Vec3(0, 0, 1),
@@ -23,23 +24,83 @@ let mineDirectionIndex = 0;
 
 async function prepareMiningKit(bot, actionVersion = actionControl.snapshot(bot)) {
     actionControl.assertActive(bot, actionVersion);
+    await recoverPreparationSurface(bot);
+    actionControl.assertActive(bot, actionVersion);
+    const rememberedBase = memory.getBase();
+    if (rememberedBase && bot.entity.position.distanceTo(
+        new Vec3(rememberedBase.x, rememberedBase.y, rememberedBase.z)
+    ) > 5) {
+        const returned = await shelter.returnToBase(bot);
+        if (!returned) throw new Error('Mining kit preparation could not return to base');
+    }
+    actionControl.assertActive(bot, actionVersion);
+    await ensureMiningPickaxes(bot);
+    actionControl.assertActive(bot, actionVersion);
     await shelter.leaveBase(bot);
     actionControl.assertActive(bot, actionVersion);
     await ensureFurnace(bot);
+    actionControl.assertActive(bot, actionVersion);
+    await shelter.leaveBase(bot);
     actionControl.assertActive(bot, actionVersion);
     await ensureFuel(bot);
     actionControl.assertActive(bot, actionVersion);
     await ensureTorches(bot, 16);
     actionControl.assertActive(bot, actionVersion);
-    await ensureFuel(bot, 3);
+    await ensureFuel(bot, 1);
     actionControl.assertActive(bot, actionVersion);
     await ensureBlocks(bot, 16);
     actionControl.assertActive(bot, actionVersion);
+    await recoverPreparationSurface(bot);
+    actionControl.assertActive(bot, actionVersion);
+    await shelter.returnToBase(bot);
+    actionControl.assertActive(bot, actionVersion);
+}
+
+async function ensureMiningPickaxes(bot) {
+    const pickaxes = inventoryItems(bot).filter(item => item.name.endsWith('_pickaxe'));
+    const serviceable = pickaxes.filter(item => remainingDurability(bot, item) >= 32);
+    if (serviceable.length >= 2 || (
+        serviceable.some(item => item.name === 'stone_pickaxe') &&
+        pickaxes.some(item => item !== serviceable[0] && remainingDurability(bot, item) >= 16)
+    )) return;
+
+    await ensurePickaxeMaterials(bot);
+    const itemName = countItem(bot, 'cobblestone') >= 3 ? 'stone_pickaxe' : 'wooden_pickaxe';
+    console.log(`[MINING_KIT] crafting backup ${itemName}`);
+    await craft.craftItem(bot, itemName, 1);
+
+    const usable = inventoryItems(bot)
+        .filter(item => item.name.endsWith('_pickaxe'))
+        .filter(item => remainingDurability(bot, item) >= 16);
+    if (usable.length === 0) throw new Error('Mining kit has no usable pickaxe');
+}
+
+async function ensurePickaxeMaterials(bot) {
+    if (totalPlanks(bot) < 3) {
+        const log = inventoryItems(bot).find(item => LOG_ITEMS.includes(item.name));
+        if (log) await craft.craftItem(bot, log.name.replace(/_log$/, '_planks'), 4);
+    }
+    if (countItem(bot, 'stick') < 2) await craft.craftItem(bot, 'stick', 2);
+    if (totalPlanks(bot) < 3 || countItem(bot, 'stick') < 2) {
+        throw new Error('Mining kit cannot craft a backup pickaxe');
+    }
+}
+
+function remainingDurability(bot, item) {
+    if (!item) return 0;
+    const registryItem = bot?.registry?.itemsByName?.[item.name];
+    const maximum = Number(item.maxDurability || registryItem?.maxDurability || 0);
+    if (!maximum) return Number.POSITIVE_INFINITY;
+    return Math.max(0, maximum - Number(item.durabilityUsed || 0));
 }
 
 async function mineIron(bot, targetRawIron = 16) {
     const actionVersion = actionControl.snapshot(bot);
     await prepareMiningKit(bot, actionVersion);
+    actionControl.assertActive(bot, actionVersion);
+    await shelter.leaveBase(bot);
+    actionControl.assertActive(bot, actionVersion);
+    await moveToSafeMineEntrance(bot);
     actionControl.assertActive(bot, actionVersion);
     const before = countItem(bot, 'raw_iron');
     const target = Math.max(before + 1, targetRawIron);
@@ -51,7 +112,7 @@ async function mineIron(bot, targetRawIron = 16) {
         memory.setMineRoute(route);
     }
     const direction = directionTowardKnownIron(bot) || directionForRoute(route) ||
-        MINE_DIRECTIONS[mineDirectionIndex++ % MINE_DIRECTIONS.length];
+        directionAwayFromBase(bot) || MINE_DIRECTIONS[mineDirectionIndex++ % MINE_DIRECTIONS.length];
     console.log(`[IRON_MINE] target raw_iron=${target} start=${start.toString()}`);
 
     try {
@@ -73,7 +134,8 @@ async function mineIron(bot, targetRawIron = 16) {
 
             await placeTorchIfNeeded(bot);
             actionControl.assertActive(bot, actionVersion);
-            const position = await carveMiningStep(bot, step, direction);
+            const stepDirection = directionTowardKnownIron(bot) || direction;
+            const position = await carveMiningStep(bot, step, stepDirection);
             actionControl.assertActive(bot, actionVersion);
             appendRoute(route, position);
             memory.appendMineRoute(position);
@@ -123,8 +185,45 @@ async function ensureFurnace(bot) {
         await stone.collectStone(bot, 8 - countItem(bot, 'cobblestone'));
     }
     if (countItem(bot, 'cobblestone') < 8) throw new Error('Furnace icin 8 cobblestone toplanamadi');
-    await ensurePlanks(bot, 4);
+    await recoverPreparationSurface(bot);
+    if (memory.hasBase() && !await shelter.returnToBase(bot)) {
+        throw new Error('Furnace craft edilmeden once base calisma alanina donulemedi');
+    }
     await craft.craftItem(bot, 'furnace', 1);
+}
+
+async function recoverPreparationSurface(bot) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const target = memory.getSurfaceExit() || memory.getBase();
+        if (hasSkyExposure(bot) || !needsPreparationSurfaceReturn(bot.entity.position, target)) {
+            return true;
+        }
+        console.log(
+            `[MINING_KIT] returning to surface before resource preparation ` +
+            `attempt=${attempt + 1} y=${bot.entity.position.y.toFixed(1)} targetY=${target.y}`
+        );
+        await survival.escapePit(bot);
+    }
+    const target = memory.getSurfaceExit() || memory.getBase();
+    if (!hasSkyExposure(bot) && needsPreparationSurfaceReturn(bot.entity.position, target)) {
+        throw new Error(
+            `Mining kit surface recovery incomplete y=${bot.entity.position.y.toFixed(1)} ` +
+            `targetY=${target.y}`
+        );
+    }
+    return true;
+}
+
+function hasSkyExposure(bot) {
+    const feet = bot.entity.position.floored();
+    const values = [feet, feet.offset(0, 1, 0)].map(position =>
+        Number(bot.blockAt(position)?.skyLight ?? -1)
+    );
+    return Math.max(...values) >= 10;
+}
+
+function needsPreparationSurfaceReturn(position, target) {
+    return Boolean(position && target && position.y < target.y - 0.1);
 }
 
 async function ensureFuel(bot, minimum = 1) {
@@ -144,8 +243,26 @@ async function ensureFuel(bot, minimum = 1) {
 }
 
 async function ensureCharcoal(bot, amount = 1) {
+    let collectionAttempts = 0;
     while (!hasCharcoalMaterials(bot, amount)) {
-        await mine.mineBlock(bot, { target: 'any_log' });
+        if (collectionAttempts >= 3) {
+            throw new Error(`Charcoal icin guvenli odun ${collectionAttempts} denemede bulunamadi`);
+        }
+        collectionAttempts++;
+        await recoverPreparationSurface(bot);
+        if (memory.hasBase()) await shelter.returnToBase(bot);
+        await shelter.leaveBase(bot);
+        try {
+            await mine.mineBlock(bot, { target: 'any_log' });
+        } catch (error) {
+            console.log(
+                `[MINING] charcoal wood attempt=${collectionAttempts} failed: ${error.message}`
+            );
+        }
+    }
+    await recoverPreparationSurface(bot);
+    if (memory.hasBase() && !await shelter.returnToBase(bot)) {
+        throw new Error('Charcoal eritmek icin base furnace alanina donulemedi');
     }
     let remaining = amount;
     for (const logName of LOG_ITEMS) {
@@ -153,7 +270,9 @@ async function ensureCharcoal(bot, amount = 1) {
         const available = countItem(bot, logName);
         if (available <= 0) continue;
         const batch = Math.min(remaining, available);
-        await smelting.smeltItem(bot, logName, 'charcoal', batch);
+        for (let index = 0; index < batch; index++) {
+            await smelting.smeltItem(bot, logName, 'charcoal', 1);
+        }
         remaining -= batch;
     }
     if (remaining > 0) throw new Error(`Charcoal icin ${remaining} log eksik`);
@@ -161,7 +280,8 @@ async function ensureCharcoal(bot, amount = 1) {
 
 function hasCharcoalMaterials(bot, amount) {
     const externalFuel = countItem(bot, 'coal') + countItem(bot, 'charcoal') +
-        PLANK_ITEMS.reduce((sum, name) => sum + countItem(bot, name), 0);
+        PLANK_ITEMS.reduce((sum, name) => sum + countItem(bot, name), 0) +
+        (smelting.hasCharcoalStarterFuel(bot) ? 1 : 0);
     const fuelLogs = externalFuel > 0 ? 0 : Math.ceil(amount / 1.5);
     const requiredLogs = amount + fuelLogs;
     return totalLogs(bot) >= requiredLogs;
@@ -201,6 +321,8 @@ async function ensurePlanks(bot, minimum) {
 }
 
 async function mineOre(bot, ore) {
+    const policy = blockPolicy.canBreak(bot, ore, 'mining');
+    if (!policy.allowed) throw new Error(`Protected iron ore skipped: ${policy.reason}`);
     const before = countItem(bot, 'raw_iron');
     await equipPickaxe(bot);
     try {
@@ -219,7 +341,11 @@ async function mineOre(bot, ore) {
     await bot.lookAt(current.position.offset(0.5, 0.5, 0.5), true);
     await digWithTimeout(bot, current);
     await collectNearby(bot, 'raw_iron', before, current.position);
-    console.log(`[IRON_MINE] raw_iron ${before} -> ${countItem(bot, 'raw_iron')}`);
+    const after = countItem(bot, 'raw_iron');
+    console.log(`[IRON_MINE] raw_iron ${before} -> ${after}`);
+    if (after <= before) {
+        throw new Error(`Iron ore broke but raw_iron was not collected at ${current.position.toString()}`);
+    }
 }
 
 async function carveMiningStep(bot, step, direction) {
@@ -280,6 +406,10 @@ async function placeSupport(bot, position) {
 async function digIfNeeded(bot, position) {
     const block = bot.blockAt(position);
     if (!block || isAir(block) || !bot.canDigBlock(block)) return;
+    const policy = blockPolicy.canBreak(bot, block, 'mining');
+    if (!policy.allowed) {
+        throw new Error(`Mining route refused ${block.name} ${position.toString()}: ${policy.reason}`);
+    }
     await equipPickaxe(bot);
     await bot.lookAt(block.position.offset(0.5, 0.5, 0.5), true);
     await digWithTimeout(bot, block);
@@ -344,6 +474,7 @@ function findReachableIronOre(bot) {
     return bot.findBlocks({ matching: ids, maxDistance: 12, count: 32 })
         .map(position => bot.blockAt(position))
         .filter(Boolean)
+        .filter(block => blockPolicy.canBreak(bot, block, 'mining').allowed)
         .filter(block => hasOpenFace(bot, block.position))
         .filter(block => block.position.distanceTo(bot.entity.position) <= 5)
         .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))[0] || null;
@@ -355,6 +486,7 @@ function findReachableBlocks(bot, name, maxDistance) {
     return bot.findBlocks({ matching: id, maxDistance, count: 16 })
         .map(position => bot.blockAt(position))
         .filter(Boolean)
+        .filter(block => blockPolicy.canBreak(bot, block, 'mining').allowed)
         .filter(block => hasOpenFace(bot, block.position))
         .sort((left, right) =>
             left.position.distanceTo(bot.entity.position) -
@@ -374,6 +506,7 @@ async function equipPickaxe(bot) {
         .find(Boolean);
     if (!tool) throw new Error('Iron mining needs at least a stone pickaxe');
     await bot.equip(tool, 'hand');
+    await movement.sleep(500);
 }
 
 async function digWithTimeout(bot, block) {
@@ -428,13 +561,15 @@ async function collectNearby(bot, itemName, before, origin) {
             .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))[0];
         if (drop) {
             try {
-                await movement.moveBlock(bot, drop.position.floored(), 3500);
+                await movement.moveNear(bot, drop.position, 1, 3500);
             } catch {
                 movement.stop(bot);
                 await nudgeToward(bot, drop.position);
             }
+        } else if (i < 3) {
+            await nudgeToward(bot, origin);
         }
-        await movement.sleep(250);
+        await movement.sleep(350);
     }
 }
 
@@ -477,7 +612,6 @@ function primeGroundedJump(bot) {
     const verticalSpeed = Math.abs(bot.entity.velocity?.y || 0);
     if (floor?.boundingBox === 'block' && verticalSpeed < 0.08) {
         bot.entity.onGround = true;
-        if (bot.entity.velocity) bot.entity.velocity.y = 0.42;
     }
 }
 
@@ -503,18 +637,86 @@ function directionForRoute(route) {
 function directionTowardKnownIron(bot) {
     const ids = IRON_ORES.map(name => bot.registry.blocksByName[name]?.id).filter(Boolean);
     if (ids.length === 0) return null;
-    const nearest = bot.findBlocks({ matching: ids, maxDistance: 24, count: 64 })
+    const nearest = bot.findBlocks({ matching: ids, maxDistance: 48, count: 128 })
+        .filter(position => {
+            const block = bot.blockAt(position);
+            return block && blockPolicy.canBreak(bot, block, 'mining').allowed;
+        })
         .sort((left, right) =>
             left.distanceTo(bot.entity.position) - right.distanceTo(bot.entity.position)
         )[0];
     if (!nearest) return null;
     const dx = nearest.x - bot.entity.position.x;
     const dz = nearest.z - bot.entity.position.z;
-    if (Math.abs(dx) >= Math.abs(dz) && Math.abs(dx) > 1) {
+    if (Math.abs(dx) >= Math.abs(dz) && Math.abs(dx) >= 0.5) {
         return new Vec3(Math.sign(dx), 0, 0);
     }
-    if (Math.abs(dz) > 1) return new Vec3(0, 0, Math.sign(dz));
+    if (Math.abs(dz) >= 0.5) return new Vec3(0, 0, Math.sign(dz));
     return null;
+}
+
+async function moveToSafeMineEntrance(bot) {
+    const base = memory.getBase();
+    if (!base) return;
+    const center = new Vec3(base.x, base.y, base.z);
+    const ore = nearestPolicySafeIron(bot, 64);
+    const candidates = [
+        new Vec3(12, 0, 0), new Vec3(-12, 0, 0),
+        new Vec3(0, 0, 12), new Vec3(0, 0, -12),
+        new Vec3(9, 0, 9), new Vec3(9, 0, -9),
+        new Vec3(-9, 0, 9), new Vec3(-9, 0, -9)
+    ]
+        .map(offset => center.plus(offset))
+        .filter(position => isSupportedStand(bot, position))
+        .filter(position => !blockPolicy.protectedZoneAt(position))
+        .sort((left, right) => {
+            if (ore) return left.distanceTo(ore.position) - right.distanceTo(ore.position);
+            return left.distanceTo(bot.entity.position) - right.distanceTo(bot.entity.position);
+        });
+    const entrance = candidates[0];
+    if (!entrance) throw new Error('No policy-safe supported mine entrance found outside base');
+    try {
+        await movement.moveNear(bot, entrance, 1, 20000);
+    } catch {
+        for (let attempt = 0; attempt < 3 && bot.entity.position.distanceTo(entrance) > 2; attempt++) {
+            await movement.moveTowardSafely(bot, entrance, 18);
+        }
+    }
+    if (bot.entity.position.distanceTo(center) <= 10.5) {
+        throw new Error(`Mine entrance remained inside base protection at ${bot.entity.position.floored().toString()}`);
+    }
+    console.log(`[IRON_MINE] safe entrance ${bot.entity.position.floored().toString()}`);
+}
+
+function nearestPolicySafeIron(bot, maxDistance) {
+    const ids = IRON_ORES.map(name => bot.registry.blocksByName[name]?.id).filter(Boolean);
+    if (ids.length === 0) return null;
+    return bot.findBlocks({ matching: ids, maxDistance, count: 128 })
+        .map(position => bot.blockAt(position))
+        .filter(Boolean)
+        .filter(block => blockPolicy.canBreak(bot, block, 'mining').allowed)
+        .sort((left, right) =>
+            left.position.distanceTo(bot.entity.position) - right.position.distanceTo(bot.entity.position)
+        )[0] || null;
+}
+
+function directionAwayFromBase(bot) {
+    const base = memory.getBase();
+    if (!base) return null;
+    const dx = bot.entity.position.x - base.x;
+    const dz = bot.entity.position.z - base.z;
+    if (Math.abs(dx) >= Math.abs(dz) && Math.abs(dx) >= 1) {
+        return new Vec3(Math.sign(dx), 0, 0);
+    }
+    if (Math.abs(dz) >= 1) return new Vec3(0, 0, Math.sign(dz));
+    return null;
+}
+
+function isSupportedStand(bot, position) {
+    const feet = bot.blockAt(position);
+    const head = bot.blockAt(position.offset(0, 1, 0));
+    const floor = bot.blockAt(position.offset(0, -1, 0));
+    return isAir(feet) && isAir(head) && floor?.boundingBox === 'block';
 }
 
 function nearestRouteIndex(bot, route) {
@@ -564,6 +766,14 @@ function totalLogs(bot) {
     return LOG_ITEMS.reduce((sum, name) => sum + countItem(bot, name), 0);
 }
 
+function totalPlanks(bot) {
+    return PLANK_ITEMS.reduce((sum, name) => sum + countItem(bot, name), 0);
+}
+
+function inventoryItems(bot) {
+    return (bot.inventory?.slots || []).filter(Boolean);
+}
+
 function countItem(bot, itemName) {
     const slotCount = bot.inventory.slots
         .filter(Boolean)
@@ -587,5 +797,7 @@ function isAir(block) {
 module.exports = {
     prepareMiningKit,
     mineIron,
-    returnToSurface
+    returnToSurface,
+    needsPreparationSurfaceReturn,
+    remainingDurability
 };

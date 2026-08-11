@@ -4,6 +4,9 @@ const tools = require('./tools');
 const craft = require('./craft');
 const smelting = require('./smelting');
 const shelter = require('./shelter');
+const entityActions = require('./entityActions');
+const memory = require('./memory');
+const actionControl = require('./actionControl');
 
 const FOOD_VALUES = {
     bread: 5,
@@ -63,20 +66,31 @@ async function eatBestFood(bot) {
 }
 
 async function findFood(bot, options = {}) {
+    const actionVersion = actionControl.snapshot(bot);
+    const surfaceExit = memory.getSurfaceExit();
+    if (surfaceExit && bot.entity.position.y < surfaceExit.y - 0.1) {
+        console.log('[FOOD] returning to the surface before searching for food');
+        await require('./survival').escapePit(bot);
+        actionControl.assertActive(bot, actionVersion);
+    }
     await shelter.leaveBase(bot);
+    actionControl.assertActive(bot, actionVersion);
     await prepareCollectedFood(bot);
+    actionControl.assertActive(bot, actionVersion);
     const preparedInventory = countInventory(bot);
-    if (hasFoodStock(preparedInventory, 16)) return;
+    if (hasFoodStock(preparedInventory, 16)) {
+        return { status: 'stock', foodCount: foodCount(preparedInventory) };
+    }
     if (!options.skipFarm) {
         const homestead = require('./homestead');
         if (homestead.hasFarm(bot)) {
-            await maintainFoodSupply(bot, { alreadyOutside: true });
-            return;
+            const result = await maintainFoodSupply(bot, { alreadyOutside: true });
+            return { status: 'farm', result };
         }
     }
-    if (Date.now() < foodUnavailableUntil && !hasConvertibleFood(preparedInventory)) {
+    if (isTemporarilyUnavailable() && !hasActionableConvertibleFood(preparedInventory)) {
         console.log('[FOOD] no nearby food source; temporarily moving to the next goal.');
-        return;
+        return { status: 'unavailable' };
     }
 
     const crop = nearestMatureCrop(bot);
@@ -86,43 +100,47 @@ async function findFood(bot, options = {}) {
             harvested = await harvestCrop(bot, crop);
         } catch (error) {
             console.log(`[FOOD] crop path failed: ${error.message}`);
-            await markFailedSearch(bot);
-            return;
+            const unavailable = await markFailedSearch(bot);
+            return { status: unavailable ? 'unavailable' : 'failed' };
         }
         await collectNearbyDrops(bot);
         if (harvested) await replantCrop(bot, crop.position, CROP_RULES[crop.name].seed);
         await prepareCollectedFood(bot);
         if (harvested) {
             failedSearches = 0;
-            return;
+            return { status: 'harvested' };
         }
     }
 
     const animal = nearestFoodMob(bot);
     if (!animal) {
-        if (hasConvertibleFood(countInventory(bot))) return;
-        await searchForFood(bot);
-        return;
+        return searchForFood(bot, actionVersion);
     }
 
     const startDistance = animal.position.distanceTo(bot.entity.position);
     console.log(`[FOOD] hunting target ${animal.name} distance=${startDistance.toFixed(1)}`);
-    if (startDistance > 18) {
-        await searchForFood(bot);
-        return;
-    }
-
     await tools.equipBestWeapon(bot);
     try {
         await movement.moveNear(bot, animal.position, 1, 12000);
     } catch (error) {
+        actionControl.assertActive(bot, actionVersion);
         console.log(`[FOOD] could not reach target: ${error.message}`);
-        await markFailedSearch(bot);
-        return;
+        for (let attempt = 0; attempt < 3 && animal.isValid !== false; attempt++) {
+            const beforeMove = animal.position.distanceTo(bot.entity.position);
+            await movement.moveTowardSafely(bot, animal.position, 18);
+            actionControl.assertActive(bot, actionVersion);
+            if (animal.position.distanceTo(bot.entity.position) <= 3) break;
+            if (animal.position.distanceTo(bot.entity.position) >= beforeMove - 0.5) break;
+        }
+        if (animal.isValid !== false && animal.position.distanceTo(bot.entity.position) > 4) {
+            const unavailable = await markFailedSearch(bot);
+            return { status: unavailable ? 'unavailable' : 'failed' };
+        }
     }
 
     const before = foodScore(countInventory(bot));
     for (let i = 0; i < 14 && animal.isValid !== false; i++) {
+        actionControl.assertActive(bot, actionVersion);
         const distance = animal.position.distanceTo(bot.entity.position);
         if (distance > 3) {
             try {
@@ -132,16 +150,19 @@ async function findFood(bot, options = {}) {
             }
         }
         await bot.lookAt(animal.position.offset(0, 0.8, 0), true);
-        bot.attack(animal);
+        entityActions.attack(bot, animal);
         await movement.sleep(450);
     }
 
+    actionControl.assertActive(bot, actionVersion);
     await collectNearbyDrops(bot);
     await prepareCollectedFood(bot);
     if (foodScore(countInventory(bot)) > before) {
         failedSearches = 0;
+        return { status: 'hunted', gainedScore: foodScore(countInventory(bot)) - before };
     } else {
-        await markFailedSearch(bot);
+        const unavailable = await markFailedSearch(bot);
+        return { status: unavailable ? 'unavailable' : 'failed' };
     }
 }
 
@@ -210,12 +231,28 @@ function foodCount(inventory) {
 }
 
 function isTemporarilyUnavailable() {
-    return Date.now() < foodUnavailableUntil;
+    return Date.now() < Math.max(
+        foodUnavailableUntil,
+        memory.getProgress('foodUnavailableUntil')
+    );
 }
 
 function hasConvertibleFood(inventory) {
     if ((inventory.wheat || 0) >= 3) return true;
     return Object.keys(RAW_TO_COOKED).some(name => (inventory[name] || 0) > 0);
+}
+
+function hasActionableConvertibleFood(inventory) {
+    if ((inventory.wheat || 0) >= 3) return true;
+    const hasRaw = Object.keys(RAW_TO_COOKED).some(name => (inventory[name] || 0) > 0);
+    if (!hasRaw) return false;
+    const furnaceReady = (inventory.furnace || 0) > 0 || (inventory.cobblestone || 0) >= 8;
+    const fuelReady = (inventory.coal || 0) > 0 ||
+        (inventory.charcoal || 0) > 0 ||
+        Object.entries(inventory).some(([name, count]) =>
+            count > 0 && (name.endsWith('_log') || name.endsWith('_planks'))
+        );
+    return furnaceReady && fuelReady;
 }
 
 function bestFoodItem(bot) {
@@ -426,6 +463,8 @@ async function collectNearbyDrops(bot) {
         const drop = Object.values(bot.entities || {})
             .filter(entity => entity.name === 'item')
             .filter(entity => entity.position.distanceTo(bot.entity.position) <= 8)
+            .filter(entity => entity.position.y >= bot.entity.position.y - 1.5)
+            .filter(entity => entity.position.y <= bot.entity.position.y + 3)
             .sort((a, b) =>
                 a.position.distanceTo(bot.entity.position) -
                 b.position.distanceTo(bot.entity.position)
@@ -442,12 +481,33 @@ async function collectNearbyDrops(bot) {
     }
 }
 
-async function searchForFood(bot) {
+async function searchForFood(bot, actionVersion = actionControl.snapshot(bot)) {
+    const before = bot.entity.position.clone();
+    let exploration = null;
     try {
-        await movement.explore(bot, { target: 'food' });
-    } finally {
-        await markFailedSearch(bot);
+        exploration = await movement.explore(bot, {
+            target: 'food',
+            isActive: () => actionControl.snapshot(bot) === actionVersion
+        });
+    } catch (error) {
+        actionControl.assertActive(bot, actionVersion);
+        console.log(`[FOOD] search movement delayed: ${error.message}`);
     }
+    actionControl.assertActive(bot, actionVersion);
+    if (exploration?.found) {
+        failedSearches = 0;
+        return {
+            status: 'found',
+            moved: bot.entity.position.distanceTo(before),
+            found: true
+        };
+    }
+    const unavailable = await markFailedSearch(bot);
+    return {
+        status: unavailable ? 'unavailable' : 'searched',
+        moved: bot.entity.position.distanceTo(before),
+        found: Boolean(exploration?.found)
+    };
 }
 
 async function markFailedSearch(bot) {
@@ -455,10 +515,12 @@ async function markFailedSearch(bot) {
     console.log(`[FOOD] failed searches=${failedSearches}`);
     if (failedSearches >= 3) {
         foodUnavailableUntil = Date.now() + 5 * 60 * 1000;
+        memory.setProgress('foodUnavailableUntil', foodUnavailableUntil);
         failedSearches = 0;
         console.log('[FOOD] no mob/crop found; delaying for 5 minutes.');
     }
     await movement.sleep(500);
+    return isTemporarilyUnavailable();
 }
 
 function countInventory(bot) {
@@ -499,6 +561,7 @@ module.exports = {
     foodCount,
     hasFoodStock,
     hasConvertibleFood,
+    hasActionableConvertibleFood,
     isTemporarilyUnavailable,
     prepareCollectedFood
 };

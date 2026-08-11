@@ -3,8 +3,8 @@ const axios = require('axios');
 const USE_LLM = process.env.USE_LLM !== 'false';
 const LLM_PROVIDER = (process.env.LLM_PROVIDER || (USE_LLM ? 'ollama' : 'none')).toLowerCase();
 
-const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434/api/generate';
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || process.env.LLM_MODEL || 'hermes3:8b';
+const OLLAMA_URL = toOllamaChatUrl(process.env.OLLAMA_URL || 'http://127.0.0.1:11434/api/chat');
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || process.env.LLM_MODEL || 'qwen3.5:9b';
 
 const OPENAI_BASE_URL = stripTrailingSlash(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1');
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
@@ -16,7 +16,7 @@ async function askForToolCall({ level, observation, tools }) {
     const prompt = buildPrompt(level, observation, tools);
     try {
         if (LLM_PROVIDER === 'ollama') {
-            return await askOllama(prompt);
+            return await askOllamaToolCall(prompt, tools);
         }
 
         if (LLM_PROVIDER === 'openai' || LLM_PROVIDER === 'openai-compatible') {
@@ -31,12 +31,14 @@ async function askForToolCall({ level, observation, tools }) {
     }
 }
 
-async function askForChatReply({ username, message, observation, level }) {
+async function askForChatReply({ username, message, observation, level, profession, task, playerMemory, conversation, episodes, character }) {
     if (!USE_LLM || LLM_PROVIDER === 'none') {
         return 'I can hear you, but my language model is disabled right now.';
     }
 
-    const prompt = buildChatPrompt({ username, message, observation, level });
+    const prompt = buildChatPrompt({
+        username, message, observation, level, profession, task, playerMemory, conversation, episodes, character
+    });
     try {
         if (LLM_PROVIDER === 'ollama') {
             return sanitizeChatReply(await askOllamaChatReply(prompt));
@@ -53,47 +55,96 @@ async function askForChatReply({ username, message, observation, level }) {
     }
 }
 
-async function askOllama(prompt) {
+async function interpretPlayerIntent({ username, message, observation, profession, task, tools }) {
+    if (!USE_LLM || LLM_PROVIDER === 'none' || !looksActionable(message)) return null;
+    const prompt = buildIntentPrompt({ username, message, observation, profession, task, tools });
+    try {
+        if (LLM_PROVIDER === 'ollama') {
+            return normalizeIntent(await askOllamaJson(prompt, intentSchema(), 360), message, observation);
+        }
+        if (LLM_PROVIDER === 'openai' || LLM_PROVIDER === 'openai-compatible') {
+            return normalizeIntent(await askOpenAiJson(prompt, 360), message, observation);
+        }
+    } catch (error) {
+        console.log(`[LLM] Could not interpret player intent: ${error.message}`);
+    }
+    return null;
+}
+
+async function askForColonyPlan({ snapshot, existing, tools }) {
+    if (!USE_LLM || LLM_PROVIDER === 'none') return null;
+    const toolDefinitions = (tools || []).map(tool => typeof tool === 'string' ? { name: tool, args: {} } : tool);
+    const allowedTools = toolDefinitions.map(tool => tool.name).filter(Boolean);
+    const prompt = buildColonyPlanPrompt(snapshot, existing, toolDefinitions);
+    try {
+        if (LLM_PROVIDER === 'ollama') {
+            return await askOllamaJson(prompt, colonyPlanSchema(allowedTools), 420);
+        }
+        if (LLM_PROVIDER === 'openai' || LLM_PROVIDER === 'openai-compatible') {
+            return await askOpenAiJson(prompt, 420);
+        }
+    } catch (error) {
+        console.log(`[LLM] Colony planning failed, deterministic planner will continue: ${error.message}`);
+    }
+    return null;
+}
+
+async function askOllamaToolCall(prompt, tools) {
     const response = await axios.post(OLLAMA_URL, {
         model: OLLAMA_MODEL,
-        prompt,
+        messages: [
+            { role: 'system', content: 'You control a Minecraft agent through tools. Select exactly one safe tool.' },
+            { role: 'user', content: prompt }
+        ],
+        tools: tools.map(toOllamaTool),
         stream: false,
         think: false,
-        format: 'json',
         options: {
             temperature: 0,
-            num_predict: 180
+            num_predict: 160,
+            num_ctx: Number(process.env.OLLAMA_CONTEXT_SIZE || 4096)
         }
     }, {
         timeout: Number(process.env.LLM_TIMEOUT_MS || 30000)
     });
 
-    return parseJson(response.data?.response || response.data?.thinking || '');
+    const toolCall = response.data?.message?.tool_calls?.[0]?.function;
+    if (toolCall?.name) {
+        return {
+            tool: toolCall.name,
+            args: parseArguments(toolCall.arguments),
+            reason: 'AI selected a native Ollama tool call'
+        };
+    }
+    return parseJson(response.data?.message?.content || '');
 }
 
 async function askOllamaChatReply(prompt) {
+    const value = await askOllamaJson(prompt, {
+        type: 'object',
+        properties: { reply: { type: 'string' } },
+        required: ['reply']
+    }, Number(process.env.CHAT_MAX_TOKENS || 180), Number(process.env.CHAT_TIMEOUT_MS || 45000));
+    return value?.reply || '';
+}
+
+async function askOllamaJson(prompt, format, maxTokens, timeout) {
     const response = await axios.post(OLLAMA_URL, {
         model: OLLAMA_MODEL,
-        prompt,
+        messages: [{ role: 'user', content: prompt }],
         stream: false,
         think: false,
-        format: {
-            type: 'object',
-            properties: {
-                reply: { type: 'string' }
-            },
-            required: ['reply']
-        },
+        format,
+        keep_alive: process.env.OLLAMA_KEEP_ALIVE || '30m',
         options: {
             temperature: 0.1,
-            num_predict: Number(process.env.CHAT_MAX_TOKENS || 60)
+            num_predict: maxTokens,
+            num_ctx: Number(process.env.OLLAMA_CONTEXT_SIZE || 4096)
         }
     }, {
-        timeout: Number(process.env.CHAT_TIMEOUT_MS || process.env.LLM_TIMEOUT_MS || 45000)
+        timeout: Number(timeout || process.env.LLM_TIMEOUT_MS || 30000)
     });
-
-    const raw = response.data?.response || response.data?.thinking || '';
-    return extractChatReply(raw);
+    return parseJson(response.data?.message?.content || '');
 }
 
 async function askOpenAiCompatible(prompt) {
@@ -157,6 +208,21 @@ async function askOpenAiCompatibleChatReply(prompt) {
     return extractChatReply(response.data?.choices?.[0]?.message?.content || '');
 }
 
+async function askOpenAiJson(prompt, maxTokens) {
+    if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is required for the openai-compatible provider');
+    const response = await axios.post(`${OPENAI_BASE_URL}/chat/completions`, {
+        model: OPENAI_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        max_tokens: maxTokens,
+        response_format: { type: 'json_object' }
+    }, {
+        timeout: Number(process.env.LLM_TIMEOUT_MS || 30000),
+        headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' }
+    });
+    return parseJson(response.data?.choices?.[0]?.message?.content || '');
+}
+
 function buildPrompt(level, observation, tools) {
     return [
         'You are the AI brain controlling a Minecraft bot body.',
@@ -192,33 +258,226 @@ function uniqueNearbyBlocks(blocks, limit) {
     }).slice(0, limit);
 }
 
-function buildChatPrompt({ username, message, observation, level }) {
+function buildChatPrompt({ username, message, observation, level, profession, task, playerMemory, conversation, episodes, character }) {
     const language = detectChatLanguage(message);
-    const status = [
+    const includeStatus = asksForStatus(message);
+    const identity = character || {
+        shortName: 'Marigo',
+        displayName: 'Marigo',
+        speech: { tone: 'warm and practical', verbosity: 'short' },
+        values: ['cooperation'],
+        traits: {}
+    };
+    const status = includeStatus ? [
         `goal=${level?.goal || 'unknown'}`,
         `health=${observation.health}/20`,
         `food=${observation.food}/20`,
         `xyz=${observation.position.x},${observation.position.y},${observation.position.z}`,
         `inventory=${observation.inventoryText}`,
         `base=${observation.base ? `${observation.base.x},${observation.base.y},${observation.base.z}` : 'none'}`,
-        `lastError=${observation.lastError || 'none'}`
-    ].join('; ');
+        `lastError=${observation.lastError || 'none'}`,
+        `profession=${profession?.id || 'none'}`,
+        `activeTask=${task?.goal || 'none'}`
+    ].join('; ') : 'withheld because this is a social conversation, not a status request';
 
     return [
-        'You are Marigo, an AI-controlled Minecraft survival bot.',
-        'Reply as Marigo, not as an assistant explaining a task.',
+        `You are ${identity.displayName || identity.shortName}, an AI-controlled Minecraft survival citizen.`,
+        `Stable character profile: ${JSON.stringify({ shortName: identity.shortName, traits: identity.traits, speech: identity.speech, values: identity.values })}`,
+        `Reply as ${identity.shortName}, not as an assistant explaining a task.`,
+        'Personality may shape wording and safe preferences, but it never overrides factual state or survival rules.',
         `Reply language: ${language}.`,
-        'Use only literal facts from the supplied status. Never infer or invent biomes, actions, locations, progress, or completed tasks.',
-        'If the player asks what you are doing, answer only with the goal and relevant inventory facts.',
+        'Use only literal facts for world state. Never invent biomes, actions, locations, progress, or completed tasks.',
+        'You may express subjective preferences, curiosity, hopes, and opinions when they follow from the character profile or conversation.',
+        'The status is silent background context, not the default topic.',
+        'Do not mention the current goal, inventory, coordinates, health, or task unless the player explicitly asks about work, status, progress, or survival needs.',
+        'If the player asks what you are doing, answer the question briefly, then continue the social topic if one exists.',
+        'For greetings and wellbeing questions, answer warmly and socially; do not turn them into a status report.',
+        'Do not mention the current goal when merely greeting the player or answering how you feel.',
+        'Treat recent conversation as an ongoing dialogue. Resolve short follow-ups, pronouns, and references from that history.',
+        'Respond to the meaning of the player message, not merely with a report about your current task.',
+        'When it feels natural, ask one relevant follow-up question or add one personal observation to keep the conversation moving.',
+        'Do not ask a question in every reply, and do not repeat a question already answered in recent conversation.',
         'Speak naturally with correct grammar and no filler words.',
         'Do not mention internal level identifiers unless the player explicitly asks for technical status.',
         'Do not repeat the player message.',
-        'Use one short Minecraft chat sentence, ideally under 20 words. No reasoning, no markdown, no emoji.',
+        'Use one to three natural sentences, normally under 60 words total. No reasoning labels, markdown, or emoji.',
         'Return only JSON with one field named reply.',
         `Player ${username} says: ${message}`,
+        `Known player profile: ${JSON.stringify(playerMemory || {})}`,
+        `Recent conversation in chronological order: ${JSON.stringify((conversation || []).slice(-14))}`,
+        `Relevant shared memories: ${JSON.stringify((episodes || []).slice(0, 6))}`,
         `Your current status: ${status}`,
         'Your JSON reply:'
     ].join('\n');
+}
+
+function asksForStatus(message) {
+    const text = foldTurkish(message);
+    return /\b(ne yapiyorsun|neyle ugrasiyorsun|durum|status|gorev|task|ilerleme|progress|envanter|inventory|koordinat|coordinate|canin|health|aclik|food|neredesin|where are you)\b/i.test(text);
+}
+
+function buildIntentPrompt({ username, message, observation, profession, task, tools }) {
+    return [
+        'Interpret a Minecraft player request for Marigo.',
+        'Return JSON only. Never invent tools outside the supplied list.',
+        'Use intent chat when the message is not an actionable request.',
+        'Valid intents: chat, assign_profession, stop_profession, create_goal.',
+        'For create_goal, produce 1-8 ordered tool steps.',
+        'Use exact tool argument names and include every required argument. Do not invent arguments.',
+        'For collecting wood use mine_block with target any_log and the requested count.',
+        `Player: ${username}`,
+        `Message: ${message}`,
+        `Current profession: ${profession?.id || 'none'}`,
+        `Current task: ${task?.goal || 'none'}`,
+        `Health: ${observation.health}; food: ${observation.food}`,
+        `Inventory: ${observation.inventoryText}`,
+        `Tools: ${JSON.stringify((tools || []).map(toPromptTool))}`,
+        'Response JSON:'
+    ].join('\n');
+}
+
+function buildColonyPlanPrompt(snapshot, existing, toolDefinitions) {
+    return [
+        'You are the single strategic brain of a Minecraft survival colony.',
+        'Create only high-level work orders. Never control movement, combat, hunger, drowning, or block placement ticks.',
+        'Local behavior trees enforce safety and validate every physical outcome.',
+        'Use only allowed tools. Prefer shortages and unfinished survival infrastructure.',
+        'Do not duplicate an existing queued or assigned order.',
+        'Return JSON with an orders array. Return an empty array when no strategic work is needed.',
+        `Allowed tools and exact argument schemas: ${JSON.stringify(toolDefinitions.map(tool => ({ name: tool.name, description: tool.description, args: tool.args })))}`,
+        `Compact colony state: ${JSON.stringify(snapshot)}`,
+        `Existing work: ${JSON.stringify((existing || []).map(order => ({ id: order.id, tool: order.tool, args: order.args, status: order.status, dedupeKey: order.dedupeKey })))}`,
+        'Each order fields: tool, args, priority 1-100, professions, reason, dedupeKey.',
+        'Colony plan JSON:'
+    ].join('\n');
+}
+
+function colonyPlanSchema(allowedTools) {
+    return {
+        type: 'object',
+        properties: {
+            orders: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        tool: allowedTools.length > 0 ? { type: 'string', enum: allowedTools } : { type: 'string' },
+                        args: { type: 'object' },
+                        priority: { type: 'number' },
+                        professions: { type: 'array', items: { type: 'string' } },
+                        reason: { type: 'string' },
+                        dedupeKey: { type: 'string' }
+                    },
+                    required: ['tool', 'args', 'priority', 'professions', 'reason', 'dedupeKey']
+                }
+            }
+        },
+        required: ['orders']
+    };
+}
+
+function intentSchema() {
+    return {
+        type: 'object',
+        properties: {
+            intent: { type: 'string', enum: ['chat', 'assign_profession', 'stop_profession', 'create_goal'] },
+            profession: { type: 'string' },
+            goal: { type: 'string' },
+            steps: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        tool: { type: 'string' },
+                        args: { type: 'object' },
+                        reason: { type: 'string' }
+                    },
+                    required: ['tool']
+                }
+            }
+        },
+        required: ['intent']
+    };
+}
+
+function looksActionable(message) {
+    const text = foldTurkish(message);
+    return [
+        'topla', 'kes', 'yap', 'kur', 'git', 'gel', 'birak', 'gotur', 'koy',
+        'takip', 'ol', 'calis', 'meslek', 'farmer', 'miner', 'builder', 'fisher',
+        'collect', 'build', 'follow', 'bring', 'store', 'profession'
+    ].some(word => new RegExp(`(^|[^a-z0-9_])${word}([^a-z0-9_]|$)`, 'i').test(text));
+}
+
+function normalizeIntent(value, message, observation) {
+    if (!value || typeof value !== 'object') return null;
+    const result = { ...value };
+    if (Array.isArray(result.steps) && result.steps.length > 0 && result.intent === 'chat') {
+        result.intent = 'create_goal';
+    }
+    if (result.intent === 'create_goal') {
+        result.goal = String(result.goal || message || 'player request').slice(0, 120);
+        let steps = (result.steps || []).slice(0, 8).map(step => {
+            const normalized = { ...step, args: parseArguments(step.args) };
+            if (normalized.tool === 'mine_block' && !normalized.args.target && /odun|agac|wood|tree/i.test(foldTurkish(message))) {
+                normalized.args.target = 'any_log';
+            }
+            return normalized;
+        });
+        const folded = foldTurkish(message);
+        const wantsStorage = /sandik|sandig|chest|depo/.test(folded);
+        if (wantsStorage) {
+            const storageOnly = /birak|koy|duzenle|store|deposit/.test(folded) &&
+                !/topla|kes|collect|gather/.test(folded);
+            if (storageOnly) {
+                steps = steps.filter(step => ['ensure_base', 'return_base', 'organize_storage'].includes(step.tool));
+            }
+            steps = steps.filter(step => !(
+                (step.tool === 'place_block' && ['sand', 'chest'].includes(step.args?.item)) ||
+                (step.tool === 'craft_item' && step.args?.item === 'chest')
+            ));
+            if (!steps.some(step => step.tool === 'organize_storage')) {
+                steps.push({ tool: 'organize_storage', args: {}, reason: 'Store requested resources in base storage' });
+            }
+        }
+        if (!observation?.base && /\bev\b|\beve\b|\bhome\b|\bbase\b/.test(folded) &&
+            !steps.some(step => ['build_shelter', 'ensure_base'].includes(step.tool))) {
+            const returnIndex = steps.findIndex(step => step.tool === 'return_base');
+            const insertAt = returnIndex >= 0 ? returnIndex : steps.length;
+            steps.splice(insertAt, 0, { tool: 'ensure_base', args: {}, reason: 'Establish the requested home first' });
+        }
+        result.steps = steps.flatMap(step => {
+            if (step.tool !== 'mine_block' || Number(step.args?.count || 1) <= 1) return [step];
+            const repeats = Math.max(1, Math.min(8, Math.ceil(Number(step.args.count) / 4)));
+            return Array.from({ length: repeats }, (_, index) => ({
+                ...step,
+                args: { ...step.args, count: 1 },
+                reason: `${step.reason || 'Collect resource'} (${index + 1}/${repeats})`
+            }));
+        }).slice(0, 12);
+    }
+    return result;
+}
+
+function toOllamaTool(tool) {
+    const properties = {};
+    const required = [];
+    for (const [name, description] of Object.entries(tool.args || {})) {
+        const text = String(description);
+        properties[name] = {
+            type: text.startsWith('number') ? 'number' : text.startsWith('boolean') ? 'boolean' : 'string',
+            description: text
+        };
+        if (text.includes('required')) required.push(name);
+    }
+    return {
+        type: 'function',
+        function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: { type: 'object', properties, required }
+        }
+    };
 }
 
 function detectChatLanguage(message) {
@@ -248,7 +507,7 @@ function sanitizeChatReply(text) {
         .replace(/\p{Extended_Pictographic}/gu, '')
         .replace(/\s+/g, ' ')
         .trim()
-        .slice(0, 420) || 'I heard you, but I do not have a good answer yet.';
+        .slice(0, 600) || 'I heard you, but I do not have a good answer yet.';
 }
 
 function extractChatReply(raw) {
@@ -270,6 +529,12 @@ function parseJson(text) {
         }
     }
     return null;
+}
+
+function parseArguments(value) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    if (typeof value !== 'string') return {};
+    return parseJson(value) || {};
 }
 
 function extractJsonObjects(text) {
@@ -321,7 +586,24 @@ function stripTrailingSlash(value) {
     return value.replace(/\/+$/, '');
 }
 
+function toOllamaChatUrl(value) {
+    return String(value).replace(/\/api\/(?:generate|chat)\/?$/, '/api/chat');
+}
+
+function foldTurkish(value) {
+    return String(value || '').toLocaleLowerCase('tr-TR')
+        .replace(/[ç]/g, 'c')
+        .replace(/[ğ]/g, 'g')
+        .replace(/[ıİi]/g, 'i')
+        .replace(/[ö]/g, 'o')
+        .replace(/[ş]/g, 's')
+        .replace(/[ü]/g, 'u');
+}
+
 module.exports = {
     askForToolCall,
-    askForChatReply
+    askForChatReply,
+    interpretPlayerIntent,
+    askForColonyPlan,
+    buildChatPrompt
 };

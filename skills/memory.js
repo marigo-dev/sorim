@@ -4,6 +4,8 @@ const path = require('node:path');
 const SAVE_DELAY_MS = 200;
 
 let base = null;
+let constructionBase = null;
+let lastDeath = null;
 let farmCenter = null;
 let surfaceExit = null;
 let mineRoute = [];
@@ -15,6 +17,8 @@ let saveTimer = null;
 function initialize(botName = 'marigo', options = {}) {
     cancelScheduledSave();
     base = null;
+    constructionBase = null;
+    lastDeath = null;
     farmCenter = null;
     surfaceExit = null;
     mineRoute = [];
@@ -30,6 +34,8 @@ function initialize(botName = 'marigo', options = {}) {
     try {
         const saved = JSON.parse(fs.readFileSync(memoryFile, 'utf8'));
         base = normalizePosition(saved.base);
+        constructionBase = normalizePosition(saved.constructionBase);
+        lastDeath = normalizeDeath(saved.lastDeath);
         farmCenter = normalizePosition(saved.farmCenter);
         surfaceExit = normalizePosition(saved.surfaceExit);
         mineRoute = normalizeRoute(saved.mineRoute);
@@ -59,6 +65,52 @@ function getBase() {
 
 function hasBase() {
     return Boolean(base);
+}
+
+function setConstructionBase(position) {
+    const next = normalizePosition(position);
+    if (!next || samePosition(constructionBase, next)) return;
+    constructionBase = next;
+    console.log(`[MEMORY] constructionBase=${next.x},${next.y},${next.z}`);
+    scheduleSave();
+}
+
+function getConstructionBase() {
+    return constructionBase ? { ...constructionBase } : null;
+}
+
+function clearConstructionBase() {
+    if (!constructionBase) return;
+    constructionBase = null;
+    scheduleSave();
+}
+
+function setLastDeath(position, at = Date.now()) {
+    const normalized = normalizePosition(position);
+    if (!normalized) return;
+    lastDeath = { position: normalized, at: Number(at) || Date.now() };
+    console.log(`[MEMORY] lastDeath=${normalized.x},${normalized.y},${normalized.z}`);
+    scheduleSave();
+}
+
+function getLastDeath() {
+    return lastDeath ? {
+        position: { ...lastDeath.position },
+        at: lastDeath.at
+    } : null;
+}
+
+function clearLastDeath() {
+    if (!lastDeath) return;
+    lastDeath = null;
+    scheduleSave();
+}
+
+function clearBase() {
+    if (!base) return;
+    base = null;
+    console.log('[MEMORY] base cleared');
+    scheduleSave();
 }
 
 function setFarmCenter(position) {
@@ -164,6 +216,8 @@ function flush() {
     const payload = JSON.stringify({
         version: 3,
         base,
+        constructionBase,
+        lastDeath,
         farmCenter,
         surfaceExit,
         mineRoute,
@@ -227,12 +281,25 @@ function normalizeProgression(value) {
     );
 }
 
+function normalizeDeath(value) {
+    const position = normalizePosition(value?.position);
+    const at = Number(value?.at);
+    return position && Number.isFinite(at) ? { position, at } : null;
+}
+
 module.exports = {
     initialize,
     flush,
     setBase,
     getBase,
     hasBase,
+    clearBase,
+    setConstructionBase,
+    getConstructionBase,
+    clearConstructionBase,
+    setLastDeath,
+    getLastDeath,
+    clearLastDeath,
     setFarmCenter,
     getFarmCenter,
     clearFarmCenter,

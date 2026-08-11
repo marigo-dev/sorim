@@ -1,0 +1,181 @@
+{
+  "generatedAt": "2026-08-08T01:13:49.778Z",
+  "model": "qwen3.5:9b",
+  "url": "http://127.0.0.1:11434/api/chat",
+  "samplesPerWorkload": 3,
+  "host": {
+    "gpu": "NVIDIA GeForce RTX 5060, 8151"
+  },
+  "contexts": [
+    {
+      "contextSize": 4096,
+      "warmupMs": 4133.2,
+      "workloads": [
+        {
+          "id": "chat",
+          "averageMs": 770.17,
+          "qualityPassRate": 1,
+          "samples": [
+            {
+              "elapsedMs": 889.29,
+              "qualityPass": true,
+              "evalTokens": 29,
+              "evalDurationNs": 458497000
+            },
+            {
+              "elapsedMs": 700.57,
+              "qualityPass": true,
+              "evalTokens": 22,
+              "evalDurationNs": 345165000
+            },
+            {
+              "elapsedMs": 720.64,
+              "qualityPass": true,
+              "evalTokens": 22,
+              "evalDurationNs": 344226000
+            }
+          ]
+        },
+        {
+          "id": "intent",
+          "averageMs": 1093.75,
+          "qualityPassRate": 1,
+          "samples": [
+            {
+              "elapsedMs": 1234.63,
+              "qualityPass": true,
+              "evalTokens": 51,
+              "evalDurationNs": 808932000
+            },
+            {
+              "elapsedMs": 1031.55,
+              "qualityPass": true,
+              "evalTokens": 40,
+              "evalDurationNs": 656843000
+            },
+            {
+              "elapsedMs": 1015.07,
+              "qualityPass": true,
+              "evalTokens": 39,
+              "evalDurationNs": 618644000
+            }
+          ]
+        },
+        {
+          "id": "tool_call",
+          "averageMs": 861.13,
+          "qualityPassRate": 1,
+          "samples": [
+            {
+              "elapsedMs": 969.11,
+              "qualityPass": true,
+              "evalTokens": 28,
+              "evalDurationNs": 442239000
+            },
+            {
+              "elapsedMs": 807.1,
+              "qualityPass": true,
+              "evalTokens": 28,
+              "evalDurationNs": 440638000
+            },
+            {
+              "elapsedMs": 807.18,
+              "qualityPass": true,
+              "evalTokens": 28,
+              "evalDurationNs": 440278000
+            }
+          ]
+        }
+      ],
+      "placement": {
+        "ollamaPs": "NAME          ID              SIZE      PROCESSOR    CONTEXT    UNTIL               \nqwen3.5:9b    6488c96fa5fa    5.5 GB    100% GPU     4096       29 minutes from now",
+        "gpu": "NVIDIA GeForce RTX 5060, 8151, 7651, 245, 85"
+      }
+    },
+    {
+      "contextSize": 8192,
+      "warmupMs": 5411.76,
+      "workloads": [
+        {
+          "id": "chat",
+          "averageMs": 900.48,
+          "qualityPassRate": 1,
+          "samples": [
+            {
+              "elapsedMs": 901.45,
+              "qualityPass": true,
+              "evalTokens": 23,
+              "evalDurationNs": 427731000
+            },
+            {
+              "elapsedMs": 837.17,
+              "qualityPass": true,
+              "evalTokens": 23,
+              "evalDurationNs": 422730000
+            },
+            {
+              "elapsedMs": 962.83,
+              "qualityPass": true,
+              "evalTokens": 29,
+              "evalDurationNs": 553100000
+            }
+          ]
+        },
+        {
+          "id": "intent",
+          "averageMs": 1372.11,
+          "qualityPassRate": 1,
+          "samples": [
+            {
+              "elapsedMs": 1486.18,
+              "qualityPass": true,
+              "evalTokens": 53,
+              "evalDurationNs": 998465000
+            },
+            {
+              "elapsedMs": 1418.17,
+              "qualityPass": true,
+              "evalTokens": 53,
+              "evalDurationNs": 997537000
+            },
+            {
+              "elapsedMs": 1211.97,
+              "qualityPass": true,
+              "evalTokens": 40,
+              "evalDurationNs": 794484000
+            }
+          ]
+        },
+        {
+          "id": "tool_call",
+          "averageMs": 962.26,
+          "qualityPassRate": 0.33,
+          "samples": [
+            {
+              "elapsedMs": 1065.42,
+              "qualityPass": false,
+              "evalTokens": 26,
+              "evalDurationNs": 482512000
+            },
+            {
+              "elapsedMs": 931.7,
+              "qualityPass": true,
+              "evalTokens": 28,
+              "evalDurationNs": 522860000
+            },
+            {
+              "elapsedMs": 889.66,
+              "qualityPass": false,
+              "evalTokens": 26,
+              "evalDurationNs": 481358000
+            }
+          ]
+        }
+      ],
+      "placement": {
+        "ollamaPs": "NAME          ID              SIZE      PROCESSOR          CONTEXT    UNTIL               \nqwen3.5:9b    6488c96fa5fa    6.3 GB    12%/88% CPU/GPU    8192       29 minutes from now",
+        "gpu": "NVIDIA GeForce RTX 5060, 8151, 7651, 245, 75"
+      }
+    }
+  ]
+}

@@ -41,6 +41,33 @@ try {
         ).action,
         'emergency_shelter'
     );
+    firstNight.entities.skeleton = {
+        id: 6,
+        name: 'skeleton',
+        type: 'mob',
+        position: new Vec3(8, 64, 0)
+    };
+    assert.equal(
+        survival.chooseImmediateAction(
+            firstNight,
+            observation(18),
+            { id: 'L5_COLLECT_STONE' }
+        ).action,
+        'emergency_shelter',
+        'An unarmed early bot must break skeleton line of sight instead of looping evade'
+    );
+    const edge = makeBot(6000);
+    edge.entity.yaw = 0;
+    edge.blockAt = position => position.z < 0
+        ? { name: 'air', boundingBox: 'empty' }
+        : (position.y <= 63
+            ? { name: 'stone', boundingBox: 'block' }
+            : { name: 'air', boundingBox: 'empty' });
+    assert.equal(
+        survival.isUnsafeForwardStep(edge),
+        true,
+        'Blind retreat must stop before a three-block drop'
+    );
     const submerged = makeBot(6000);
     submerged.entity.isInWater = true;
     submerged.oxygenLevel = 12;
@@ -78,6 +105,15 @@ try {
         'escape_pit',
         'One block below a remembered surface exit is still underground'
     );
+    assert.equal(
+        survival.chooseImmediateAction(
+            oneBlockBelowExit,
+            observation(20, { wooden_pickaxe: 1, dirt: 1 }),
+            { id: 'L5_COLLECT_STONE' }
+        ),
+        null,
+        'A planned stone staircase must not be interrupted as an accidental pit'
+    );
     const threatenedInShaft = makeBot(14000);
     threatenedInShaft.entity.position = new Vec3(0, 61, 0);
     threatenedInShaft.blockAt = position =>
@@ -99,6 +135,17 @@ try {
         'escape_pit',
         'A hostile above a recovery shaft must not cause an evade loop underground'
     );
+    threatenedInShaft.entities.zombie.position = new Vec3(2, 61, 0);
+    threatenedInShaft.inventory.items = () => [{ name: 'stone_sword', count: 1 }];
+    assert.equal(
+        survival.chooseImmediateAction(
+            threatenedInShaft,
+            observation(18, { stone_sword: 1, dirt: 2 }),
+            { id: 'L6_CRAFT_STONE_TOOLS' }
+        ).action,
+        'fight_mob',
+        'An armed bot must fight a hostile sharing its pit before climbing'
+    );
     memory.clearSurfaceExit();
     const shallowDayPit = makeBot(6000);
     shallowDayPit.entity.position = new Vec3(0, 70, 0);
@@ -112,11 +159,88 @@ try {
         'escape_pit',
         'A shallow sealed pit must not trap surface navigation'
     );
+    const leafyTreeBase = makeBot(6000);
+    leafyTreeBase.blockAt = position => {
+        if (position.y === 64 && (position.x !== 0 || position.z !== 0)) {
+            return { name: 'oak_leaves', boundingBox: 'block' };
+        }
+        if (position.y <= 63) return { name: 'dirt', boundingBox: 'block' };
+        return { name: 'air', boundingBox: 'empty' };
+    };
+    assert.equal(
+        survival.chooseImmediateAction(
+            leafyTreeBase,
+            observation(20, { oak_log: 4 }),
+            { id: 'L2_CRAFT_PLANKS' }
+        ),
+        null,
+        'Leaves around a freshly cut tree must not be classified as a pit'
+    );
     memory.setBase({ x: 0, y: 64, z: 0 });
 
     const night = makeBot(14000);
     const day = makeBot(6000);
     const level = { id: 'L9_FOOD_LOOP' };
+
+    assert.equal(
+        survival.chooseThreatAction(
+            day,
+            { id: 12, name: 'creeper', distance: 7.8, entity: {} },
+            20
+        ).action,
+        'evade_hostile',
+        'a nearby base must not override immediate creeper blast avoidance'
+    );
+
+    const exposedNearBase = makeBot(14000);
+    exposedNearBase.entity.position = new Vec3(8, 64, 0);
+    exposedNearBase.inventory.items = () => [{ name: 'stone_sword', count: 1 }];
+    assert.equal(
+        survival.chooseThreatAction(
+            exposedNearBase,
+            { id: 11, name: 'skeleton', distance: 7, entity: {} },
+            16
+        ).action,
+        'return_base',
+        'an exposed bot near its base should take cover instead of chasing a skeleton'
+    );
+    exposedNearBase.entity.position = new Vec3(30, 64, 0);
+    assert.equal(
+        survival.chooseThreatAction(
+            exposedNearBase,
+            { id: 11, name: 'skeleton', distance: 5, entity: {} },
+            13
+        ).action,
+        'evade_hostile',
+        'an unarmored low-health bot must disengage from ranged combat'
+    );
+    exposedNearBase.entity.position = new Vec3(8, 64, 0);
+
+    day.entities.zombie = {
+        id: 9,
+        name: 'zombie',
+        type: 'mob',
+        position: new Vec3(3, 64, 0)
+    };
+    assert.equal(survival.canFightUnarmed(day, { name: 'zombie' }, 20), false);
+    assert.equal(
+        survival.chooseImmediateAction(day, observation(20), level).action,
+        'fight_mob',
+        'a healthy unarmed bot may defend itself against one zombie at contact range'
+    );
+    day.entities.zombie2 = {
+        id: 10,
+        name: 'zombie',
+        type: 'mob',
+        position: new Vec3(4, 64, 0)
+    };
+    assert.equal(survival.canFightUnarmed(day, { name: 'zombie' }, 20), false);
+    assert.equal(
+        survival.chooseImmediateAction(day, observation(20), level).action,
+        'evade_hostile',
+        'an unarmed bot must not take on a group'
+    );
+    day.entities = {};
 
     night.entities.spider = {
         id: 7,
@@ -137,12 +261,47 @@ try {
     );
     assert.equal(
         survival.shouldInterruptForThreat(night, { name: 'zombie', distance: 5 }),
+        false,
+        'a mob outside the shelter must not pull the bot out of its secured base'
+    );
+    night.entity.position = new Vec3(10, 64, 0);
+    assert.equal(
+        survival.shouldInterruptForThreat(night, { name: 'zombie', distance: 5 }),
         true
     );
     assert.equal(
         survival.shouldInterruptForThreat(night, { name: 'skeleton', distance: 11 }),
-        true
+        false,
+        'a distant skeleton must not preempt work before it actually damages the bot'
     );
+    night.health = 18;
+    assert.equal(
+        survival.shouldInterruptForThreat(night, { name: 'skeleton', distance: 11 }),
+        true,
+        'a ranged hit must trigger combat response across the skeleton danger radius'
+    );
+    night.health = 20;
+    night.canSeeEntity = () => false;
+    assert.equal(
+        survival.shouldInterruptForThreat(night, {
+            name: 'skeleton',
+            distance: 11,
+            entity: night.entities.spider
+        }),
+        false,
+        'a ranged mob behind solid cover must not interrupt useful work'
+    );
+    assert.equal(
+        survival.shouldInterruptForThreat(night, {
+            name: 'skeleton',
+            distance: 3,
+            entity: night.entities.spider
+        }),
+        true,
+        'a very close mob remains actionable even when visibility is uncertain'
+    );
+    delete night.canSeeEntity;
+    night.entity.position = new Vec3(11, 64, 0);
     night.inventory.items = () => [{ name: 'stone_sword', count: 1 }];
     assert.equal(
         survival.shouldInterruptForThreat(night, { name: 'zombie', distance: 9 }),
@@ -150,9 +309,11 @@ try {
     );
     assert.equal(
         survival.chooseImmediateAction(night, observation(20), level).action,
-        'fight_mob'
+        'return_base',
+        'an armed bot should still prefer its nearby base over a non-contact night fight'
     );
     night.entities = {};
+    night.entity.position = new Vec3(0, 64, 0);
 
     assert.equal(
         survival.chooseImmediateAction(night, observation(8), level).action,
@@ -169,10 +330,17 @@ try {
     assert.equal(food.foodCount({ cooked_beef: 2 }), 2);
     assert.equal(food.hasFoodStock({ bread: 16 }), true);
     assert.equal(food.hasFoodStock({ cooked_beef: 2 }), false);
+    assert.equal(food.hasActionableConvertibleFood({ beef: 5, oak_log: 1 }), false);
+    assert.equal(food.hasActionableConvertibleFood({ beef: 5, cobblestone: 8, oak_log: 1 }), true);
+    assert.equal(food.hasActionableConvertibleFood({ wheat: 3 }), true);
 
     memory.setBase({ x: 0, y: 100, z: 0 });
     const underground = makeBot(6000);
     underground.entity.position = new Vec3(4, 63, 2);
+    underground.blockAt = position =>
+        position.x === 4 && position.z === 2
+            ? { name: 'air', boundingBox: 'empty', skyLight: 0 }
+            : { name: 'stone', boundingBox: 'block', skyLight: 0 };
     assert.equal(
         survival.chooseImmediateAction(
             underground,
@@ -180,6 +348,84 @@ try {
             { id: 'L10_STORAGE_AND_BASE_MEMORY' }
         ).action,
         'escape_pit'
+    );
+    memory.setBase({ x: 0, y: 69, z: 0 });
+    const falseSurface = makeBot(14000);
+    falseSurface.entity.position = new Vec3(12, 66, 8);
+    falseSurface.blockAt = position =>
+        position.x === 12 && position.z === 8
+            ? { name: 'air', boundingBox: 'empty', skyLight: 0 }
+            : { name: 'stone', boundingBox: 'block', skyLight: 0 };
+    assert.equal(
+        survival.chooseImmediateAction(
+            falseSurface,
+            observation(20, { stone_sword: 1, dirt: 20 }),
+            { id: 'L9_FOOD_LOOP' }
+        ).action,
+        'escape_pit',
+        'night handling must not interrupt recovery below the remembered base floor'
+    );
+    memory.setBase({ x: 0, y: 100, z: 0 });
+    assert.equal(
+        survival.shouldUseEmergencyShaft(
+            new Vec3(2, 68, 2),
+            new Vec3(0, 70, 0),
+            false,
+            0
+        ),
+        true,
+        'a shallow starter shaft should use deterministic pillar recovery'
+    );
+    assert.equal(
+        survival.shouldUseEmergencyShaft(
+            new Vec3(2, 55, 2),
+            new Vec3(0, 70, 0),
+            false,
+            0
+        ),
+        false,
+        'a deep mine must preserve its route instead of blind pillaring'
+    );
+    assert.equal(
+        survival.shouldUseEmergencyShaft(
+            new Vec3(2, 68, 2),
+            new Vec3(0, 70, 0),
+            true,
+            0
+        ),
+        false,
+        'base-aware recovery should keep using the planned route'
+    );
+    assert.equal(
+        survival.shouldUseShallowBaseShaft(
+            new Vec3(12, 68, 8),
+            { x: 0, y: 70, z: 0 }
+        ),
+        true,
+        'a route-less two-block base pit should use a physical pillar exit'
+    );
+    assert.equal(
+        survival.shouldUseShallowBaseShaft(
+            new Vec3(12, 60, 8),
+            { x: 0, y: 70, z: 0 }
+        ),
+        false,
+        'a deep base mine must not pillar blindly'
+    );
+    const plannedRoute = [
+        { x: 9, y: 69, z: 134 },
+        { x: 10, y: 68, z: 135 },
+        { x: 11, y: 67, z: 136 }
+    ];
+    assert.equal(
+        survival.isMineRouteRelevant(new Vec3(10, 67, 136), plannedRoute),
+        true,
+        'a bot inside its planned mine must keep the saved return route'
+    );
+    assert.equal(
+        survival.isMineRouteRelevant(new Vec3(5, 57, 153), plannedRoute),
+        false,
+        'an old route across the world must not control accidental pit recovery'
     );
     console.log('Survival night and hunger priorities passed.');
 } finally {

@@ -2,10 +2,13 @@ const { Vec3 } = require('vec3');
 const movement = require('./movement');
 const mine = require('./mine');
 const tools = require('./tools');
+const craft = require('./craft');
 const food = require('./food');
 const shelter = require('./shelter');
 const memory = require('./memory');
 const actionControl = require('./actionControl');
+const entityActions = require('./entityActions');
+const blockPolicy = require('../safety/blockPolicy');
 
 const HOSTILES = new Set([
     'zombie',
@@ -28,6 +31,7 @@ const NIGHT_BLOCKED_LEVELS = new Set([
 ]);
 
 const SURFACE_WORK_LEVELS = new Set([
+    'L6_CRAFT_STONE_TOOLS',
     'L7_BUILD_SAFE_SHELTER',
     'L9_FOOD_LOOP',
     'L10_STORAGE_AND_BASE_MEMORY',
@@ -56,27 +60,118 @@ const EARLY_GAME_LEVELS = new Set([
     'L6_CRAFT_STONE_TOOLS',
     'L7_BUILD_SAFE_SHELTER'
 ]);
+const PLANNED_UNDERGROUND_LEVELS = new Set([
+    'L5_COLLECT_STONE',
+    'L13_SAFE_IRON_MINE',
+    'L14_COLLECT_RAW_IRON',
+    'L18_COLLECT_ARMOR_IRON'
+]);
+let emergencyShelterBlockedForNight = false;
+let emergencyShelterPosition = null;
+let deathRecoveryState = null;
+const blockedBedsForNight = new Set();
+
+const DEATH_RECOVERY_WINDOW_MS = 4.5 * 60 * 1000;
+const MAX_STALLED_DEATH_RECOVERIES = 3;
 
 function chooseImmediateAction(bot, observation, level = null) {
-    if (needsAir(bot)) {
+    if (!isNight(bot)) {
+        emergencyShelterBlockedForNight = false;
+        emergencyShelterPosition = null;
+        blockedBedsForNight.clear();
+    }
+    if (needsAir(bot) || bot.entity?.isInWater) {
         return {
             action: 'escape_water',
-            reason: 'Head is underwater; surface and reach dry ground'
+            reason: needsAir(bot)
+                ? 'Head is underwater; surface and reach dry ground'
+                : 'In water during surface work; reach dry ground'
         };
     }
 
-    // Hostiles standing above a sealed recovery shaft cannot be evaded from
-    // inside it. Finish the climb first so combat movement can work again.
-    if (shouldReachSurfaceForWork(bot, observation, level) && isInPit(bot)) {
+    if (isEmergencyShelter(bot)) {
+        const entranceThreat = nearestHostile(bot, 6);
+        if (isNight(bot) || entranceThreat) {
+            return {
+                action: 'wait_safe',
+                ms: entranceThreat ? 2000 : 3000,
+                reason: entranceThreat
+                    ? `Keep refuge sealed; ${entranceThreat.name} is still outside`
+                    : 'Sealed emergency shelter blocks outside threats; wait for daylight'
+            };
+        }
+        return {
+            action: 'escape_pit',
+            reason: 'Morning arrived and the refuge entrance is clear'
+        };
+    }
+
+    const unarmedNightThreat = isNight(bot) && !hasCombatWeapon(bot)
+        ? nearestHostile(bot, 10)
+        : null;
+    if (unarmedNightThreat && unarmedNightThreat.distance > 4) {
+        if (!emergencyShelterBlockedForNight && !isInsideRememberedBase(bot)) {
+            return {
+                action: 'emergency_shelter',
+                reason: `Unarmed at night; break line of sight from ${unarmedNightThreat.name}`
+            };
+        }
+    }
+
+    const nearbyRefugeThreat = nearestHostile(bot, 10);
+    if (
+        isNight(bot) &&
+        isSurface(bot) &&
+        memory.hasBase() &&
+        !isInsideRememberedBase(bot) &&
+        isNearBase(bot, 10) &&
+        (!nearbyRefugeThreat || nearbyRefugeThreat.distance > 4)
+    ) {
+        return {
+            action: 'return_base',
+            reason: 'Night threat nearby; enter and secure the base first'
+        };
+    }
+
+    const trappedThreat = nearestHostile(bot, 4);
+    if (
+        trappedThreat &&
+        Math.abs(trappedThreat.entity.position.y - bot.entity.position.y) <= 1.8 &&
+        trappedThreat.distance <= 3.5 &&
+        hasCombatWeapon(bot)
+    ) {
+        return chooseThreatAction(bot, trappedThreat, observation.health);
+    }
+
+    const hostile = nearestHostile(bot, 10);
+    if (
+        hostile &&
+        isActionableThreat(bot, hostile) &&
+        (
+            !shouldReachSurfaceForWork(bot, observation, level) ||
+            Math.abs(hostile.entity.position.y - bot.entity.position.y) <= 2.5 ||
+            observation.health < 20
+        ) &&
+        (observation.health <= 18 || hostile.distance <= 7)
+    ) {
+        return chooseThreatAction(bot, hostile, observation.health);
+    }
+
+    const lastDeath = memory.getLastDeath();
+    if (lastDeath && Date.now() - lastDeath.at < DEATH_RECOVERY_WINDOW_MS) {
+        return {
+            action: 'recover_items',
+            reason: 'Recover dropped inventory before it despawns'
+        };
+    }
+
+    // A distant hostile above a sealed shaft cannot reach the bot yet. Finish
+    // opening movement space, but never override the actionable threat above.
+    if (shouldReachSurfaceForWork(bot, observation, level)) {
         return {
             action: 'escape_pit',
             reason: 'Trapped below the remembered surface; finish recovery first'
         };
-    }
-
-    const hostile = nearestHostile(bot, 10);
-    if (hostile && (observation.health <= 18 || hostile.distance <= 7)) {
-        return chooseThreatAction(bot, hostile, observation.health);
     }
 
     if (observation.food <= 14 && food.foodScore(observation.inventory) > 0) {
@@ -105,27 +200,15 @@ function chooseImmediateAction(bot, observation, level = null) {
         };
     }
 
-    if (shouldEscapePit(bot, observation)) {
+    if (shouldEscapePit(bot, observation, level)) {
         return {
             action: 'escape_pit',
             reason: 'Trapped in a pit; get out first'
         };
     }
 
-    if (isEmergencyShelter(bot)) {
-        return isNight(bot)
-            ? {
-                action: 'wait_safe',
-                ms: 3000,
-                reason: 'Wait inside the emergency night shelter'
-            }
-            : {
-                action: 'escape_pit',
-                reason: 'Morning arrived; leave the emergency shelter'
-            };
-    }
-
     if (isNight(bot) && isSurface(bot)) {
+        if (level?.id === 'L6_CRAFT_STONE_TOOLS') return null;
         if (findNearbyBed(bot, 8)) {
             return {
                 action: 'sleep_bed',
@@ -134,10 +217,14 @@ function chooseImmediateAction(bot, observation, level = null) {
         }
 
         if (memory.hasBase()) {
-            if (!isNearBase(bot, 5)) {
+            const base = memory.getBase();
+            if (!shelter.isInsideShelter(
+                bot.entity.position,
+                new Vec3(base.x, base.y, base.z)
+            )) {
                 return {
                     action: 'return_base',
-                    reason: 'Night on surface; return to base'
+                    reason: 'Night on surface; enter the base before waiting'
                 };
             }
 
@@ -149,6 +236,16 @@ function chooseImmediateAction(bot, observation, level = null) {
                 };
             }
         } else if (EARLY_GAME_LEVELS.has(level?.id)) {
+            if (emergencyShelterBlockedForNight) {
+                if (level?.id === 'L1_COLLECT_WOOD' && !preferredRecoveryBlock(bot)) {
+                    return null;
+                }
+                return {
+                    action: 'wait_safe',
+                    ms: 3000,
+                    reason: 'Emergency shelter failed on this terrain; hold position and monitor threats until dawn'
+                };
+            }
             return {
                 action: 'emergency_shelter',
                 reason: 'Night arrived before the first base; make a temporary refuge'
@@ -165,20 +262,131 @@ function chooseImmediateAction(bot, observation, level = null) {
     return null;
 }
 
+async function recoverDeathItems(bot) {
+    const actionVersion = actionControl.snapshot(bot);
+    const death = memory.getLastDeath();
+    if (!death) return false;
+    if (Date.now() - death.at >= DEATH_RECOVERY_WINDOW_MS) {
+        memory.clearLastDeath();
+        deathRecoveryState = null;
+        throw new Error('Dropped inventory recovery window expired');
+    }
+
+    const target = new Vec3(death.position.x, death.position.y, death.position.z);
+    const startingDistance = bot.entity.position.distanceTo(target);
+    if (!deathRecoveryState || deathRecoveryState.deathAt !== death.at) {
+        deathRecoveryState = {
+            deathAt: death.at,
+            bestDistance: startingDistance,
+            stalledAttempts: 0
+        };
+    }
+    const before = bot.inventory.items().reduce((sum, item) => sum + item.count, 0);
+    const rememberedBase = memory.getBase();
+    if (rememberedBase && bot.entity.position.distanceTo(target) > 30) {
+        await shelter.returnToBase(bot);
+        actionControl.assertActive(bot, actionVersion);
+    }
+    try {
+        await movement.moveNear(bot, target, 2, 20000);
+    } catch (error) {
+        actionControl.assertActive(bot, actionVersion);
+        console.log(`[SURVIVAL] death recovery path fallback: ${error.message}`);
+        for (let attempt = 0; attempt < 5 && bot.entity.position.distanceTo(target) > 3; attempt++) {
+            const moved = await movement.moveTowardSafely(bot, target, 24);
+            actionControl.assertActive(bot, actionVersion);
+            if (!moved) await movement.clearNearbyFoliage(bot, target, 2);
+        }
+    }
+    actionControl.assertActive(bot, actionVersion);
+
+    if (bot.entity.position.distanceTo(target) > 4) {
+        const endingDistance = bot.entity.position.distanceTo(target);
+        if (endingDistance < deathRecoveryState.bestDistance - 0.75) {
+            deathRecoveryState.bestDistance = endingDistance;
+            deathRecoveryState.stalledAttempts = 0;
+        } else {
+            deathRecoveryState.stalledAttempts += 1;
+        }
+        if (deathRecoveryState.stalledAttempts >= MAX_STALLED_DEATH_RECOVERIES) {
+            memory.clearLastDeath();
+            deathRecoveryState = null;
+            throw new Error('Dropped inventory is unreachable; abandoning recovery');
+        }
+        await movement.sleep(750);
+        throw new Error(`Could not reach dropped items at ${target.toString()}`);
+    }
+    for (let sweep = 0; sweep < 3; sweep++) {
+        actionControl.assertActive(bot, actionVersion);
+        const drops = Object.values(bot.entities)
+            .filter(entity => entity?.name === 'item' && entity.position.distanceTo(target) <= 10)
+            .sort((left, right) =>
+                left.position.distanceTo(bot.entity.position) -
+                right.position.distanceTo(bot.entity.position)
+            );
+        for (const drop of drops) {
+            await movement.moveNear(bot, drop.position, 1, 5000).catch(() => undefined);
+            actionControl.assertActive(bot, actionVersion);
+        }
+        await movement.sleep(700);
+    }
+    const after = bot.inventory.items().reduce((sum, item) => sum + item.count, 0);
+    actionControl.assertActive(bot, actionVersion);
+    memory.clearLastDeath();
+    deathRecoveryState = null;
+    console.log(`[SURVIVAL] death recovery inventory=${before}->${after}`);
+    return after > before;
+}
+
 async function buildEmergencyShelter(bot) {
+    try {
+        return await buildEmergencyShelterAttempt(bot);
+    } catch (error) {
+        emergencyShelterBlockedForNight = true;
+        throw error;
+    }
+}
+
+async function buildEmergencyShelterAttempt(bot) {
     if (isEmergencyShelter(bot)) {
         await waitSafe(bot, 3000);
         return;
     }
     const actionVersion = actionControl.snapshot(bot);
-    const current = bot.entity.position.floored();
+    let current = bot.entity.position.floored();
     const rememberedExit = memory.getSurfaceExit();
     if (!rememberedExit || current.y > rememberedExit.y) {
         memory.setSurfaceExit(current);
     }
-    const surfaceExit = memory.getSurfaceExit();
-    const targetBottomY = surfaceExit.y - 3;
+    let surfaceExit = memory.getSurfaceExit();
+    let targetBottomY = surfaceExit.y - 3;
     console.log(`[SURVIVAL] building emergency night shelter ${bot.entity.position.floored().toString()}`);
+
+    if (!isEmergencyColumnSafe(bot, current, targetBottomY)) {
+        console.log(`[SURVIVAL] refuge column rejected: ${describeEmergencyColumn(bot, current, targetBottomY)}`);
+        const safeColumn = findNearbyEmergencyColumn(bot, current);
+        if (safeColumn) {
+            console.log(`[SURVIVAL] moving to safe refuge column ${safeColumn.toString()}`);
+            await movement.moveBlock(bot, safeColumn, 8000);
+            actionControl.assertActive(bot, actionVersion);
+            current = bot.entity.position.floored();
+            memory.setSurfaceExit(current);
+            surfaceExit = memory.getSurfaceExit();
+            targetBottomY = surfaceExit.y - 3;
+        }
+        if (!isEmergencyColumnSafe(bot, current, targetBottomY)) {
+            console.log('[SURVIVAL] no safe underground refuge column; building a surface refuge');
+            await buildSurfaceNightRefuge(bot, current, actionVersion);
+            emergencyShelterPosition = bot.entity.position.floored();
+            if (!isEmergencyShelter(bot)) {
+                emergencyShelterPosition = null;
+                throw new Error('Surface emergency refuge could not be sealed');
+            }
+            console.log('[SURVIVAL] surface emergency refuge sealed');
+            await waitSafe(bot, 3000);
+            return;
+        }
+    }
 
     for (let attempt = 0; attempt < 6 && bot.entity.position.y > targetBottomY + 0.1; attempt++) {
         actionControl.assertActive(bot, actionVersion);
@@ -194,7 +402,19 @@ async function buildEmergencyShelter(bot) {
             continue;
         }
         if (!isSafeEmergencyFloor(floor, belowFloor) || !bot.canDigBlock(floor)) {
-            throw new Error(`Emergency shelter floor is unsafe: ${floor?.name || 'unknown'}`);
+            console.log(
+                `[SURVIVAL] underground refuge unsafe (${floor?.name || 'unknown'}); ` +
+                'building a surface refuge'
+            );
+            await buildSurfaceNightRefuge(bot, current, actionVersion);
+            emergencyShelterPosition = bot.entity.position.floored();
+            if (!isEmergencyShelter(bot)) {
+                emergencyShelterPosition = null;
+                throw new Error('Surface emergency refuge could not be sealed');
+            }
+            console.log('[SURVIVAL] surface emergency refuge sealed');
+            await waitSafe(bot, 3000);
+            return;
         }
         const beforeY = bot.entity.position.y;
         await bot.lookAt(floor.position.offset(0.5, 0.5, 0.5), true);
@@ -210,9 +430,9 @@ async function buildEmergencyShelter(bot) {
     const roofPosition = feet.offset(0, 2, 0);
     const roof = bot.blockAt(roofPosition);
     if (isAir(roof)) {
-        const blockItem = bot.inventory.items().find(item =>
-            ['dirt', 'cobblestone', 'cobbled_deepslate'].includes(item.name)
-        );
+        const blockItem = preferredRecoveryBlock(bot, [
+            'dirt', 'cobbled_deepslate', 'cobblestone'
+        ]) || bot.inventory.items().find(item => item.name.endsWith('_log'));
         if (!blockItem) throw new Error('Emergency shelter has no block for the roof');
         const reference = findEmergencyRoofReference(bot, roofPosition);
         if (!reference) throw new Error('Emergency shelter roof has no placement reference');
@@ -222,16 +442,146 @@ async function buildEmergencyShelter(bot) {
         await movement.sleep(400);
     }
 
+    emergencyShelterPosition = bot.entity.position.floored();
     if (!isEmergencyShelter(bot)) {
+        emergencyShelterPosition = null;
         throw new Error('Emergency shelter could not be sealed');
     }
     console.log('[SURVIVAL] emergency night shelter sealed');
     await waitSafe(bot, 3000);
 }
 
+function isEmergencyColumnSafe(bot, current, targetBottomY) {
+    for (let y = current.y - 1; y >= targetBottomY; y--) {
+        const floor = bot.blockAt(new Vec3(current.x, y, current.z));
+        const below = bot.blockAt(new Vec3(current.x, y - 1, current.z));
+        if (!isSafeEmergencyFloor(floor, below) || floor.hardness === -1) return false;
+    }
+    return true;
+}
+
+function describeEmergencyColumn(bot, current, targetBottomY) {
+    const layers = [];
+    for (let y = current.y - 1; y >= targetBottomY; y--) {
+        const floor = bot.blockAt(new Vec3(current.x, y, current.z));
+        const below = bot.blockAt(new Vec3(current.x, y - 1, current.z));
+        layers.push(`${y}:${floor?.name || 'unknown'}/${below?.name || 'unknown'} h=${floor?.hardness}`);
+    }
+    return layers.join(', ');
+}
+
+function findNearbyEmergencyColumn(bot, origin, radius = 4) {
+    const candidates = [];
+    for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+            if (dx === 0 && dz === 0) continue;
+            for (let dy = 1; dy >= -1; dy--) {
+                const feet = origin.offset(dx, dy, dz);
+                if (!isPassable(bot.blockAt(feet)) || !isPassable(bot.blockAt(feet.offset(0, 1, 0)))) {
+                    continue;
+                }
+                if (!isEmergencyColumnSafe(bot, feet, feet.y - 3)) continue;
+                candidates.push({
+                    feet,
+                    distance: Math.hypot(dx, dz) + Math.abs(dy) * 0.75
+                });
+                break;
+            }
+        }
+    }
+    candidates.sort((left, right) => left.distance - right.distance);
+    return candidates[0]?.feet || null;
+}
+
+async function buildSurfaceNightRefuge(bot, center, actionVersion) {
+    await prepareSurfaceRefugeMaterials(bot, center, actionVersion);
+    const walls = [];
+    for (const offset of [
+        new Vec3(1, 0, 0), new Vec3(-1, 0, 0),
+        new Vec3(0, 0, 1), new Vec3(0, 0, -1)
+    ]) {
+        walls.push(center.plus(offset), center.plus(offset).offset(0, 1, 0));
+    }
+    const roofPosition = center.offset(0, 2, 0);
+    for (const position of [...walls, roofPosition]) {
+        actionControl.assertActive(bot, actionVersion);
+        if (bot.blockAt(position)?.boundingBox === 'block') continue;
+        const item = position.equals(roofPosition)
+            ? preferredRecoveryBlock(bot)
+            : preferredSurfaceWallBlock(bot);
+        if (!item) throw new Error('No blocks available for a surface emergency refuge');
+        const reference = findPlacementReference(bot, position);
+        if (!reference) throw new Error(`No placement reference for refuge ${position.toString()}`);
+        await bot.equip(item, 'hand');
+        await bot.lookAt(position.offset(0.5, 0.5, 0.5), true);
+        await bot.placeBlock(reference.block, reference.face);
+        await movement.sleep(120);
+    }
+}
+
+async function prepareSurfaceRefugeMaterials(bot, center, actionVersion) {
+    if (surfaceRefugeMaterialCount(bot) >= 9 && preferredRecoveryBlock(bot)) return;
+    const sandId = bot.registry.blocksByName.sand?.id;
+    if (!sandId) return;
+
+    for (let attempt = 0; attempt < 16 && inventoryCount(bot, 'sand') < 12; attempt++) {
+        actionControl.assertActive(bot, actionVersion);
+        const block = bot.findBlocks({ matching: sandId, maxDistance: 5, count: 48 })
+            .map(position => bot.blockAt(position))
+            .filter(candidate => candidate?.position.distanceTo(center) > 1.5)
+            .filter(candidate => isAir(bot.blockAt(candidate.position.offset(0, 1, 0))))
+            .filter(candidate => bot.canDigBlock(candidate))
+            .filter(candidate => blockPolicy.canBreak(bot, candidate, 'terrain_recovery').allowed)
+            .sort((left, right) =>
+                left.position.distanceTo(bot.entity.position) -
+                right.position.distanceTo(bot.entity.position)
+            )[0];
+        if (!block) break;
+        await bot.lookAt(block.position.offset(0.5, 0.5, 0.5), true);
+        await movement.withTimeout(bot.dig(block), 5000, 'Timed out gathering refuge sand');
+        await movement.sleep(250);
+    }
+
+    if (inventoryCount(bot, 'sand') >= 4 && inventoryCount(bot, 'sandstone') < 1) {
+        await craft.craftItem(bot, 'sandstone', 1);
+    }
+}
+
+function preferredSurfaceWallBlock(bot) {
+    return preferredRecoveryBlock(bot) ||
+        bot.inventory.items().find(item => item.name === 'sand') ||
+        null;
+}
+
+function surfaceRefugeMaterialCount(bot) {
+    const stable = [
+        'dirt', 'cobbled_deepslate', 'cobblestone', 'sandstone',
+        'oak_planks', 'birch_planks'
+    ].reduce((sum, name) => sum + inventoryCount(bot, name), 0);
+    return stable + inventoryCount(bot, 'sand');
+}
+
+function inventoryCount(bot, name) {
+    return bot.inventory.items()
+        .filter(item => item.name === name)
+        .reduce((sum, item) => sum + item.count, 0);
+}
+
 function isEmergencyShelter(bot) {
     if (!bot.entity) return false;
-    if (!memory.getSurfaceExit()) return false;
+    const surfaceExit = memory.getSurfaceExit();
+    if (!surfaceExit) return false;
+    if (emergencyShelterPosition) {
+        if (bot.entity.position.distanceTo(emergencyShelterPosition) > 2.5) return false;
+    } else {
+        const horizontal = Math.hypot(
+            bot.entity.position.x - surfaceExit.x,
+            bot.entity.position.z - surfaceExit.z
+        );
+        const depth = surfaceExit.y - bot.entity.position.y;
+        if (horizontal > 3 || depth < 1 || depth > 6) return false;
+    }
+    if (memory.hasBase() && isNearBase(bot, 6)) return false;
     const feet = bot.entity.position.floored();
     const roof = bot.blockAt(feet.offset(0, 2, 0));
     if (roof?.boundingBox !== 'block') return false;
@@ -252,9 +602,13 @@ function isSafeEmergencyFloor(floor, belowFloor) {
         'air', 'cave_air', 'void_air', 'water', 'lava',
         'sand', 'red_sand', 'gravel', 'powder_snow', 'magma_block'
     ]);
+    const unsupportedFoliage = block =>
+        block?.name?.endsWith('_leaves') || block?.name?.endsWith('_log');
     return Boolean(
         floor?.boundingBox === 'block' &&
         belowFloor?.boundingBox === 'block' &&
+        !unsupportedFoliage(floor) &&
+        !unsupportedFoliage(belowFloor) &&
         !unsafe.has(floor.name) &&
         !unsafe.has(belowFloor.name)
     );
@@ -275,18 +629,87 @@ function findEmergencyRoofReference(bot, position) {
 }
 
 async function waitForDescent(bot, startY, timeoutMs) {
-    bot.entity.onGround = false;
-    if (bot.entity.velocity) bot.entity.velocity.y = Math.min(bot.entity.velocity.y, -0.12);
+    movement.stop(bot);
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
         if (bot.entity.position.y <= startY - 0.7) return true;
         await movement.sleep(50);
     }
+    emergencyShelterBlockedForNight = true;
     throw new Error('Bot did not descend into the emergency shelter');
 }
 
 function chooseThreatAction(bot, hostile, health = bot.health) {
-    const shouldEvade = !hasCombatWeapon(bot) || health <= 8 || hostile.name === 'creeper';
+    const ranged = ['skeleton', 'stray'].includes(hostile.name);
+    if (hostile.name === 'creeper') {
+        return {
+            action: 'evade_hostile',
+            entityId: hostile.id,
+            reason: 'Creeper in blast range; create distance immediately'
+        };
+    }
+    if (
+        ranged &&
+        isNight(bot) &&
+        !memory.hasBase() &&
+        hostile.distance > 3.2 &&
+        !emergencyShelterBlockedForNight &&
+        preferredRecoveryBlock(bot)
+    ) {
+        return {
+            action: 'emergency_shelter',
+            reason: `No base or shield; block line of sight from ${hostile.name}`
+        };
+    }
+    if (
+        !hasCombatWeapon(bot) &&
+        hostile.distance > 3.5 &&
+        memory.hasBase() &&
+        !isInsideRememberedBase(bot) &&
+        isNearBase(bot, 24)
+    ) {
+        return {
+            action: 'return_base',
+            reason: `Unarmed near ${hostile.name}; take cover inside the nearby base`
+        };
+    }
+    if (
+        ranged &&
+        hostile.distance > 3.5 &&
+        memory.hasBase() &&
+        !isInsideRememberedBase(bot) &&
+        isNearBase(bot, 24)
+    ) {
+        return {
+            action: 'return_base',
+            reason: `Ranged threat ${hostile.name}; take cover inside the nearby base`
+        };
+    }
+    if (
+        ranged &&
+        !hasCombatWeapon(bot) &&
+        (hostile.distance <= 7 || health < 18)
+    ) {
+        return {
+            action: 'evade_hostile',
+            entityId: hostile.id,
+            reason: `Unarmed in arrow range; break line of sight from ${hostile.name}`
+        };
+    }
+    if (ranged && !hasCombatWeapon(bot) && isNight(bot) && !memory.hasBase()) {
+        return {
+            action: 'emergency_shelter',
+            reason: `No weapon or base; break line of sight from ${hostile.name}`
+        };
+    }
+    const canFightBareHanded = canFightUnarmed(bot, hostile, health);
+    const rangedWithoutProtection = ranged && !hasShield(bot) && armorScore(bot) === 0;
+    const shouldEvade = (
+        (!hasCombatWeapon(bot) && !canFightBareHanded) ||
+        health <= 8 ||
+        (armorScore(bot) === 0 && health <= 18) ||
+        (rangedWithoutProtection && health <= 14)
+    );
     return {
         action: shouldEvade ? 'evade_hostile' : 'fight_mob',
         entityId: hostile.id,
@@ -298,9 +721,34 @@ function chooseThreatAction(bot, hostile, health = bot.health) {
 
 function shouldInterruptForThreat(bot, hostile) {
     if (!hostile) return false;
-    if (['skeleton', 'stray'].includes(hostile.name)) return hostile.distance <= 12;
+    if (!isActionableThreat(bot, hostile)) return false;
+    if (['skeleton', 'stray'].includes(hostile.name)) {
+        if (hostile.distance <= 5) return true;
+        if (hostile.distance <= 7) return true;
+        return bot.health < 20 && hostile.distance <= 12;
+    }
     if (hostile.name === 'creeper') return hostile.distance <= 8;
     return hostile.distance <= (hasCombatWeapon(bot) ? 10 : 6);
+}
+
+function isActionableThreat(bot, hostile) {
+    if (isInsideRememberedBase(bot) && hostile.distance > 3) return false;
+    if (hostile.distance <= 4) return true;
+    if (typeof bot.canSeeEntity !== 'function') return true;
+    try {
+        return bot.canSeeEntity(hostile.entity) !== false;
+    } catch {
+        return true;
+    }
+}
+
+function isInsideRememberedBase(bot) {
+    const base = memory.getBase();
+    if (!base || !bot.entity?.position) return false;
+    return shelter.isInsideShelter(
+        bot.entity.position,
+        new Vec3(base.x, base.y, base.z)
+    );
 }
 
 function isNearBase(bot, range) {
@@ -312,7 +760,7 @@ function isNearBase(bot, range) {
     return Math.sqrt(dx * dx + dy * dy + dz * dz) <= range;
 }
 
-function shouldEscapePit(bot, observation) {
+function shouldEscapePit(bot, observation, level = null) {
     if (memory.hasBase() && isNearBase(bot, 5)) return false;
     if (shelter.isBuildingNear(bot)) return false;
     if (isNight(bot) && isEmergencyShelter(bot)) return false;
@@ -322,6 +770,7 @@ function shouldEscapePit(bot, observation) {
 
     const hurtAndTrapped = observation.health < 14;
     if (hurtAndTrapped) return true;
+    if (PLANNED_UNDERGROUND_LEVELS.has(level?.id)) return false;
 
     const hasEnoughStoneForNextStep = (observation.inventory.cobblestone || 0) >= 16 &&
         !memory.hasBase();
@@ -331,7 +780,12 @@ function shouldEscapePit(bot, observation) {
 }
 
 function shouldReachSurfaceForWork(bot, observation, level) {
-    if (isNight(bot) && isEmergencyShelter(bot)) return false;
+    if (
+        isNight(bot) &&
+        isEmergencyShelter(bot) &&
+        level?.id !== 'L6_CRAFT_STONE_TOOLS'
+    ) return false;
+    if (PLANNED_UNDERGROUND_LEVELS.has(level?.id)) return false;
     const surfaceExit = memory.getSurfaceExit();
     if (
         surfaceExit &&
@@ -340,17 +794,30 @@ function shouldReachSurfaceForWork(bot, observation, level) {
     ) {
         return true;
     }
+    if (
+        level?.id === 'L7_BUILD_SAFE_SHELTER' &&
+        !memory.hasBase() &&
+        /reach|path|stuck|movement|target/i.test(observation.lastError || '') &&
+        hasNearbySurfaceRise(bot, 2)
+    ) {
+        return true;
+    }
+    // Valleys and hills can be well below the base Y while still being open
+    // surface terrain. Height alone must never trigger shaft recovery there.
+    if (hasSkyExposure(bot)) return false;
     const base = memory.getBase();
     if (
         base &&
         SURFACE_WORK_LEVELS.has(level?.id) &&
-        bot.entity.position.y < base.y - 3
+        bot.entity.position.y < base.y - 0.1 &&
+        isInPit(bot)
     ) {
         return true;
     }
 
     if (level?.id === 'L7_BUILD_SAFE_SHELTER' && !memory.hasBase()) {
         if (shelter.isBuildingNear(bot)) return false;
+        if (!isSurface(bot)) return true;
         if (surfaceExit) return bot.entity.position.y < surfaceExit.y - 0.1;
         return bot.entity.position.y < 55;
     }
@@ -364,6 +831,12 @@ function shouldReachSurfaceForWork(bot, observation, level) {
     return false;
 }
 
+function hasNearbySurfaceRise(bot, minimumRise) {
+    const origin = bot.entity.position.floored();
+    return findNearbyExits(bot, origin)
+        .some(position => position.y >= origin.y + minimumRise);
+}
+
 async function fightMob(bot, entityId) {
     const entity = bot.entities[entityId] || nearestHostile(bot, 10)?.entity;
     if (!entity) return;
@@ -372,8 +845,7 @@ async function fightMob(bot, entityId) {
     console.log(`[SURVIVAL] fighting ${targetName}`);
     const weapon = await tools.equipBestWeapon(bot);
     if (!weapon) {
-        console.log(`[SURVIVAL] no weapon for ${targetName}; using bare hands defensively`);
-        await retreatFromThreat(bot, entity, 4);
+        await fightUnarmedDefensively(bot, entity);
         return;
     }
 
@@ -392,13 +864,15 @@ async function fightMob(bot, entityId) {
         return;
     }
 
-    for (let i = 0; i < 8 && bot.health > 0; i++) {
+    const deadline = Date.now() + 30000;
+    let strikes = 0;
+    while (strikes < 12 && bot.health > 0 && Date.now() < deadline) {
         const liveEntity = bot.entities[entity.id];
         if (!liveEntity || liveEntity.isValid === false) return;
 
         const name = entityName(liveEntity);
-        if (bot.health <= 9) {
-            await retreatFromThreat(bot, liveEntity, 3);
+        if (bot.health <= 8 || (armorScore(bot) === 0 && bot.health <= 16)) {
+            await retreatFromThreat(bot, liveEntity, 8, 14);
             return;
         }
 
@@ -409,16 +883,72 @@ async function fightMob(bot, entityId) {
 
         const distance = liveEntity.position.distanceTo(bot.entity.position);
         if (distance > 12) return;
-        if (distance > 3.0) {
-            await strafeApproach(bot, liveEntity.position);
+        if (distance > 3.1) {
+            await approachMeleeThreat(bot, liveEntity.position);
             continue;
         }
         await bot.lookAt(liveEntity.position.offset(0, 1.2, 0), true);
-        bot.attack(liveEntity);
-        if (i % 2 === 1) {
-            await backAway(bot, liveEntity.position);
-        }
+        entityActions.attack(bot, liveEntity);
+        strikes++;
+        console.log(`[SURVIVAL] melee strike=${strikes} distance=${distance.toFixed(1)}`);
+        await backAway(bot, liveEntity.position, 1200);
         await movement.sleep(650);
+    }
+
+    const remaining = bot.entities[entity.id];
+    if (remaining && remaining.isValid !== false) {
+        throw new Error(`Combat target survived ${strikes} confirmed strike attempts`);
+    }
+}
+
+async function approachMeleeThreat(bot, targetPosition) {
+    try {
+        await bot.lookAt(targetPosition.offset(0, 1.1, 0), true);
+        bot.setControlState('forward', true);
+        bot.setControlState('sprint', true);
+        bot.setControlState('jump', isFrontObstacle(bot));
+        await movement.sleep(450);
+    } finally {
+        bot.clearControlStates();
+    }
+}
+
+function isFrontObstacle(bot) {
+    const yaw = bot.entity.yaw;
+    const dx = Math.round(-Math.sin(yaw));
+    const dz = Math.round(-Math.cos(yaw));
+    const feet = bot.entity.position.floored().offset(dx, 0, dz);
+    return bot.blockAt(feet)?.boundingBox === 'block';
+}
+
+async function fightUnarmedDefensively(bot, entity) {
+    const actionVersion = actionControl.snapshot(bot);
+    console.log(`[SURVIVAL] defensive unarmed combat against ${entityName(entity)}`);
+
+    for (let strike = 0; strike < 24 && bot.health > 0; strike++) {
+        actionControl.assertActive(bot, actionVersion);
+        const liveEntity = bot.entities[entity.id];
+        if (!liveEntity || liveEntity.isValid === false) {
+            console.log('[SURVIVAL] unarmed threat cleared');
+            return;
+        }
+
+        const distance = liveEntity.position.distanceTo(bot.entity.position);
+        if (bot.health <= 8 || nearbyHostileCount(bot, 8) > 1) {
+            await retreatFromThreat(bot, liveEntity, 10, 14);
+            return;
+        }
+        if (distance > 7) return;
+        if (distance > 3.25) {
+            await movement.sleep(180);
+            continue;
+        }
+
+        await bot.lookAt(liveEntity.position.offset(0, 1.1, 0), true);
+        entityActions.attack(bot, liveEntity);
+        await movement.sleep(180);
+        await backAway(bot, liveEntity.position, 950);
+        await movement.sleep(300);
     }
 }
 
@@ -440,7 +970,7 @@ async function evadeHostile(bot, entityId) {
             if (distance <= 6) {
                 if (distance <= 3.2 && MELEE_HOSTILES.has(entityName(liveEntity)) && bot.health > 6) {
                     await bot.lookAt(liveEntity.position.offset(0, 1.1, 0), true);
-                    bot.attack(liveEntity);
+                    entityActions.attack(bot, liveEntity);
                     await movement.sleep(250);
                 }
                 await backAway(bot, liveEntity.position, 650);
@@ -474,9 +1004,10 @@ function needsAir(bot) {
 }
 
 async function escapeWater(bot) {
+    movement.resyncCollision(bot);
     const actionVersion = actionControl.snapshot(bot);
-    const shore = findNearestDryStand(bot, 16);
-    const deadline = Date.now() + 14000;
+    let shore = findNearestDryStand(bot, 16);
+    const deadline = Date.now() + 20000;
     movement.stop(bot);
     console.log(
         `[SURVIVAL] escaping water oxygen=${bot.oxygenLevel ?? 'unknown'} ` +
@@ -484,28 +1015,69 @@ async function escapeWater(bot) {
     );
 
     try {
-        const lookTarget = shore
-            ? shore.offset(0.5, 1, 0.5)
-            : bot.entity.position.offset(0, 8, 0);
-        await bot.lookAt(lookTarget, true);
+        const ascentStartedAt = Date.now();
+        const ascentStartY = bot.entity.position.y;
+        await bot.lookAt(bot.entity.position.offset(0, 8, 0), true);
         bot.setControlState('jump', true);
+
+        while (Date.now() < deadline && needsAir(bot) && bot.health > 0) {
+            actionControl.assertActive(bot, actionVersion);
+            if (
+                Date.now() - ascentStartedAt >= 4500 &&
+                bot.entity.position.y < ascentStartY + 0.5
+            ) break;
+            await movement.sleep(100);
+        }
+
+        shore = findNearestDryStand(bot, 16) || shore;
+        let shoreApproachStartedAt = Date.now();
+        let shoreApproachOrigin = bot.entity.position.clone();
+        let carvedWaterline = false;
+        let drySince = null;
         if (shore) {
+            await bot.lookAt(shore.offset(0.5, 1.2, 0.5), true);
             bot.setControlState('forward', true);
             bot.setControlState('sprint', true);
         }
 
         while (Date.now() < deadline && bot.health > 0) {
             actionControl.assertActive(bot, actionVersion);
-            const breathing = !needsAir(bot);
-            const reachedShore = shore &&
-                horizontalDistance(bot.entity.position, shore) <= 1.8 &&
-                !bot.entity.isInWater;
-            if (reachedShore || (breathing && (!shore || bot.entity.onGround))) {
+            const dry = isStableDryStand(bot);
+            drySince = dry ? (drySince || Date.now()) : null;
+            const reachedShore = drySince && Date.now() - drySince >= 500 && (
+                !shore || horizontalDistance(bot.entity.position, shore) <= 2.5
+            );
+            if (reachedShore) {
                 console.log(
                     `[SURVIVAL] water escape complete oxygen=${bot.oxygenLevel ?? 'unknown'} ` +
                     `position=${bot.entity.position.floored().toString()}`
                 );
                 return;
+            }
+            if (
+                shore &&
+                !carvedWaterline &&
+                Date.now() - shoreApproachStartedAt >= 3000 &&
+                horizontalDistance(bot.entity.position, shoreApproachOrigin) < 0.35
+            ) {
+                bot.clearControlStates();
+                const loweredShore = await carveWaterlineExit(bot, shore);
+                carvedWaterline = true;
+                if (loweredShore) {
+                    shore = loweredShore;
+                    shoreApproachOrigin = bot.entity.position.clone();
+                    shoreApproachStartedAt = Date.now();
+                    try {
+                        await movement.moveNear(bot, shore, 0.6, 4000);
+                    } catch (error) {
+                        movement.stop(bot);
+                        console.log(`[SURVIVAL] waterline path delayed: ${error.message}`);
+                    }
+                    await bot.lookAt(shore.offset(0.5, 1.2, 0.5), true);
+                    bot.setControlState('forward', true);
+                    bot.setControlState('sprint', false);
+                    bot.setControlState('jump', true);
+                }
             }
             await movement.sleep(100);
         }
@@ -513,6 +1085,136 @@ async function escapeWater(bot) {
         bot.clearControlStates();
         movement.stop(bot);
     }
+
+    if (bot.entity.isInWater) {
+        if (shore) {
+            const steppedOut = await buildWaterEscapeStep(bot, shore);
+            if (steppedOut && isStableDryStand(bot)) return;
+            try {
+                console.log(`[SURVIVAL] retrying water exit with local path ${shore.toString()}`);
+                await movement.moveBlock(bot, shore, 6000);
+                if (isStableDryStand(bot)) return;
+            } catch (error) {
+                movement.stop(bot);
+                console.log(`[SURVIVAL] local water path unavailable: ${error.message}`);
+            }
+        }
+        const rememberedExit = memory.getSurfaceExit() || memory.getBase();
+        if (rememberedExit && rememberedExit.y > bot.entity.position.y + 0.5) {
+            console.log('[SURVIVAL] horizontal water escape stalled; opening a vertical exit');
+            const exit = new Vec3(
+                Math.floor(bot.entity.position.x),
+                rememberedExit.y,
+                Math.floor(bot.entity.position.z)
+            );
+            await climbEmergencyShaft(bot, exit, actionVersion);
+        }
+    }
+}
+
+async function buildWaterEscapeStep(bot, shore) {
+    const origin = bot.entity.position.floored();
+    const dx = Math.sign(shore.x - origin.x);
+    const dz = Math.abs(shore.x - origin.x) >= Math.abs(shore.z - origin.z)
+        ? 0
+        : Math.sign(shore.z - origin.z);
+    const stepX = dz === 0 ? dx : 0;
+    const targetFloor = origin.offset(stepX, 0, dz);
+    const targetBlock = bot.blockAt(targetFloor);
+    const reference = bot.blockAt(targetFloor.offset(0, -1, 0));
+    const stand = targetFloor.offset(0, 1, 0);
+    const head = bot.blockAt(stand.offset(0, 1, 0));
+    const item = preferredRecoveryBlock(bot);
+    if (
+        !item ||
+        !['water', 'bubble_column'].includes(targetBlock?.name) ||
+        reference?.boundingBox !== 'block' ||
+        !isPassable(bot.blockAt(stand)) ||
+        !isPassable(head)
+    ) return false;
+
+    try {
+        console.log(`[SURVIVAL] placing water escape step ${targetFloor.toString()}`);
+        await bot.equip(item, 'hand');
+        await bot.lookAt(targetFloor.offset(0.5, 0.5, 0.5), true);
+        await movement.withTimeout(
+            bot.placeBlock(reference, new Vec3(0, 1, 0)),
+            3000,
+            'Water escape step placement timed out'
+        );
+        await movement.sleep(250);
+        try {
+            await movement.moveBlock(bot, stand, 4000);
+        } catch {
+            movement.stop(bot);
+            await bot.lookAt(stand.offset(0.5, 1.2, 0.5), true);
+            bot.setControlState('forward', true);
+            bot.setControlState('jump', true);
+            await movement.sleep(1400);
+            movement.stop(bot);
+        }
+        return bot.entity.position.y >= stand.y - 0.2;
+    } catch (error) {
+        movement.stop(bot);
+        console.log(`[SURVIVAL] water escape step unavailable: ${error.message}`);
+        return false;
+    }
+}
+
+function isStableDryStand(bot) {
+    const feet = bot.entity.position.floored();
+    const feetBlock = bot.blockAt(feet);
+    const head = bot.blockAt(feet.offset(0, 1, 0));
+    const floor = bot.blockAt(feet.offset(0, -1, 0));
+    const dryFloor = floor?.boundingBox === 'block' &&
+        !['water', 'lava', 'magma_block'].includes(floor.name);
+    const settled = bot.entity.onGround || Math.abs(bot.entity.velocity?.y || 0) < 0.05;
+    return !bot.entity.isInWater && isAir(feetBlock) && isAir(head) && dryFloor && settled;
+}
+
+async function carveWaterlineExit(bot, shore) {
+    if (shore.y <= bot.entity.position.y + 0.45) return null;
+    const origin = bot.entity.position.floored();
+    const target = shore.offset(0, -1, 0);
+    const dx = target.x - origin.x;
+    const dz = target.z - origin.z;
+    const steps = Math.max(1, Math.max(Math.abs(dx), Math.abs(dz)));
+    let lowerStand = target.distanceTo(bot.entity.position) <= 4.5 ? target : null;
+    if (!lowerStand) {
+        for (let step = 1; step <= steps; step++) {
+            const cell = new Vec3(
+                origin.x + Math.round(dx * step / steps),
+                origin.y,
+                origin.z + Math.round(dz * step / steps)
+            );
+            if (bot.blockAt(cell)?.boundingBox === 'block') {
+                lowerStand = cell;
+                break;
+            }
+        }
+    }
+    if (!lowerStand) return null;
+    const bank = bot.blockAt(lowerStand);
+    const head = bot.blockAt(lowerStand.offset(0, 1, 0));
+    const floor = bot.blockAt(lowerStand.offset(0, -1, 0));
+    const naturalBank = new Set([
+        'dirt', 'grass_block', 'sand', 'red_sand', 'gravel', 'clay',
+        'stone', 'andesite', 'diorite', 'granite'
+    ]);
+    if (
+        !bank ||
+        !naturalBank.has(bank.name) ||
+        !isAir(head) ||
+        floor?.boundingBox !== 'block' ||
+        !bot.canDigBlock(bank) ||
+        !blockPolicy.canBreak(bot, bank, 'terrain_recovery').allowed
+    ) return null;
+
+    console.log(`[SURVIVAL] opening waterline exit ${bank.position.toString()}`);
+    await bot.lookAt(bank.position.offset(0.5, 0.5, 0.5), true);
+    await movement.withTimeout(bot.dig(bank), 12000, 'Timed out opening waterline exit');
+    await movement.sleep(400);
+    return isPassable(bot.blockAt(lowerStand)) ? lowerStand : null;
 }
 
 function findNearestDryStand(bot, radius) {
@@ -542,6 +1244,23 @@ function hasCombatWeapon(bot) {
         ? bot.inventory.items()
         : (bot.inventory?.slots || []).filter(Boolean);
     return items.some(item => /_(sword|axe)$/.test(item.name));
+}
+
+function canFightUnarmed(bot, hostile, health = bot.health) {
+    return Boolean(
+        hostile &&
+        ['zombie', 'zombie_villager', 'husk'].includes(hostile.name) &&
+        hostile.distance <= 3.5 &&
+        health >= 16 &&
+        nearbyHostileCount(bot, 7) <= 1
+    );
+}
+
+function nearbyHostileCount(bot, radius) {
+    return Object.values(bot.entities || {})
+        .filter(entity => isHostileEntity(entity, bot))
+        .filter(entity => entity.position?.distanceTo(bot.entity.position) <= radius)
+        .length;
 }
 
 function findSafeRetreatPosition(bot, threatPosition) {
@@ -578,37 +1297,91 @@ function findSafeRetreatPosition(bot, threatPosition) {
 }
 
 async function handleRangedThreat(bot, entity, weapon) {
-    const hasShield = bot.inventory.items().some(item => item.name === 'shield');
+    const hasShieldEquipped = hasShield(bot);
     const hasArmor = armorScore(bot) >= 2;
+    const actionVersion = actionControl.snapshot(bot);
+    const deadline = Date.now() + 30000;
+    let strikes = 0;
+    let stalledApproaches = 0;
 
-    if (hasShield) await equipShield(bot);
+    if (hasShieldEquipped) await equipShield(bot);
 
-    for (let i = 0; i < 8 && bot.health > 0; i++) {
+    while (bot.health > 0 && Date.now() < deadline && strikes < 12) {
+        actionControl.assertActive(bot, actionVersion);
         const liveEntity = bot.entities[entity.id];
-        if (!liveEntity || liveEntity.isValid === false) return;
+        if (!liveEntity || liveEntity.isValid === false) {
+            console.log('[SURVIVAL] ranged threat cleared');
+            return;
+        }
 
         const distance = liveEntity.position.distanceTo(bot.entity.position);
-        if (bot.health <= 8 && !hasShield) {
+        if (bot.health <= 14 && !hasShieldEquipped) {
             await retreatFromThreat(bot, liveEntity, 10, 15);
             return;
         }
 
-        if (!weapon && !hasShield && !hasArmor) {
+        if (!weapon && !hasShieldEquipped && !hasArmor) {
             await retreatFromThreat(bot, liveEntity, 4);
             return;
         }
 
-        if (distance > 14 && !hasShield) return;
+        if (!hasShieldEquipped && !hasArmor && distance > 3.4) {
+            await retreatFromThreat(bot, liveEntity, 6, 14);
+            return;
+        }
+
+        if (distance > 16) {
+            console.log(`[SURVIVAL] ranged threat disengaged distance=${distance.toFixed(1)}`);
+            return;
+        }
 
         if (distance > 3.4) {
+            const before = bot.entity.position.clone();
             await strafeApproach(bot, liveEntity.position);
+            const moved = bot.entity.position.distanceTo(before);
+            if (moved < 0.35) stalledApproaches++;
+            else stalledApproaches = 0;
+
+            if (stalledApproaches >= 2) {
+                try {
+                    await movement.moveNear(bot, liveEntity.position.floored(), 2, 4500);
+                    stalledApproaches = 0;
+                } catch (error) {
+                    movement.stop(bot);
+                    if (!isActionableThreat(bot, {
+                        entity: liveEntity,
+                        distance,
+                        name: entityName(liveEntity)
+                    })) {
+                        console.log('[SURVIVAL] ranged threat is behind cover; resuming work');
+                        return;
+                    }
+                    throw new Error(`Could not reach visible ranged threat: ${error.message}`);
+                }
+            }
             continue;
         }
 
         await bot.lookAt(liveEntity.position.offset(0, 1.25, 0), true);
-        bot.attack(liveEntity);
-        console.log(`[SURVIVAL] ranged target strike distance=${distance.toFixed(1)}`);
+        entityActions.attack(bot, liveEntity);
+        strikes++;
+        console.log(`[SURVIVAL] ranged target strike=${strikes} distance=${distance.toFixed(1)}`);
+        await backAway(bot, liveEntity.position, 700);
         await movement.sleep(650);
+    }
+
+    const remaining = bot.entities[entity.id];
+    if (
+        remaining &&
+        remaining.isValid !== false &&
+        remaining.position.distanceTo(bot.entity.position) <= 16 &&
+        isActionableThreat(bot, {
+            entity: remaining,
+            distance: remaining.position.distanceTo(bot.entity.position),
+            name: entityName(remaining)
+        })
+    ) {
+        throw new Error(`Ranged combat unresolved after ${strikes} strike attempts`);
     }
 }
 
@@ -620,6 +1393,10 @@ async function equipShield(bot) {
     } catch {
         // Off-hand support varies across protocol shims; fighting can continue without it.
     }
+}
+
+function hasShield(bot) {
+    return bot.inventory.items().some(item => item.name === 'shield');
 }
 
 function armorScore(bot) {
@@ -655,13 +1432,36 @@ async function escapePit(bot) {
     const actionVersion = actionControl.snapshot(bot);
     const origin = bot.entity.position.floored();
     console.log(`[SURVIVAL] escaping pit ${origin.toString()}`);
+    await ensureEmergencyPickaxe(bot);
+    actionControl.assertActive(bot, actionVersion);
 
-    const mineRoute = memory.getMineRoute();
+    const savedMineRoute = memory.getMineRoute();
+    const routeRelevant = isMineRouteRelevant(bot.entity.position, savedMineRoute);
+    const mineRoute = routeRelevant ? savedMineRoute : [];
+    if (savedMineRoute.length > 1 && !routeRelevant) {
+        console.log('[SURVIVAL] ignoring stale mine route; using local pit recovery');
+        memory.clearMineRoute();
+    }
     if (mineRoute.length > 1) {
         const reached = await followMineRoute(bot, mineRoute, actionVersion);
         if (reached) {
             memory.clearMineRoute();
-            memory.clearSurfaceExit();
+            if (memory.hasBase()) memory.clearSurfaceExit();
+            return;
+        }
+        const fallbackExit = memory.getSurfaceExit();
+        const rise = fallbackExit ? fallbackExit.y - bot.entity.position.y : Infinity;
+        if (fallbackExit && rise > 0 && rise <= 12 && hasRecoveryBlock(bot)) {
+            console.log('[SURVIVAL] saved route blocked; switching to local ramp recovery');
+            memory.clearMineRoute();
+            if (await carveRunUpEscape(bot, fallbackExit, actionVersion)) return;
+            const localExit = new Vec3(
+                Math.floor(bot.entity.position.x),
+                fallbackExit.y,
+                Math.floor(bot.entity.position.z)
+            );
+            const climbed = await climbEmergencyShaft(bot, localExit, actionVersion);
+            if (climbed && memory.hasBase()) memory.clearSurfaceExit();
             return;
         }
     }
@@ -669,19 +1469,39 @@ async function escapePit(bot) {
     const surfaceExit = memory.getSurfaceExit();
     if (surfaceExit) {
         const exit = new Vec3(surfaceExit.x, surfaceExit.y, surfaceExit.z);
-        if (
-            !memory.hasBase() &&
-            mineRoute.length === 0 &&
-            horizontalDistance(bot.entity.position, exit) <= 1.6 &&
-            exit.y - bot.entity.position.y > 0 &&
-            exit.y - bot.entity.position.y <= 5
-        ) {
+        if (exit.y > bot.entity.position.y + 0.5) {
+            if (await carveRunUpEscape(bot, exit, actionVersion)) return;
+        }
+        if (!routeRelevant && shouldUseLocalRecoveryShaft(bot, exit)) {
+            const carved = await carveEscapeStaircase(bot, null, actionVersion);
+            if (carved) return;
+            const stepTarget = new Vec3(
+                Math.floor(bot.entity.position.x),
+                Math.min(exit.y, Math.floor(bot.entity.position.y) + 4),
+                Math.floor(bot.entity.position.z)
+            );
+            const climbed = await climbEmergencyShaft(bot, stepTarget, actionVersion);
+            if (bot.entity.position.y >= exit.y - 0.1) {
+                if (memory.hasBase()) memory.clearSurfaceExit();
+            }
+            if (!climbed) {
+                console.log('[SURVIVAL] local staircase and shaft recovery deferred');
+            }
+            return;
+        }
+        if (shouldUseEmergencyShaft(
+            bot.entity.position,
+            exit,
+            memory.hasBase(),
+            mineRoute.length
+        )) {
             const reached = await climbEmergencyShaft(bot, exit, actionVersion);
             if (reached) {
-                memory.clearSurfaceExit();
+                if (memory.hasBase()) memory.clearSurfaceExit();
                 return;
             }
             console.log('[SURVIVAL] vertical shaft climb incomplete; carving a side exit');
+            if (await carveHorizontalEscape(bot, actionVersion)) return;
         }
         const reached = await climbTowardSurfaceExit(
             bot,
@@ -690,12 +1510,21 @@ async function escapePit(bot) {
         );
         if (reached) {
             memory.clearMineRoute();
-            memory.clearSurfaceExit();
+            if (memory.hasBase()) memory.clearSurfaceExit();
             return;
         }
     }
 
     const base = memory.getBase();
+    if (base && mineRoute.length === 0 && shouldUseShallowBaseShaft(bot.entity.position, base)) {
+        const localExit = new Vec3(
+            Math.floor(bot.entity.position.x),
+            base.y,
+            Math.floor(bot.entity.position.z)
+        );
+        const reached = await climbEmergencyShaft(bot, localExit, actionVersion);
+        if (reached) return;
+    }
     const needsPurposefulClimb = base && bot.entity.position.y < base.y - 3;
     let hasStepBlocks = hasRecoveryBlock(bot);
     if (needsPurposefulClimb && !hasStepBlocks) {
@@ -719,6 +1548,7 @@ async function escapePit(bot) {
     }
 
     const climbTarget = surfaceExit || (base ? new Vec3(base.x, base.y, base.z) : null);
+    if (await carveRunUpEscape(bot, climbTarget, actionVersion)) return;
     const carved = await carveEscapeStaircase(bot, climbTarget, actionVersion);
     if (carved) return;
     if (needsPurposefulClimb) {
@@ -726,6 +1556,147 @@ async function escapePit(bot) {
         return;
     }
     await pillarUp(bot);
+}
+
+async function ensureEmergencyPickaxe(bot) {
+    if (bot.inventory.items().some(item => item.name.endsWith('_pickaxe'))) return;
+    const plankCount = bot.inventory.items()
+        .filter(item => item.name.endsWith('_planks'))
+        .reduce((sum, item) => sum + item.count, 0);
+    const stickCount = inventoryCount(bot, 'stick');
+    if (plankCount < 3 || stickCount < 2) return;
+    try {
+        console.log('[SURVIVAL] crafting emergency wooden pickaxe for pit recovery');
+        await craft.craftItem(bot, 'wooden_pickaxe', 1);
+    } catch (error) {
+        console.log(`[SURVIVAL] emergency pickaxe unavailable: ${error.message}`);
+    }
+}
+
+async function carveRunUpEscape(bot, surfaceExit, actionVersion) {
+    const origin = bot.entity.position.floored();
+    const directions = escapeDirections(origin, surfaceExit);
+
+    for (const direction of directions) {
+        actionControl.assertActive(bot, actionVersion);
+        const runway = origin.offset(direction.x * 2, 0, direction.z * 2);
+        const step = origin.offset(direction.x * 3, 1, direction.z * 3);
+        let opened = true;
+
+        for (let distance = 1; distance <= 2; distance++) {
+            const stand = origin.offset(direction.x * distance, 0, direction.z * distance);
+            await clearStandSpace(bot, stand);
+            await digIfNeeded(bot, stand.offset(0, 2, 0));
+            if (!isAir(bot.blockAt(stand)) || !isAir(bot.blockAt(stand.offset(0, 1, 0)))) {
+                opened = false;
+                break;
+            }
+            const floorPosition = stand.offset(0, -1, 0);
+            const floorReady = await ensureStepFloor(bot, floorPosition);
+            const floor = bot.blockAt(floorPosition);
+            if (!floorReady || !floor || floor.boundingBox !== 'block' || ['water', 'lava'].includes(floor.name)) {
+                opened = false;
+                break;
+            }
+        }
+        if (!opened) continue;
+
+        await clearStandSpace(bot, step);
+        await digIfNeeded(bot, step.offset(0, 2, 0));
+        if (!isAir(bot.blockAt(step)) || !isAir(bot.blockAt(step.offset(0, 1, 0)))) {
+            continue;
+        }
+        const floorReady = await ensureStepFloor(bot, step.offset(0, -1, 0));
+        if (!floorReady) continue;
+
+        console.log(
+            `[SURVIVAL] opened run-up ramp runway=${runway.toString()} step=${step.toString()}`
+        );
+
+        try {
+            await movement.moveBlock(bot, runway, 4500);
+        } catch {
+            await walkOpenedCorridor(bot, runway.offset(0.5, 0, 0.5), actionVersion);
+        }
+        if (horizontalDistance(bot.entity.position, runway.offset(0.5, 0, 0.5)) > 0.9) {
+            continue;
+        }
+
+        const beforeY = bot.entity.position.y;
+        let climbed = await finishSafeAscent(bot, step);
+        if (!climbed) {
+            try {
+                await movement.moveBlock(bot, step, 4500);
+            } catch {
+                climbed = await finishSafeAscent(bot, step);
+            }
+        }
+        climbed ||= bot.entity.position.y >= beforeY + 0.7;
+        console.log(
+            `[SURVIVAL] run-up ramp target=${step.toString()} ` +
+            `position=${bot.entity.position.floored().toString()} climbed=${climbed}`
+        );
+        if (climbed) return true;
+    }
+    return false;
+}
+
+async function carveHorizontalEscape(bot, actionVersion) {
+    const origin = bot.entity.position.floored();
+    for (const direction of [
+        new Vec3(1, 0, 0), new Vec3(-1, 0, 0),
+        new Vec3(0, 0, 1), new Vec3(0, 0, -1)
+    ]) {
+        actionControl.assertActive(bot, actionVersion);
+        let safe = true;
+        await digIfNeeded(bot, origin);
+        await digIfNeeded(bot, origin.offset(0, 1, 0));
+        for (let distance = 1; distance <= 3; distance++) {
+            const feet = origin.offset(direction.x * distance, 0, direction.z * distance);
+            const floor = bot.blockAt(feet.offset(0, -1, 0));
+            if (!floor || floor.boundingBox !== 'block' || ['water', 'lava'].includes(floor.name)) {
+                safe = false;
+                break;
+            }
+            const feetClear = await digIfNeeded(bot, feet);
+            const headClear = await digIfNeeded(bot, feet.offset(0, 1, 0));
+            if (!feetClear || !headClear) {
+                safe = false;
+                break;
+            }
+        }
+        if (!safe) continue;
+        const target = origin
+            .offset(direction.x * 3, 0, direction.z * 3)
+            .offset(0.5, 0, 0.5);
+        const moved = await walkOpenedCorridor(bot, target, actionVersion);
+        if (bot.entity.position.distanceTo(origin.offset(0.5, 0, 0.5)) >= 1.5) {
+            console.log(`[SURVIVAL] horizontal pit exit reached ${bot.entity.position.floored().toString()}`);
+            return true;
+        }
+        console.log(`[SURVIVAL] opened pit corridor did not move the bot moved=${moved.toFixed(2)}`);
+    }
+    return false;
+}
+
+async function walkOpenedCorridor(bot, target, actionVersion) {
+    const start = bot.entity.position.clone();
+    const deadline = Date.now() + 3500;
+    movement.stop(bot);
+    try {
+        await bot.lookAt(target.offset(0, 1.2, 0), true);
+        bot.setControlState('forward', true);
+        bot.setControlState('sprint', false);
+        bot.setControlState('jump', false);
+        while (Date.now() < deadline) {
+            actionControl.assertActive(bot, actionVersion);
+            if (horizontalDistance(bot.entity.position, start) >= 2.2) break;
+            await movement.sleep(50);
+        }
+    } finally {
+        movement.stop(bot);
+    }
+    return horizontalDistance(bot.entity.position, start);
 }
 
 async function climbEmergencyShaft(bot, exit, actionVersion) {
@@ -745,47 +1716,44 @@ async function climbEmergencyShaft(bot, exit, actionVersion) {
 }
 
 function resyncSolidCollision(bot) {
-    const feet = bot.entity.position.floored();
-    const current = bot.blockAt(feet);
-    if (current?.boundingBox !== 'block') return false;
-
-    for (let dy = 1; dy <= 3; dy++) {
-        const stand = feet.offset(0, dy, 0);
-        const standFeet = bot.blockAt(stand);
-        const standHead = bot.blockAt(stand.offset(0, 1, 0));
-        const floor = bot.blockAt(stand.offset(0, -1, 0));
-        if (!isAir(standFeet) || !isAir(standHead) || floor?.boundingBox !== 'block') continue;
-        bot.entity.position.y = stand.y;
-        bot.entity.onGround = true;
-        if (bot.entity.velocity) bot.entity.velocity.y = 0;
-        console.log(`[SURVIVAL] resynced solid collision ${feet.toString()} -> ${stand.toString()}`);
-        return true;
-    }
-    return false;
+    return movement.resyncCollision(bot);
 }
 
 async function followMineRoute(bot, route, actionVersion) {
     let index = nearestMineRouteIndex(bot, route);
     console.log(`[SURVIVAL] following saved mine route from index=${index}`);
-    for (index -= 1; index >= 0; index--) {
+    for (; index >= 0; index--) {
         actionControl.assertActive(bot, actionVersion);
         const target = new Vec3(route[index].x, route[index].y, route[index].z);
-        try {
-            await movement.moveBlock(bot, target, 5000);
-        } catch {
-            movement.stop(bot);
-            await bot.lookAt(target.offset(0.5, 1, 0.5), true);
-            await jumpForward(bot);
+        await widenAscentApproach(bot, target);
+        const climbing = target.y > bot.entity.position.y + 0.45;
+        let reached = climbing && await finishSafeAscent(bot, target);
+        if (!reached) {
+            try {
+                await movement.moveBlock(bot, target, 3500);
+            } catch {
+                movement.stop(bot);
+                reached = await finishSafeAscent(bot, target);
+            }
         }
-        if (bot.entity.position.distanceTo(target.offset(0.5, 0, 0.5)) > 2.5) {
+        reached ||= isAtMineRouteStand(bot, target);
+        if (!reached) {
+            console.log(`[SURVIVAL] saved mine route step incomplete ${target.toString()}`);
             return false;
         }
     }
 
     const entry = new Vec3(route[0].x, route[0].y, route[0].z);
-    const reached = bot.entity.position.distanceTo(entry.offset(0.5, 0, 0.5)) <= 3;
+    const reached = isAtMineRouteStand(bot, entry);
     if (reached) console.log(`[SURVIVAL] saved mine route exit reached ${entry.toString()}`);
     return reached;
+}
+
+function isAtMineRouteStand(bot, target) {
+    const center = target.offset(0.5, 0, 0.5);
+    return bot.entity.position.y >= target.y - 0.15 &&
+        bot.entity.position.y <= target.y + 0.65 &&
+        horizontalDistance(bot.entity.position, center) <= 0.6;
 }
 
 function nearestMineRouteIndex(bot, route) {
@@ -801,6 +1769,13 @@ function nearestMineRouteIndex(bot, route) {
         }
     });
     return bestIndex;
+}
+
+function isMineRouteRelevant(position, route, maxDistance = 8) {
+    if (!Array.isArray(route) || route.length < 2) return false;
+    return route.some(point => position.distanceTo(
+        new Vec3(point.x + 0.5, point.y, point.z + 0.5)
+    ) <= maxDistance);
 }
 
 async function carveEscapeStaircase(bot, surfaceExit, actionVersion) {
@@ -825,15 +1800,17 @@ async function carveEscapeStaircase(bot, surfaceExit, actionVersion) {
         }
         const floorReady = await ensureStepFloor(bot, floor);
 
-        try {
-            await movement.moveBlock(bot, next, 4000);
-        } catch {
-            await bot.lookAt(next.offset(0.5, 1, 0.5), true);
-            await jumpForward(bot);
+        let climbed = floorReady && await finishSafeAscent(bot, next);
+        if (!climbed) {
+            try {
+                await movement.moveBlock(bot, next, 3500);
+            } catch {
+                climbed = await finishSafeAscent(bot, next);
+            }
         }
 
-        if (bot.entity.position.y < beforeY + 0.7 && floorReady) {
-            syncRecoveryStep(bot, next);
+        if (!climbed && bot.entity.position.y < beforeY + 0.7 && floorReady) {
+            await syncRecoveryStep(bot, next);
         }
 
         if (bot.entity.position.y >= beforeY + 0.7) {
@@ -862,7 +1839,7 @@ async function climbTowardSurfaceExit(bot, exit, actionVersion) {
     for (let i = 0; i < 8; i++) {
         actionControl.assertActive(bot, actionVersion);
         const current = bot.entity.position.floored();
-        if (current.y >= exit.y && horizontalDistance(current, exit) <= 4) {
+        if (current.y >= exit.y && horizontalDistance(current, exit) <= 4 && isSurface(bot)) {
             console.log(`[SURVIVAL] reached surface exit area ${current.toString()}`);
             return true;
         }
@@ -879,17 +1856,18 @@ async function climbTowardSurfaceExit(bot, exit, actionVersion) {
         await clearStandSpace(bot, next);
         const floorReady = await ensureStepFloor(bot, next.offset(0, -1, 0));
 
-        try {
-            await movement.moveBlock(bot, next, 4000);
-        } catch {
-            movement.stop(bot);
-            await bot.lookAt(next.offset(0.5, 1, 0.5), true);
-            await jumpForward(bot);
+        let climbed = floorReady && next.y > current.y && await finishSafeAscent(bot, next);
+        if (!climbed) {
+            try {
+                await movement.moveBlock(bot, next, 3500);
+            } catch {
+                movement.stop(bot);
+                climbed = await finishSafeAscent(bot, next);
+            }
         }
 
-
-        if (bot.entity.position.floored().equals(current) && floorReady) {
-            syncRecoveryStep(bot, next);
+        if (!climbed && bot.entity.position.floored().equals(current) && floorReady) {
+            await syncRecoveryStep(bot, next);
         }
 
         console.log(
@@ -906,6 +1884,25 @@ function horizontalDistance(left, right) {
     return Math.hypot(left.x - right.x, left.z - right.z);
 }
 
+function shouldUseEmergencyShaft(position, exit, hasBase, routeLength) {
+    const rise = exit.y - position.y;
+    return !hasBase &&
+        routeLength === 0 &&
+        rise > 0 &&
+        rise <= 6;
+}
+
+function shouldUseLocalRecoveryShaft(bot, exit) {
+    const rise = exit.y - bot.entity.position.y;
+    const routeIsFarAway = horizontalDistance(bot.entity.position, exit) > 8;
+    return rise > 3 && routeIsFarAway && hasRecoveryBlock(bot);
+}
+
+function shouldUseShallowBaseShaft(position, base) {
+    const rise = base.y - position.y;
+    return rise > 0 && rise <= 3;
+}
+
 async function clearStandSpace(bot, position) {
     await digIfNeeded(bot, position);
     await digIfNeeded(bot, position.offset(0, 1, 0));
@@ -915,9 +1912,7 @@ async function clearStandSpace(bot, position) {
 async function ensureStepFloor(bot, position) {
     const floor = bot.blockAt(position);
     if (floor?.boundingBox === 'block') return true;
-    const item = bot.inventory.items().find(entry =>
-        ['dirt', 'cobblestone', 'oak_planks', 'birch_planks'].includes(entry.name)
-    );
+    const item = preferredRecoveryBlock(bot);
     if (!item) return false;
 
     const reference = findPlacementReference(bot, position);
@@ -927,10 +1922,9 @@ async function ensureStepFloor(bot, position) {
         await bot.lookAt(position.offset(0.5, 0.5, 0.5), true);
         await bot.placeBlock(reference.block, reference.face);
         await movement.sleep(150);
-        return true;
+        return bot.blockAt(position)?.boundingBox === 'block';
     } catch {
-        // The next movement attempt may still find a natural floor.
-        return true;
+        return bot.blockAt(position)?.boundingBox === 'block';
     }
 }
 
@@ -938,6 +1932,17 @@ function hasRecoveryBlock(bot) {
     return bot.inventory.items().some(item =>
         ['dirt', 'cobblestone', 'oak_planks', 'birch_planks'].includes(item.name)
     );
+}
+
+function preferredRecoveryBlock(bot, priority = [
+    'dirt', 'cobbled_deepslate', 'cobblestone', 'sandstone', 'oak_planks', 'birch_planks'
+]) {
+    const items = bot.inventory.items();
+    for (const name of priority) {
+        const item = items.find(entry => entry.name === name);
+        if (item) return item;
+    }
+    return null;
 }
 
 async function acquireRecoveryBlock(bot) {
@@ -1007,37 +2012,108 @@ async function acquireRecoveryBlock(bot) {
     return hasRecoveryBlock(bot);
 }
 
-function syncRecoveryStep(bot, next) {
+async function syncRecoveryStep(bot, next) {
     const feet = bot.blockAt(next);
     const head = bot.blockAt(next.offset(0, 1, 0));
     if (!isAir(feet) || !isAir(head)) return false;
-    bot.entity.position.x = next.x + 0.5;
-    bot.entity.position.y = next.y;
-    bot.entity.position.z = next.z + 0.5;
-    bot.entity.onGround = true;
-    if (bot.entity.velocity) {
-        bot.entity.velocity.x = 0;
-        bot.entity.velocity.y = 0;
-        bot.entity.velocity.z = 0;
+    const climbed = await movement.stepUpToward(bot, next);
+    if (!climbed) await movement.walkToward(bot, next, { durationMs: 1000 });
+    const reached = bot.entity.position.distanceTo(next.offset(0.5, 0, 0.5)) <= 1.2;
+    console.log(`[SURVIVAL] physical recovery step ${next.toString()} reached=${reached}`);
+    return reached;
+}
+
+async function finishSafeAscent(bot, next) {
+    await widenAscentApproach(bot, next);
+    const current = bot.entity.position.floored();
+    await digIfNeeded(bot, current.offset(0, 2, 0));
+    const feet = bot.blockAt(next);
+    const head = bot.blockAt(next.offset(0, 1, 0));
+    const floor = bot.blockAt(next.offset(0, -1, 0));
+    if (!isAir(feet) || !isAir(head) || floor?.boundingBox !== 'block') return false;
+
+    const beforeY = bot.entity.position.y;
+    const center = next.offset(0.5, 0, 0.5);
+    const horizontal = Math.hypot(
+        bot.entity.position.x - center.x,
+        bot.entity.position.z - center.z
+    );
+    if (horizontal > 2.2 || next.y < beforeY + 0.45 || next.y > beforeY + 1.6) return false;
+
+    for (let attempt = 1; attempt <= 2 && !isAtMineRouteStand(bot, next); attempt++) {
+        movement.stop(bot);
+        if (attempt === 2) {
+            const currentCenter = bot.entity.position.floored().offset(0.5, 0, 0.5);
+            await movement.walkToward(bot, currentCenter, { durationMs: 350 });
+        }
+        try {
+            primeGroundedJump(bot);
+            await bot.lookAt(new Vec3(center.x, beforeY + 1.2, center.z), true);
+            bot.setControlState('sprint', false);
+            bot.setControlState('jump', true);
+            const riseDeadline = Date.now() + 800;
+            while (
+                Date.now() < riseDeadline &&
+                bot.entity.position.y < next.y - 0.22
+            ) {
+                await movement.sleep(25);
+            }
+            if (bot.entity.position.y >= next.y - 0.22) {
+                bot.setControlState('forward', true);
+            }
+            const deadline = Date.now() + 1500;
+            while (Date.now() < deadline) {
+                if (isAtMineRouteStand(bot, next)) break;
+                await movement.sleep(50);
+            }
+        } finally {
+            movement.stop(bot);
+        }
+        await waitForGround(bot, 700);
     }
-    console.log(`[SURVIVAL] synchronized recovery step ${next.toString()}`);
-    return true;
+    const reached = isAtMineRouteStand(bot, next);
+    console.log(`[SURVIVAL] direct ascent target=${next.toString()} reached=${reached}`);
+    return reached;
+}
+
+async function widenAscentApproach(bot, next) {
+    const current = bot.entity.position.floored();
+    if (next.y < current.y || horizontalDistance(current, next) > 2.5) return;
+    const dx = next.x - current.x;
+    const dz = next.z - current.z;
+    const sides = Math.abs(dx) >= Math.abs(dz)
+        ? [new Vec3(0, 0, -1), new Vec3(0, 0, 1)]
+        : [new Vec3(-1, 0, 0), new Vec3(1, 0, 0)];
+
+    for (const side of sides) {
+        const sideFeet = next.plus(side);
+        await digIfNeeded(bot, sideFeet);
+        await digIfNeeded(bot, sideFeet.offset(0, 1, 0));
+    }
 }
 
 async function digIfNeeded(bot, position) {
     const block = bot.blockAt(position);
-    if (!block || isAir(block) || !bot.canDigBlock(block)) return;
-    await tools.equipBestTool(bot, 'pickaxe');
+    if (!block || isPassable(block)) return true;
+    if (!bot.canDigBlock(block)) return false;
     try {
-        await bot.lookAt(position.offset(0.5, 0.5, 0.5), true);
-        await movement.withTimeout(bot.dig(block), 6000, `Timed out clearing ${block.name}`);
-    } catch {
+        await mine.clearBlock(bot, block);
+    } catch (error) {
         try {
             bot.stopDigging();
         } catch {
             // Dig state may already be clear.
         }
+        console.log(`[SURVIVAL] could not clear ${block.name} at ${position.toString()}: ${error.message}`);
+        return false;
     }
+    const deadline = Date.now() + 1200;
+    while (Date.now() < deadline) {
+        if (isAir(bot.blockAt(position))) return true;
+        await movement.sleep(50);
+    }
+    console.log(`[SURVIVAL] block remained after dig ${block.name} at ${position.toString()}`);
+    return false;
 }
 
 function findPlacementReference(bot, target) {
@@ -1057,7 +2133,7 @@ function findPlacementReference(bot, target) {
 
 async function returnBase(bot) {
     const moved = await shelter.returnToBase(bot);
-    if (!moved) await movement.explore(bot, { target: 'safe' });
+    if (!moved) throw new Error('Could not enter the remembered base');
 }
 
 async function waitSafe(bot, ms = 1500) {
@@ -1089,6 +2165,7 @@ async function sleepInBed(bot) {
             return;
         }
         console.log(`[SURVIVAL] could not sleep in bed: ${error.message}`);
+        blockBedForNight(bot, bed.position);
         await waitSafe(bot, 3000);
     }
 }
@@ -1134,7 +2211,7 @@ function isHostileEntity(entity, bot) {
 }
 
 function entityName(entity) {
-    return String(entity.name || entity.mobType || entity.displayName || entity.type || 'unknown')
+    return String(entity.name || entity.displayName || entity.type || 'unknown')
         .toLowerCase()
         .replace(/^minecraft:/, '')
         .replace(/\s+/g, '_');
@@ -1159,27 +2236,73 @@ function findNearbyBed(bot, maxDistance) {
     return bot.findBlocks({ matching: ids, maxDistance, count: 8 })
         .map(position => bot.blockAt(position))
         .filter(Boolean)
+        .filter(block => !blockedBedsForNight.has(positionKey(block.position)))
         .sort((a, b) =>
             a.position.distanceTo(bot.entity.position) -
             b.position.distanceTo(bot.entity.position)
-        )[0] || null;
+    )[0] || null;
+}
+
+function positionKey(position) {
+    return `${position.x},${position.y},${position.z}`;
+}
+
+function blockBedForNight(bot, position) {
+    blockedBedsForNight.add(positionKey(position));
+    for (const offset of [
+        new Vec3(1, 0, 0), new Vec3(-1, 0, 0),
+        new Vec3(0, 0, 1), new Vec3(0, 0, -1)
+    ]) {
+        const neighbor = bot.blockAt(position.plus(offset));
+        if (neighbor?.name?.endsWith('_bed')) {
+            blockedBedsForNight.add(positionKey(neighbor.position));
+        }
+    }
 }
 
 function isSurface(bot) {
+    const feet = bot.entity.position.floored();
+    const feetBlock = bot.blockAt(feet);
+    const headBlock = bot.blockAt(feet.offset(0, 1, 0));
+    const skyLight = Math.max(
+        Number(feetBlock?.skyLight ?? -1),
+        Number(headBlock?.skyLight ?? -1)
+    );
+    if (skyLight >= 0) return skyLight >= 10;
     return bot.entity.position.y >= 58;
+}
+
+function hasSkyExposure(bot) {
+    const feet = bot.entity.position.floored();
+    const feetBlock = bot.blockAt(feet);
+    const headBlock = bot.blockAt(feet.offset(0, 1, 0));
+    const skyLight = Math.max(
+        Number(feetBlock?.skyLight ?? -1),
+        Number(headBlock?.skyLight ?? -1)
+    );
+    return skyLight >= 10;
 }
 
 function isInPit(bot) {
     const position = bot.entity.position.floored();
-    const openNeighbors = [
+    const neighbors = [
         [1, 0], [-1, 0], [0, 1], [0, -1]
-    ].filter(([dx, dz]) => {
+    ].map(([dx, dz]) => {
         const feet = bot.blockAt(position.offset(dx, 0, dz));
         const body = bot.blockAt(position.offset(dx, 1, dz));
-        return isAir(feet) && isAir(body);
-    }).length;
+        return { feet, body };
+    });
+    if (neighbors.some(({ feet, body }) => isPassable(feet) && isPassable(body))) return false;
+    if (neighbors.some(({ feet, body }) => isFoliage(feet) || isFoliage(body))) return false;
+    return true;
+}
 
-    return openNeighbors === 0;
+function isFoliage(block) {
+    const name = block?.name || '';
+    return name.endsWith('_leaves') || [
+        'leaf_litter', 'short_grass', 'tall_grass', 'fern', 'large_fern',
+        'vine', 'snow', 'moss_carpet'
+    ].includes(name);
 }
 
 function findNearbyExits(bot, origin) {
@@ -1210,11 +2333,12 @@ async function pillarUp(bot, targetY = Infinity) {
         return;
     }
 
-    for (let i = 0; i < 4; i++) {
+    const maxSteps = Number.isFinite(targetY)
+        ? Math.min(16, Math.max(4, Math.ceil(targetY - bot.entity.position.y) + 2))
+        : 4;
+    for (let i = 0; i < maxSteps; i++) {
         if (bot.entity.position.y >= targetY - 0.1) break;
-        const block = bot.inventory.items().find(item =>
-            ['dirt', 'cobblestone', 'oak_planks', 'birch_planks'].includes(item.name)
-        );
+        const block = preferredRecoveryBlock(bot);
         if (!block) break;
         const beforeY = bot.entity.position.y;
         const feet = bot.entity.position.floored();
@@ -1284,16 +2408,93 @@ async function waitForGround(bot, timeoutMs) {
 
 async function backAway(bot, threatPosition, durationMs = 900) {
     try {
-        const dx = bot.entity.position.x - threatPosition.x;
-        const dz = bot.entity.position.z - threatPosition.z;
-        await bot.lookAt(bot.entity.position.offset(dx || 1, 0, dz || 1), true);
-        bot.setControlState('forward', true);
-        bot.setControlState('jump', true);
-        bot.setControlState('sprint', true);
-        await movement.sleep(durationMs);
+        const deadline = Date.now() + durationMs;
+        let redirects = 0;
+        await lookTowardSafeRetreat(bot, threatPosition);
+        while (Date.now() < deadline) {
+            if (isUnsafeForwardStep(bot)) {
+                if (redirects++ >= 2 || !await lookTowardSafeRetreat(bot, threatPosition)) {
+                    console.log('[SURVIVAL] retreat stopped at unsafe drop or liquid');
+                    break;
+                }
+                continue;
+            }
+            bot.setControlState('forward', true);
+            bot.setControlState('jump', true);
+            bot.setControlState('sprint', true);
+            await movement.sleep(100);
+        }
     } finally {
         bot.clearControlStates();
     }
+}
+
+async function lookTowardSafeRetreat(bot, threatPosition) {
+    const target = findSafeRetreatTarget(bot, threatPosition);
+    if (!target) return false;
+    await bot.lookAt(target.offset(0.5, 0.8, 0.5), true);
+    return true;
+}
+
+function findSafeRetreatTarget(bot, threatPosition) {
+    const origin = bot.entity.position.floored();
+    const awayX = origin.x + 0.5 - threatPosition.x;
+    const awayZ = origin.z + 0.5 - threatPosition.z;
+    const baseAngle = Math.atan2(awayZ, awayX);
+    const currentDistance = bot.entity.position.distanceTo(threatPosition);
+
+    return [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2]
+        .map(offset => {
+            const angle = baseAngle + offset;
+            const dx = Math.cos(angle);
+            const dz = Math.sin(angle);
+            let safeSteps = 0;
+            for (let step = 1; step <= 7; step++) {
+                const position = new Vec3(
+                    Math.round(origin.x + dx * step),
+                    origin.y,
+                    Math.round(origin.z + dz * step)
+                );
+                const feet = bot.blockAt(position);
+                const head = bot.blockAt(position.offset(0, 1, 0));
+                const floor = bot.blockAt(position.offset(0, -1, 0));
+                if (['water', 'lava', 'powder_snow'].includes(feet?.name)) break;
+                if (['water', 'lava'].includes(head?.name)) break;
+                if (floor?.boundingBox !== 'block') break;
+                safeSteps = step;
+            }
+            const target = new Vec3(
+                Math.round(origin.x + dx * safeSteps),
+                origin.y,
+                Math.round(origin.z + dz * safeSteps)
+            );
+            return {
+                target,
+                safeSteps,
+                threatGain: target.distanceTo(threatPosition) - currentDistance
+            };
+        })
+        .filter(candidate => candidate.safeSteps >= 2 && candidate.threatGain > 0.5)
+        .sort((left, right) =>
+            right.safeSteps - left.safeSteps || right.threatGain - left.threatGain
+        )[0]?.target || null;
+}
+
+function isUnsafeForwardStep(bot) {
+    const yaw = bot.entity.yaw;
+    const dx = Math.round(-Math.sin(yaw));
+    const dz = Math.round(-Math.cos(yaw));
+    const feet = bot.entity.position.floored();
+    const front = feet.offset(dx, 0, dz);
+    const frontFeet = bot.blockAt(front);
+    const frontHead = bot.blockAt(front.offset(0, 1, 0));
+    if (['water', 'lava', 'powder_snow'].includes(frontFeet?.name)) return true;
+    if (['water', 'lava'].includes(frontHead?.name)) return true;
+    for (let depth = 1; depth <= 3; depth++) {
+        const floor = bot.blockAt(front.offset(0, -depth, 0));
+        if (floor?.boundingBox === 'block' && !['magma_block'].includes(floor.name)) return false;
+    }
+    return true;
 }
 
 async function jumpForward(bot) {
@@ -1313,14 +2514,18 @@ function primeGroundedJump(bot) {
     const feet = bot.entity.position.floored();
     const floor = bot.blockAt(feet.offset(0, -1, 0));
     const nearBlockTop = Math.abs(bot.entity.position.y - feet.y) < 0.12;
-    if (floor?.boundingBox === 'block' && nearBlockTop) {
+    const verticalSpeed = Math.abs(bot.entity.velocity?.y || 0);
+    if (floor?.boundingBox === 'block' && nearBlockTop && verticalSpeed < 0.08) {
         bot.entity.onGround = true;
-        if (bot.entity.velocity) bot.entity.velocity.y = 0.42;
     }
 }
 
 function isAir(block) {
     return ['air', 'cave_air', 'void_air'].includes(block?.name);
+}
+
+function isPassable(block) {
+    return isAir(block) || ['water', 'bubble_column'].includes(block?.name);
 }
 
 function woodUnits(inventory) {
@@ -1335,7 +2540,9 @@ function woodUnits(inventory) {
 
 module.exports = {
     chooseImmediateAction,
+    recoverDeathItems,
     chooseThreatAction,
+    canFightUnarmed,
     shouldInterruptForThreat,
     nearestHostile,
     fightMob,
@@ -1344,6 +2551,10 @@ module.exports = {
     escapeWater,
     buildEmergencyShelter,
     isEmergencyShelter,
+    isUnsafeForwardStep,
+    shouldUseEmergencyShaft,
+    shouldUseShallowBaseShaft,
+    isMineRouteRelevant,
     escapePit,
     returnBase,
     waitSafe,

@@ -40,10 +40,12 @@ try {
     memory.clearSurfaceExit();
     memory.clearFarmCenter();
     memory.clearMineRoute();
+    memory.clearBase();
     memory.flush();
     assert.equal(memory.getSurfaceExit(), null);
     assert.equal(memory.getFarmCenter(), null);
     assert.deepEqual(memory.getMineRoute(), []);
+    assert.equal(memory.getBase(), null);
     console.log('Persistent bot memory passed.');
 } finally {
     fs.rmSync(directory, { recursive: true, force: true });

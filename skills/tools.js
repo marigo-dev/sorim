@@ -1,5 +1,6 @@
 const craft = require('./craft');
 const movement = require('./movement');
+const memory = require('./memory');
 
 const TOOL_ORDER = [
     'stone_pickaxe',
@@ -13,14 +14,79 @@ const STICK_REQUIREMENTS = {
     stone_sword: 1
 };
 
+const COBBLESTONE_REQUIREMENTS = {
+    stone_pickaxe: 3,
+    stone_axe: 3,
+    stone_sword: 2
+};
+
 async function craftStoneTools(bot) {
+    await returnToSurfaceForCrafting(bot);
     await ensureCraftingTable(bot);
 
     for (const tool of TOOL_ORDER) {
         if (hasItem(bot, tool, 1)) continue;
         await ensureSticks(bot, STICK_REQUIREMENTS[tool] || 1);
+        const cobblestoneBefore = countItem(bot, 'cobblestone');
         await craft.craftItem(bot, tool, 1);
+        await verifyCraftMaterialSync(
+            bot,
+            cobblestoneBefore,
+            COBBLESTONE_REQUIREMENTS[tool] || 0
+        );
     }
+}
+
+async function verifyCraftMaterialSync(bot, before, consumed) {
+    if (before < consumed) return;
+    const minimumExpected = before - consumed;
+    await movement.sleep(500);
+    if (countItem(bot, 'cobblestone') >= minimumExpected) return;
+
+    console.log('[TOOLS] inventory slot lag detected; refreshing at crafting table');
+    const tableId = bot.registry.blocksByName.crafting_table?.id;
+    const table = tableId && bot.findBlock({ matching: tableId, maxDistance: 6 });
+    if (table && typeof bot.openBlock === 'function') {
+        let window = null;
+        try {
+            window = await bot.openBlock(table);
+            await movement.sleep(700);
+        } finally {
+            if (window) bot.closeWindow(window);
+        }
+        await movement.sleep(500);
+    }
+    if (countItem(bot, 'cobblestone') < minimumExpected) {
+        throw new Error(
+            `Craft inventory did not resync: expected at least ${minimumExpected} cobblestone`
+        );
+    }
+}
+
+async function returnToSurfaceForCrafting(bot) {
+    const surfaceExit = memory.getSurfaceExit();
+    if (!needsSurfaceReturn(bot.entity.position, surfaceExit)) return;
+
+    console.log(
+        `[TOOLS] returning to surface before crafting ` +
+        `currentY=${bot.entity.position.y.toFixed(1)} targetY=${surfaceExit.y}`
+    );
+
+    // Loaded lazily because survival's combat layer also imports this module.
+    const survival = require('./survival');
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        await survival.escapePit(bot);
+        if (!needsSurfaceReturn(bot.entity.position, surfaceExit)) {
+            console.log(`[TOOLS] surface reached for crafting attempt=${attempt}`);
+            return;
+        }
+        await movement.sleep(500);
+    }
+
+    throw new Error(
+        `Could not return to crafting surface ` +
+        `currentY=${bot.entity.position.y.toFixed(1)} targetY=${surfaceExit.y}`
+    );
 }
 
 async function ensureCraftingTable(bot) {
@@ -69,7 +135,10 @@ async function equipBestWeapon(bot) {
         'stone_sword',
         'wooden_sword',
         'stone_axe',
-        'wooden_axe'
+        'wooden_axe',
+        'iron_pickaxe',
+        'stone_pickaxe',
+        'wooden_pickaxe'
     ]
         .map(name => inventorySlots(bot).find(item => item.name === name))
         .find(Boolean);
@@ -144,9 +213,14 @@ function isAir(block) {
     return ['air', 'cave_air', 'void_air'].includes(block?.name);
 }
 
+function needsSurfaceReturn(position, surfaceExit) {
+    return Boolean(surfaceExit && position.y < surfaceExit.y - 0.1);
+}
+
 module.exports = {
     craftStoneTools,
     equipBestWeapon,
     equipBestTool,
-    hasStoneTools
+    hasStoneTools,
+    needsSurfaceReturn
 };

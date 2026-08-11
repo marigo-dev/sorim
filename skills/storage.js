@@ -4,7 +4,7 @@ const movement = require('./movement');
 const memory = require('./memory');
 const shelter = require('./shelter');
 
-const KEEP_ITEMS = new Set([
+const NEVER_DEPOSIT = new Set([
     'stone_pickaxe',
     'stone_axe',
     'stone_sword',
@@ -16,14 +16,7 @@ const KEEP_ITEMS = new Set([
     'iron_leggings',
     'iron_boots',
     'shield',
-    'wooden_pickaxe',
-    'crafting_table',
-    'furnace',
-    'torch',
-    'coal',
-    'charcoal',
-    'raw_iron',
-    'iron_ingot'
+    'wooden_pickaxe'
 ]);
 
 const FOOD_ITEMS = new Set([
@@ -32,10 +25,14 @@ const FOOD_ITEMS = new Set([
     'cooked_porkchop',
     'cooked_mutton',
     'cooked_chicken',
+    'cooked_cod',
+    'cooked_salmon',
     'beef',
     'porkchop',
     'mutton',
     'chicken',
+    'cod',
+    'salmon',
     'apple',
     'carrot',
     'baked_potato',
@@ -50,14 +47,19 @@ const LOG_TO_PLANKS = {
     acacia_log: 'acacia_planks',
     dark_oak_log: 'dark_oak_planks',
     cherry_log: 'cherry_planks',
-    mangrove_log: 'mangrove_planks'
+    mangrove_log: 'mangrove_planks',
+    pale_oak_log: 'pale_oak_planks'
 };
 
 let storageRetryAfter = 0;
 
 async function organizeStorage(bot) {
     await shelter.ensureBaseEgress(bot);
-    await returnNearBase(bot);
+    const atBase = await returnNearBase(bot);
+    if (!atBase) {
+        storageRetryAfter = Date.now() + 30000;
+        throw new Error('Storage deferred until the bot can return to base');
+    }
     const chestBlock = await ensureChest(bot);
     if (!chestBlock) throw new Error('Could not place chest');
 
@@ -70,8 +72,9 @@ async function organizeStorage(bot) {
     if (!chest) {
         console.log('[STORAGE] chest exists but could not be opened; leaving it for a later loop.');
         storageRetryAfter = Date.now() + 60000;
-        return;
+        return { deposited: {}, chestPosition: vector(chestBlock.position), opened: false };
     }
+    const deposited = {};
     try {
         for (const item of bot.inventory.items()) {
             if (shouldKeep(item)) continue;
@@ -80,24 +83,27 @@ async function organizeStorage(bot) {
             if (excess <= 0) continue;
             console.log(`[STORAGE] depositing ${item.name} x${excess}`);
             await chest.deposit(item.type, null, excess);
+            deposited[item.name] = (deposited[item.name] || 0) + excess;
             await movement.sleep(150);
         }
     } finally {
         chest.close();
     }
+    return { deposited, chestPosition: vector(chestBlock.position), opened: true };
 }
 
 async function returnNearBase(bot) {
     const base = memory.getBase();
-    if (!base) return;
+    if (!base) return false;
     const target = new Vec3(base.x, base.y, base.z);
-    if (bot.entity.position.distanceTo(target) <= 5) return;
+    if (bot.entity.position.distanceTo(target) <= 5) return true;
     try {
         console.log(`[STORAGE] returning to base ${target.toString()}`);
-        await movement.moveNear(bot, target, 2, 15000);
+        await shelter.returnToBase(bot);
     } catch (error) {
         console.log(`[STORAGE] could not return to base: ${error.message}`);
     }
+    return bot.entity.position.distanceTo(target) <= 7;
 }
 
 async function ensureChest(bot) {
@@ -172,11 +178,7 @@ async function placeChest(bot) {
 
 function shouldKeep(item) {
     const name = typeof item === 'string' ? item : item.name;
-    if (KEEP_ITEMS.has(name)) return true;
-    if (FOOD_ITEMS.has(name)) return true;
-    if (name === 'wheat' || name === 'wheat_seeds') return true;
-    if (['cobblestone', 'dirt', 'oak_planks', 'birch_planks'].includes(name)) return true;
-    return false;
+    return NEVER_DEPOSIT.has(name);
 }
 
 function hasDepositableItems(inventory) {
@@ -191,6 +193,13 @@ function keepCountFor(itemName) {
     if (itemName === 'wheat_seeds') return 32;
     if (itemName === 'cobblestone' || itemName === 'dirt') return 32;
     if (itemName.endsWith('_planks')) return 16;
+    if (itemName.endsWith('_log')) return 4;
+    if (itemName.endsWith('_sapling')) return 4;
+    if (itemName.endsWith('_wool')) return 3;
+    if (itemName === 'torch' || itemName === 'coal' || itemName === 'charcoal') return 16;
+    if (itemName === 'iron_ingot') return 8;
+    if (itemName === 'raw_iron') return 0;
+    if (['crafting_table', 'furnace', 'chest'].includes(itemName)) return 1;
     return 1;
 }
 
@@ -349,9 +358,20 @@ function isAir(block) {
     return ['air', 'cave_air', 'void_air'].includes(block?.name);
 }
 
+function deposableInventory(inventory) {
+    return Object.fromEntries(Object.entries(inventory || {}).filter(([name, count]) =>
+        !shouldKeep(name) && Number(count) > keepCountFor(name)
+    ).map(([name, count]) => [name, Number(count) - keepCountFor(name)]));
+}
+
+function vector(position) {
+    return position ? { x: position.x, y: position.y, z: position.z } : null;
+}
+
 module.exports = {
     organizeStorage,
     hasChestNearby,
     isTemporarilyUnavailable,
-    hasDepositableItems
+    hasDepositableItems,
+    deposableInventory
 };

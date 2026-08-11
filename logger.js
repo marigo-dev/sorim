@@ -16,6 +16,7 @@ const DEBUG_PREFIXES = [
     '[AI_REJECTED]',
     '[SURVIVAL_LOOP]',
     '[MOVE]',
+    '[PHYSICS]',
     '[MINE]',
     '[TREE]',
     '[STONE]',

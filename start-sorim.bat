@@ -18,8 +18,9 @@ if not defined MC_HOST set "MC_HOST=127.0.0.1"
 if not defined MC_USERNAME set "MC_USERNAME=marigo"
 if not defined MC_VERSION set "MC_VERSION=26.2"
 if not defined LLM_PROVIDER set "LLM_PROVIDER=ollama"
-if not defined OLLAMA_MODEL set "OLLAMA_MODEL=hermes3:8b"
-if not defined OLLAMA_URL set "OLLAMA_URL=http://127.0.0.1:11434/api/generate"
+if not defined OLLAMA_MODEL set "OLLAMA_MODEL=qwen3.5:9b"
+if not defined OLLAMA_URL set "OLLAMA_URL=http://127.0.0.1:11434/api/chat"
+if not defined OLLAMA_CONTEXT_SIZE set "OLLAMA_CONTEXT_SIZE=4096"
 if not defined LLM_TIMEOUT_MS set "LLM_TIMEOUT_MS=30000"
 if not defined CHAT_TIMEOUT_MS set "CHAT_TIMEOUT_MS=45000"
 if not defined USE_LLM_PLANNER set "USE_LLM_PLANNER=true"
@@ -80,7 +81,7 @@ if /I "!LLM_PROVIDER!"=="ollama" (
     )
 
     echo [SORIM] Warming !OLLAMA_MODEL!; the first launch can take about 30 seconds...
-    powershell -NoProfile -Command "$body=ConvertTo-Json @{model=$env:OLLAMA_MODEL;prompt='Return ready.';stream=$false;keep_alive='30m';options=@{num_predict=1}} -Depth 4; try { $null=Invoke-RestMethod -Uri $env:OLLAMA_URL -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 60; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }"
+    powershell -NoProfile -Command "$body=ConvertTo-Json @{model=$env:OLLAMA_MODEL;messages=@(@{role='user';content='Return ready.'});stream=$false;keep_alive='30m';options=@{num_predict=1;num_ctx=[int]$env:OLLAMA_CONTEXT_SIZE}} -Depth 6; try { $null=Invoke-RestMethod -Uri $env:OLLAMA_URL -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 90; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }"
     if errorlevel 1 echo [WARN] Ollama warm-up failed; chat will retry from the bot.
 )
 

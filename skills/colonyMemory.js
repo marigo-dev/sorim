@@ -31,6 +31,52 @@ function reset(settlementCenter) {
     return memory;
 }
 
+function initializeSettlement(settlementCenter) {
+    const memory = load();
+    if (!memory.createdAt) memory.createdAt = new Date().toISOString();
+    memory.settlementCenter = settlementCenter || memory.settlementCenter;
+    memory.updatedAt = new Date().toISOString();
+    save(memory);
+    return memory;
+}
+
+function prepareSettlement(settlementCenter, relocationDistance = 64) {
+    const memory = load();
+    const previous = memory.settlementCenter;
+    if (!previous || !settlementCenter || distance(previous, settlementCenter) <= relocationDistance) {
+        return { relocated: false, memory };
+    }
+
+    const now = new Date().toISOString();
+    const cancelledOrders = [];
+    for (const order of memory.workOrders || []) {
+        if (!['queued', 'assigned'].includes(order.status)) continue;
+        order.status = 'cancelled';
+        order.cancelReason = 'settlement relocated';
+        order.updatedAt = Date.now();
+        cancelledOrders.push(order.id);
+    }
+    memory.colonyHistory = memory.colonyHistory || [];
+    memory.colonyHistory.push({
+        type: 'settlement_relocated',
+        from: previous,
+        to: settlementCenter,
+        cancelledOrders,
+        at: now
+    });
+    memory.leases = {};
+    memory.reservations = {};
+    memory.projects = [];
+    memory.requests = [];
+    memory.sharedStorage = null;
+    memory.sharedBase = null;
+    memory.bots = {};
+    memory.settlementCenter = settlementCenter;
+    memory.updatedAt = now;
+    save(memory);
+    return { relocated: true, memory };
+}
+
 function setBotBase(name, data) {
     const memory = load();
     memory.bots[name] = {
@@ -158,16 +204,33 @@ function setSharedStorage(data) {
     return memory;
 }
 
+function setSharedBase(data) {
+    const memory = load();
+    memory.sharedBase = data ? {
+        ...data,
+        updatedAt: new Date().toISOString()
+    } : null;
+    memory.updatedAt = new Date().toISOString();
+    save(memory);
+    return memory.sharedBase;
+}
+
 function defaultMemory() {
     return {
         createdAt: null,
         updatedAt: null,
         settlementCenter: null,
         sharedStorage: null,
+        sharedBase: null,
         bots: {},
         messages: [],
         projects: [],
-        requests: []
+        requests: [],
+        leases: {},
+        workOrders: [],
+        reservations: {},
+        characters: {},
+        colonyHistory: []
     };
 }
 
@@ -175,10 +238,16 @@ function ensureDir() {
     fs.mkdirSync(MEMORY_DIR, { recursive: true });
 }
 
+function distance(left, right) {
+    return Math.hypot(left.x - right.x, left.y - right.y, left.z - right.z);
+}
+
 module.exports = {
     load,
     save,
     reset,
+    initializeSettlement,
+    prepareSettlement,
     setBotBase,
     addMessage,
     addRequest,
@@ -187,5 +256,6 @@ module.exports = {
     activeRequests,
     addProject,
     completeProject,
-    setSharedStorage
+    setSharedStorage,
+    setSharedBase
 };

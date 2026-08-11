@@ -6,6 +6,7 @@ const mine = require('./mine');
 const mining = require('./mining');
 const smelting = require('./smelting');
 const shelter = require('./shelter');
+const entityActions = require('./entityActions');
 const memory = require('./memory');
 const actionControl = require('./actionControl');
 
@@ -15,19 +16,32 @@ const BED_COLORS = [
 ];
 const LOG_NAMES = [
     'oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log',
-    'dark_oak_log', 'cherry_log', 'mangrove_log'
+    'dark_oak_log', 'cherry_log', 'mangrove_log', 'pale_oak_log'
 ];
 const PLANK_NAMES = [
     'oak_planks', 'birch_planks', 'spruce_planks', 'jungle_planks', 'acacia_planks',
-    'dark_oak_planks', 'cherry_planks', 'mangrove_planks'
+    'dark_oak_planks', 'cherry_planks', 'mangrove_planks', 'pale_oak_planks'
 ];
 const TILLABLE = new Set(['dirt', 'grass_block', 'dirt_path', 'farmland']);
 const FARM_RADIUS = 4;
 const FOOD_FARM_TARGET = 48;
+const failedSheep = new Map();
+let bedUnavailableUntil = 0;
 
 async function secureBed(bot) {
     const actionVersion = actionControl.snapshot(bot);
-    if (hasBed(bot)) return;
+    if (hasBed(bot)) {
+        bedUnavailableUntil = 0;
+        memory.setProgress('bedUnavailableUntil', 0);
+        return;
+    }
+    if (isBedTemporarilyUnavailable()) return;
+    const surfaceExit = memory.getSurfaceExit();
+    if (surfaceExit && bot.entity.position.y < surfaceExit.y - 0.1) {
+        console.log('[HOMESTEAD] returning to the surface before searching for sheep');
+        await require('./survival').escapePit(bot);
+        actionControl.assertActive(bot, actionVersion);
+    }
     await shelter.leaveBase(bot);
     actionControl.assertActive(bot, actionVersion);
 
@@ -35,7 +49,17 @@ async function secureBed(bot) {
     if (!bed) {
         await ensurePlanks(bot, 3);
         actionControl.assertActive(bot, actionVersion);
-        const color = await ensureMatchingWool(bot, 3);
+        let color;
+        try {
+            color = await ensureMatchingWool(bot, 3);
+        } catch (error) {
+            bedUnavailableUntil = Date.now() + 5 * 60 * 1000;
+            memory.setProgress('bedUnavailableUntil', bedUnavailableUntil);
+            console.log(`[HOMESTEAD] bed delayed for 5 minutes: ${error.message}`);
+            return;
+        }
+        actionControl.assertActive(bot, actionVersion);
+        await shelter.returnToBase(bot);
         actionControl.assertActive(bot, actionVersion);
         await craft.craftItem(bot, `${color}_bed`, 1);
         bed = findInventoryBed(bot);
@@ -79,6 +103,11 @@ async function establishWheatFarm(bot) {
     memory.setProgress('farmReady', 1);
     memory.setFarmCenter(site);
     console.log(`[HOMESTEAD] hydrated wheat farm ready center=${site.toString()} planted=${planted}`);
+    return {
+        center: { x: site.x, y: site.y, z: site.z },
+        planted,
+        capacity: countFarmBlocks(bot, site)
+    };
 }
 
 async function expandWheatFarm(bot, target = FOOD_FARM_TARGET) {
@@ -195,15 +224,26 @@ function findFarmCenter(bot) {
 
 async function ensureMatchingWool(bot, minimum) {
     let color = woolColorWithCount(bot, minimum);
-    for (let attempt = 0; !color && attempt < 8; attempt++) {
+    for (let attempt = 0; !color && attempt < 3; attempt++) {
         const sheep = nearestSheep(bot);
         if (!sheep) {
-            await movement.explore(bot, { target: 'food' });
+            const search = await movement.explore(bot, {
+                target: 'food',
+                stopWhen: () => nearestSheep(bot)
+            });
+            if (!search?.found) await movement.sleep(750);
             color = woolColorWithCount(bot, minimum);
             continue;
         }
-        await huntSheep(bot, sheep);
-        await collectNearbyDrops(bot, 8);
+        const beforeWool = totalWool(bot);
+        const deathPosition = await huntSheep(bot, sheep);
+        if (bot.entities[sheep.id]?.isValid !== false && totalWool(bot) <= beforeWool) {
+            failedSheep.set(sheep.id, Date.now() + 2 * 60 * 1000);
+        }
+        await collectNearbyDrops(bot, 8, deathPosition);
+        if (totalWool(bot) <= beforeWool && deathPosition) {
+            await sweepDropArea(bot, deathPosition);
+        }
         color = woolColorWithCount(bot, minimum);
     }
     if (!color) throw new Error('Three matching wool could not be collected for a bed');
@@ -212,20 +252,31 @@ async function ensureMatchingWool(bot, minimum) {
 
 async function huntSheep(bot, sheep) {
     await tools.equipBestWeapon(bot);
-    for (let hit = 0; hit < 14; hit++) {
+    let lastPosition = sheep.position.clone();
+    let stalled = 0;
+    for (let hit = 0; hit < 10; hit++) {
         const live = bot.entities[sheep.id];
-        if (!live || live.isValid === false) return;
+        if (!live || live.isValid === false) return lastPosition;
+        lastPosition = live.position.clone();
         if (live.position.distanceTo(bot.entity.position) > 3) {
+            const before = bot.entity.position.clone();
             try {
                 await movement.moveNear(bot, live.position, 1, 5000);
             } catch {
                 await nudgeToward(bot, live.position);
             }
+            if (bot.entity.position.distanceTo(before) < 0.4) stalled++;
+            else stalled = 0;
+            if (stalled >= 2 && live.position.distanceTo(bot.entity.position) > 3) {
+                console.log(`[HOMESTEAD] sheep ${live.id} is unreachable; trying another area`);
+                return lastPosition;
+            }
         }
         await bot.lookAt(live.position.offset(0, 0.8, 0), true);
-        bot.attack(live);
-        await movement.sleep(500);
+        entityActions.attack(bot, live);
+        await movement.sleep(650);
     }
+    return lastPosition;
 }
 
 async function ensureSeeds(bot, minimum) {
@@ -477,11 +528,21 @@ async function ensureSticks(bot, minimum) {
     await craft.craftItem(bot, 'stick', minimum - countItem(bot, 'stick'));
 }
 
-async function collectNearbyDrops(bot, attempts) {
+async function collectNearbyDrops(bot, attempts, fallbackPosition = null) {
+    if (fallbackPosition) {
+        try {
+            await movement.moveNear(bot, fallbackPosition, 1, 5000);
+        } catch {
+            await nudgeToward(bot, fallbackPosition);
+        }
+        await movement.sleep(500);
+    }
     for (let attempt = 0; attempt < attempts; attempt++) {
         const drop = Object.values(bot.entities || {})
             .filter(entity => entity.name === 'item' && entity.position)
             .filter(entity => entity.position.distanceTo(bot.entity.position) <= 10)
+            .filter(entity => entity.position.y >= bot.entity.position.y - 1.5)
+            .filter(entity => entity.position.y <= bot.entity.position.y + 3)
             .sort((left, right) =>
                 left.position.distanceTo(bot.entity.position) - right.position.distanceTo(bot.entity.position)
             )[0];
@@ -493,6 +554,24 @@ async function collectNearbyDrops(bot, attempts) {
             await movement.moveNear(bot, drop.position, 1, 4000);
         } catch {
             await nudgeToward(bot, drop.position);
+        }
+        await movement.sleep(250);
+    }
+}
+
+async function sweepDropArea(bot, center) {
+    const stands = [
+        center.floored(),
+        center.floored().offset(1, 0, 0),
+        center.floored().offset(-1, 0, 0),
+        center.floored().offset(0, 0, 1),
+        center.floored().offset(0, 0, -1)
+    ];
+    for (const stand of stands) {
+        try {
+            await movement.moveNear(bot, stand, 1, 2500);
+        } catch {
+            await nudgeToward(bot, stand);
         }
         await movement.sleep(250);
     }
@@ -510,16 +589,32 @@ async function nudgeToward(bot, position) {
 }
 
 function nearestSheep(bot) {
+    const now = Date.now();
+    for (const [id, expiresAt] of failedSheep) {
+        if (expiresAt <= now) failedSheep.delete(id);
+    }
     return Object.values(bot.entities || {})
         .filter(entity => entity.name === 'sheep' && entity.position)
-        .filter(entity => entity.position.distanceTo(bot.entity.position) <= 24)
+        .filter(entity => !failedSheep.has(entity.id))
+        .filter(entity => entity.position.distanceTo(bot.entity.position) <= 48)
         .sort((left, right) =>
             left.position.distanceTo(bot.entity.position) - right.position.distanceTo(bot.entity.position)
         )[0] || null;
 }
 
+function isBedTemporarilyUnavailable() {
+    return Date.now() < Math.max(
+        bedUnavailableUntil,
+        memory.getProgress('bedUnavailableUntil')
+    );
+}
+
 function woolColorWithCount(bot, minimum) {
     return BED_COLORS.find(color => countItem(bot, `${color}_wool`) >= minimum) || null;
+}
+
+function totalWool(bot) {
+    return BED_COLORS.reduce((sum, color) => sum + countItem(bot, `${color}_wool`), 0);
 }
 
 function findInventoryBed(bot) {
@@ -576,6 +671,7 @@ module.exports = {
     hasMatureCrop,
     growingCropCount,
     farmCapacity,
+    isBedTemporarilyUnavailable,
     findFarmCenter,
     farmPlotPositions
 };

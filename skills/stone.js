@@ -1,5 +1,6 @@
 const { Vec3 } = require('vec3');
 const movement = require('./movement');
+const mine = require('./mine');
 const memory = require('./memory');
 const actionControl = require('./actionControl');
 
@@ -13,13 +14,22 @@ let directionIndex = 0;
 
 async function collectStone(bot, count = 16) {
     const actionVersion = actionControl.snapshot(bot);
+    await descendFromCanopy(bot, actionVersion);
     await ensureSupportedStart(bot);
+    await ensureOutsideBaseForMining(bot);
     const start = bot.entity.position.floored();
-    memory.setSurfaceExit(start);
+    const rememberedExit = memory.getSurfaceExit();
+    const rememberedRoute = memory.getMineRoute();
+    if (!rememberedExit || start.y > rememberedExit.y) memory.setSurfaceExit(start);
     const before = countItem(bot, 'cobblestone');
     const target = before + count;
     const shaft = [];
-    const direction = DIRECTIONS[directionIndex++ % DIRECTIONS.length];
+    const previousTail = rememberedRoute[rememberedRoute.length - 1];
+    const joinsPreviousRoute = previousTail &&
+        new Vec3(previousTail.x, previousTail.y, previousTail.z).distanceTo(start) <= 1.75;
+    if (!joinsPreviousRoute) memory.setMineRoute([start]);
+    const direction = selectStaircaseDirection(bot, start);
+    let cursor = start;
     let stuckSteps = 0;
     let noProgressMines = 0;
 
@@ -27,7 +37,7 @@ async function collectStone(bot, count = 16) {
     try {
         for (let step = 0; step < 32 && countItem(bot, 'cobblestone') < target; step++) {
             actionControl.assertActive(bot, actionVersion);
-            const exposed = findReachableStone(bot);
+            const exposed = findReachableStone(bot, cursor);
             if (exposed && noProgressMines < 5) {
                 const gained = await mineReachableStone(bot, exposed);
                 if (gained) noProgressMines = 0;
@@ -35,39 +45,163 @@ async function collectStone(bot, count = 16) {
                 continue;
             }
 
-            const current = bot.entity.position.floored();
-            const next = current.plus(direction).offset(0, -1, 0);
-            shaft.push(current);
-            await carveStep(bot, current, next);
+            if (!reachedStand(bot.entity.position, cursor)) {
+                console.log(`[STONE] realigning with staircase tail ${cursor.toString()}`);
+                const descended = await finishSafeDescent(bot, cursor);
+                if (!descended) {
+                    await movement.moveBlock(bot, cursor, 6000).catch(async () => {
+                        await movement.moveNear(bot, cursor, 1, 3500);
+                    });
+                }
+                if (!reachedStand(bot.entity.position, cursor)) {
+                    throw new Error(`Could not realign with staircase tail ${cursor.toString()}`);
+                }
+            }
+
+            const next = cursor.plus(direction).offset(0, -1, 0);
+            await carveStep(bot, cursor, next);
             const moved = await stepTo(bot, next);
-            if (moved < 0.5) stuckSteps++;
-            else stuckSteps = 0;
+            if (moved < 0.5) {
+                stuckSteps++;
+                try {
+                    await movement.moveBlock(bot, cursor, 4000);
+                } catch {
+                    throw new Error(`Lost planned staircase at ${cursor.toString()}`);
+                }
+            } else {
+                shaft.push(cursor);
+                cursor = next;
+                memory.appendMineRoute(cursor);
+                stuckSteps = 0;
+            }
             noProgressMines = 0;
             if (stuckSteps >= 3) {
                 throw new Error(`Merdiven yonu tikandi: ${direction.toString()} ${describeStep(bot, next)}`);
             }
         }
+
+        if (bot.entity.position.distanceTo(cursor.offset(0.5, 0, 0.5)) > 1.25) {
+            console.log(`[STONE] returning to staircase tail ${cursor.toString()}`);
+            await movement.moveBlock(bot, cursor, 6000);
+        }
     } finally {
         const wasCancelled = actionControl.snapshot(bot) !== actionVersion;
+        movement.stop(bot);
         if (wasCancelled) {
-            movement.stop(bot);
             throw new Error(`Action cancelled: ${bot.sorimCancelReason || 'safety override'}`);
         }
-        try {
-            await movement.withTimeout(
-                returnToSurface(bot, start, shaft),
-                30000,
-                'Stone return timed out'
-            );
-        } catch (error) {
-            console.log(`[STONE] return skipped: ${error.message}`);
-            movement.stop(bot);
-        }
+        console.log(`[STONE] collection complete; survival layer owns surface recovery from ${start.toString()}`);
     }
 
     if (countItem(bot, 'cobblestone') <= before) {
         throw new Error('Safe staircase was opened but no cobblestone was collected');
     }
+    const newRoute = [...shaft, cursor];
+    memory.setMineRoute(
+        joinsPreviousRoute
+            ? [...rememberedRoute, ...newRoute.slice(1)]
+            : newRoute
+    );
+}
+
+async function ensureOutsideBaseForMining(bot) {
+    const remembered = memory.getBase();
+    if (!remembered) return;
+
+    const base = new Vec3(remembered.x, remembered.y, remembered.z);
+    if (horizontalDistance(bot.entity.position, base.offset(0.5, 0, 0.5)) > 5) return;
+
+    const candidates = findSupportedStands(bot, base, 11)
+        .filter(position => {
+            const distance = horizontalDistance(position.offset(0.5, 0, 0.5), base.offset(0.5, 0, 0.5));
+            return distance >= 6 && distance <= 10 && hasStaircaseDirection(bot, position);
+        });
+    for (const candidate of candidates) {
+        if (await moveToSupportedStand(bot, candidate)) {
+            console.log(`[STONE] moved mining start outside base to ${candidate.toString()}`);
+            return;
+        }
+    }
+    throw new Error(`No supported mining start outside base ${base.toString()}`);
+}
+
+function selectStaircaseDirection(bot, start) {
+    const ordered = DIRECTIONS.map((_, offset) =>
+        DIRECTIONS[(directionIndex + offset) % DIRECTIONS.length]
+    );
+    directionIndex = (directionIndex + 1) % DIRECTIONS.length;
+    return ordered.find(direction => isViableFirstStep(bot, start, direction)) || ordered[0];
+}
+
+function hasStaircaseDirection(bot, start) {
+    return DIRECTIONS.some(direction => isViableFirstStep(bot, start, direction));
+}
+
+function isViableFirstStep(bot, start, direction) {
+    const standAt = start.plus(direction).offset(0, -1, 0);
+    const floor = bot.blockAt(standAt.offset(0, -1, 0));
+    return Boolean(floor && !isAir(floor) && floor.boundingBox === 'block');
+}
+
+async function descendFromCanopy(bot, actionVersion) {
+    const current = bot.entity.position.floored();
+    const currentFloor = bot.blockAt(current.offset(0, -1, 0));
+    if (!isTreeSupport(currentFloor)) return;
+
+    const descended = await movement.descendFromCanopy(
+        bot,
+        28,
+        () => actionControl.snapshot(bot) === actionVersion
+    );
+    actionControl.assertActive(bot, actionVersion);
+    if (descended) return;
+
+    const stand = await findReachableSupportedStand(bot, current, 8);
+    if (stand) {
+        console.log(`[STONE] left unsupported canopy toward ${stand.toString()}`);
+        return;
+    }
+    throw new Error(`No safe canopy exit near ${current.toString()}`);
+}
+
+function findSafeCanopyColumn(bot, origin, radius) {
+    const candidates = [];
+    for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+            const stand = origin.offset(dx, 0, dz);
+            if (!isAir(bot.blockAt(stand)) || !isAir(bot.blockAt(stand.offset(0, 1, 0)))) continue;
+            let foundGround = false;
+            let continuous = true;
+            for (let depth = 1; depth <= 10; depth++) {
+                const block = bot.blockAt(stand.offset(0, -depth, 0));
+                if (!block || block.boundingBox !== 'block') {
+                    continuous = false;
+                    break;
+                }
+                if (!isTreeSupport(block)) {
+                    foundGround = true;
+                    break;
+                }
+            }
+            if (continuous && foundGround) candidates.push(stand);
+        }
+    }
+    return candidates.sort((left, right) =>
+        horizontalDistance(bot.entity.position, left) -
+        horizontalDistance(bot.entity.position, right)
+    )[0] || null;
+}
+
+function isTreeSupport(block) {
+    return Boolean(
+        block?.name?.endsWith('_leaves') ||
+        block?.name?.endsWith('_log') ||
+        block?.name === 'pale_hanging_moss'
+    );
+}
+
+function horizontalDistance(left, right) {
+    return Math.hypot(left.x - (right.x + 0.5), left.z - (right.z + 0.5));
 }
 
 async function ensureSupportedStart(bot) {
@@ -81,7 +215,7 @@ async function ensureSupportedStart(bot) {
 }
 
 async function findReachableSupportedStand(bot, origin, radius) {
-    const candidates = findSupportedStands(bot, origin, radius);
+    const candidates = findSupportedStands(bot, origin, radius).slice(0, 8);
     for (const stand of candidates) {
         if (await moveToSupportedStand(bot, stand)) return stand;
     }
@@ -89,6 +223,11 @@ async function findReachableSupportedStand(bot, origin, radius) {
 }
 
 async function moveToSupportedStand(bot, stand) {
+    const before = bot.entity.position.distanceTo(stand.offset(0.5, 0, 0.5));
+    await movement.moveTowardSafely(bot, stand, 16);
+    const after = bot.entity.position.distanceTo(stand.offset(0.5, 0, 0.5));
+    if (after < 1.8) return true;
+    if (after >= before - 0.5) return false;
     try {
         await movement.moveBlock(bot, stand, 5000);
         return true;
@@ -140,6 +279,13 @@ async function carveStep(bot, current, standAt) {
     await digIfNeeded(bot, head);
     await digIfNeeded(bot, feet);
 
+    for (const position of [feet, head]) {
+        const block = bot.blockAt(position);
+        if (isLiquid(block)) {
+            throw new Error(`Staircase blocked by ${block.name} at ${position.toString()}`);
+        }
+    }
+
     const floorBlock = bot.blockAt(floor);
     if (!floorBlock || isAir(floorBlock) || floorBlock.boundingBox !== 'block') {
         throw new Error(`Stair step has no support: ${standAt.toString()} floor=${floorBlock?.name || 'unknown'}`);
@@ -148,6 +294,14 @@ async function carveStep(bot, current, standAt) {
 
 async function stepTo(bot, position) {
     const before = bot.entity.position.clone();
+    if (await finishSafeDescent(bot, position)) {
+        const moved = bot.entity.position.distanceTo(before);
+        console.log(
+            `[STONE] direct descent target=${position.toString()} ` +
+            `position=${bot.entity.position.floored().toString()} movement=${moved.toFixed(2)}`
+        );
+        return moved;
+    }
     try {
         await movement.moveBlock(bot, position, 7000);
     } catch {
@@ -156,6 +310,17 @@ async function stepTo(bot, position) {
         } catch {
             await jumpToward(bot, position);
         }
+    }
+
+    if (!reachedStand(bot.entity.position, position)) {
+        await movement.walkToward(bot, position, {
+            durationMs: 1800,
+            arrivalRange: 0.15
+        });
+        await movement.sleep(200);
+    }
+    if (!reachedStand(bot.entity.position, position)) {
+        await finishSafeDescent(bot, position);
     }
 
     const after = bot.entity.position;
@@ -167,27 +332,82 @@ async function stepTo(bot, position) {
         `[STONE] step target=${position.toString()} ` +
         `position=${after.floored().toString()} movement=${moved.toFixed(2)}`
     );
+    if (!reachedStand(after, position)) {
+        console.log(
+            `[STONE] rejected horizontal-only step target=${position.toString()} ` +
+            `actual=${after.toString()}`
+        );
+        return 0;
+    }
     return moved;
 }
 
-async function returnToSurface(bot, start, shaft) {
+async function finishSafeDescent(bot, position) {
+    if (position.y >= bot.entity.position.y - 0.45) return false;
+    const feet = bot.blockAt(position);
+    const head = bot.blockAt(position.offset(0, 1, 0));
+    const floor = bot.blockAt(position.offset(0, -1, 0));
+    if (!isAir(feet) || !isAir(head) || !floor || floor.boundingBox !== 'block') return false;
+
+    const center = position.offset(0.5, 0, 0.5);
+    const horizontal = Math.hypot(
+        bot.entity.position.x - center.x,
+        bot.entity.position.z - center.z
+    );
+    if (horizontal > 1.6) return false;
+
+    movement.stop(bot);
+    try {
+        await bot.lookAt(
+            new Vec3(center.x, bot.entity.position.y + 1.6, center.z),
+            true
+        );
+        bot.setControlState('forward', true);
+        bot.setControlState('sprint', false);
+        bot.setControlState('jump', false);
+        const duration = Math.max(180, Math.min(500, ((horizontal + 0.15) / 4.3) * 1000));
+        await movement.sleep(duration);
+    } finally {
+        movement.stop(bot);
+    }
+    await movement.sleep(500);
+    return reachedStand(bot.entity.position, position);
+}
+
+function reachedStand(actual, expected) {
+    return Math.abs(actual.x - (expected.x + 0.5)) <= 0.8 &&
+        Math.abs(actual.z - (expected.z + 0.5)) <= 0.8 &&
+        Math.abs(actual.y - expected.y) <= 0.25;
+}
+
+async function returnToSurface(bot, start, shaft, timeoutMs = 30000) {
+    const deadline = Date.now() + timeoutMs;
     console.log(`[STONE] returning upward ${start.toString()}`);
     for (const point of [...shaft].reverse()) {
+        if (Date.now() >= deadline) break;
         try {
-            await movement.moveBlock(bot, point, 7000);
+            await movement.moveBlock(bot, point, Math.min(5000, deadline - Date.now()));
         } catch {
+            movement.stop(bot);
+            if (Date.now() >= deadline) break;
             try {
-                await movement.moveNear(bot, point, 1, 5000);
+                await movement.moveNear(bot, point, 1, Math.min(3500, deadline - Date.now()));
             } catch {
+                movement.stop(bot);
+                if (Date.now() >= deadline) break;
                 await jumpToward(bot, point);
             }
         }
     }
-    try {
-        await movement.moveNear(bot, start, 2, 10000);
-    } catch {
-        await jumpToward(bot, start);
+    if (Date.now() < deadline) {
+        try {
+            await movement.moveNear(bot, start, 2, Math.min(7000, deadline - Date.now()));
+        } catch {
+            movement.stop(bot);
+            if (Date.now() < deadline) await jumpToward(bot, start);
+        }
     }
+    movement.stop(bot);
 
     const current = bot.entity.position.floored();
     const stillBelow = current.y < start.y - 1;
@@ -217,11 +437,6 @@ async function findReachableSurfaceStand(bot, start, radius) {
 async function mineReachableStone(bot, block) {
     const before = countItem(bot, 'cobblestone');
     console.log(`[STONE] digging visible ${block.name} ${block.position.toString()}`);
-    try {
-        await movement.moveNear(bot, block.position, 3, 7000);
-    } catch {
-        await jumpToward(bot, block.position);
-    }
     const current = bot.blockAt(block.position);
     if (!current || current.name !== 'stone') return false;
     if (!bot.canDigBlock(current)) return false;
@@ -239,7 +454,7 @@ async function mineReachableStone(bot, block) {
     return countItem(bot, 'cobblestone') > before;
 }
 
-function findReachableStone(bot) {
+function findReachableStone(bot, cursor) {
     const ids = [bot.registry.blocksByName.stone?.id].filter(Boolean);
     const feet = bot.entity.position.floored();
     return bot.findBlocks({ matching: ids, maxDistance: 8, count: 32 })
@@ -248,7 +463,8 @@ function findReachableStone(bot) {
         .filter(block => hasOpenFace(bot, block.position))
         .filter(block => block.position.y >= feet.y)
         .filter(block => !isUnsafeFloorTarget(block.position, feet))
-        .filter(block => block.position.distanceTo(bot.entity.position) <= 5)
+        .filter(block => block.position.distanceTo(bot.entity.position) <= 2.5)
+        .filter(block => !cursor || block.position.distanceTo(cursor) <= 2.25)
         .sort((a, b) =>
             a.position.distanceTo(bot.entity.position) -
             b.position.distanceTo(bot.entity.position)
@@ -265,7 +481,7 @@ function isUnsafeFloorTarget(position, feet) {
 
 async function digIfNeeded(bot, position) {
     const block = bot.blockAt(position);
-    if (!block || isAir(block) || !bot.canDigBlock(block)) return;
+    if (!block || isAir(block) || isLiquid(block) || !bot.canDigBlock(block)) return;
     const before = countItem(bot, 'cobblestone');
     await digBlock(bot, block);
     if (block.name === 'stone' || block.name === 'cobblestone') {
@@ -274,10 +490,13 @@ async function digIfNeeded(bot, position) {
 }
 
 async function digBlock(bot, block) {
-    await equipPickaxe(bot);
+    await equipToolForBlock(bot, block);
     await bot.lookAt(block.position.offset(0.5, 0.5, 0.5), true);
     await digWithTimeout(bot, block);
-    await movement.sleep(150);
+    await movement.sleep(500);
+    if (bot.blockAt(block.position)?.name === block.name) {
+        throw new Error(`Block remained after digging ${block.name} ${block.position.toString()}`);
+    }
 }
 
 async function digWithTimeout(bot, block) {
@@ -307,7 +526,7 @@ async function digWithTimeout(bot, block) {
 }
 
 async function digWithProtocolFallback(bot, block) {
-    const duration = Math.max(250, Math.min(15000, Number(bot.digTime?.(block) || 1000) + 250));
+    const duration = protocolDigDuration(bot, block);
     console.log(`[STONE] protocol dig fallback ${block.position.toString()} wait=${duration}`);
     bot._client.write('block_dig', { status: 0, location: block.position, face: 1 });
     bot.swingArm();
@@ -322,6 +541,21 @@ async function digWithProtocolFallback(bot, block) {
     return false;
 }
 
+function protocolDigDuration(bot, block) {
+    const held = bot.heldItem?.name || '';
+    if (['stone', 'cobblestone'].includes(block.name)) {
+        if (held === 'iron_pickaxe' || inventorySlots(bot).some(item => item.name === 'iron_pickaxe')) return 550;
+        if (held === 'stone_pickaxe' || inventorySlots(bot).some(item => item.name === 'stone_pickaxe')) return 800;
+        if (held === 'wooden_pickaxe' || inventorySlots(bot).some(item => item.name === 'wooden_pickaxe')) return 1400;
+        return 8000;
+    }
+    if (['dirt', 'grass_block', 'coarse_dirt', 'rooted_dirt'].includes(block.name)) {
+        return 1100;
+    }
+    const reported = Number(bot.digTime?.(block) || 1200);
+    return Math.max(500, Math.min(5000, reported + 300));
+}
+
 function digTimeoutMs(bot, block) {
     const digTime = Number(bot.digTime?.(block) || 0);
     if (!Number.isFinite(digTime) || digTime <= 0) return 12000;
@@ -329,7 +563,7 @@ function digTimeoutMs(bot, block) {
 }
 
 async function collectNearby(bot, itemName, before, origin) {
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 4; i++) {
         if (countItem(bot, itemName) > before) return;
         const drop = Object.values(bot.entities || {})
             .filter(entity => entity.name === 'item')
@@ -339,52 +573,56 @@ async function collectNearby(bot, itemName, before, origin) {
                 b.position.distanceTo(bot.entity.position)
             )[0];
         if (drop) {
-            try {
-                await movement.moveBlock(bot, drop.position.floored(), 3000);
-            } catch {
-                await jumpToward(bot, drop.position);
+            const distance = drop.position.distanceTo(bot.entity.position);
+            const obstacle = movement.frontObstacle(bot, drop.position);
+            if (distance <= 4 && obstacle === 'clear') {
+                await movement.walkToward(bot, drop.position, { durationMs: 1600 });
             }
-        } else {
+        } else if (i === 1 && isSupportedPickupStand(bot, origin)) {
             try {
-                await movement.moveBlock(bot, origin, 2500);
+                await movement.moveNear(bot, origin, 1, 2500);
             } catch {
-                await jumpToward(bot, origin);
+                await movement.walkToward(bot, origin.offset(0.5, 0, 0.5), {
+                    durationMs: 1200
+                });
             }
         }
-        await movement.sleep(350);
-    }
-
-    if (countItem(bot, itemName) <= before) {
-        const dropStillNear = hasNearbyDrop(bot, origin, 6);
-        if (dropStillNear) {
-            await jumpToward(bot, origin);
-            await movement.sleep(800);
-        }
+        await movement.sleep(250);
     }
 }
 
-function hasNearbyDrop(bot, origin, radius) {
-    return Object.values(bot.entities || {})
-        .some(entity => entity.name === 'item' && entity.position.distanceTo(origin) <= radius);
+function isSupportedPickupStand(bot, position) {
+    const feet = bot.blockAt(position);
+    const head = bot.blockAt(position.offset(0, 1, 0));
+    const floor = bot.blockAt(position.offset(0, -1, 0));
+    return isAir(feet) && isAir(head) && floor?.boundingBox === 'block' &&
+        !['water', 'lava', 'magma_block'].includes(floor.name);
 }
 
 async function jumpToward(bot, position) {
-    try {
-        await bot.lookAt(position.offset(0.5, 0.2, 0.5), true);
-        bot.setControlState('forward', true);
-        bot.setControlState('jump', true);
-        bot.setControlState('sprint', true);
-        await movement.sleep(1800);
-    } finally {
-        bot.clearControlStates();
+    await movement.walkToward(bot, position, { durationMs: 1200 });
+}
+
+async function equipToolForBlock(bot, block) {
+    if (!requiresPickaxe(block.name)) {
+        if (bot.heldItem?.name?.endsWith('_pickaxe')) await bot.unequip('hand');
+        return;
+    }
+
+    const tool = ['iron_pickaxe', 'stone_pickaxe', 'wooden_pickaxe']
+        .map(name => inventorySlots(bot).find(item => item.name === name))
+        .find(Boolean);
+    if (!tool) throw new Error(`No pickaxe available for ${block.name}`);
+    await bot.equip(tool, 'hand');
+    await movement.sleep(250);
+    if (bot.heldItem?.name !== tool.name) {
+        throw new Error(`Pickaxe equip was not confirmed for ${block.name}`);
     }
 }
 
-async function equipPickaxe(bot) {
-    const tool = ['stone_pickaxe', 'wooden_pickaxe']
-        .map(name => inventorySlots(bot).find(item => item.name === name))
-        .find(Boolean);
-    if (tool) await bot.equip(tool, 'hand');
+function requiresPickaxe(name) {
+    return name === 'stone' || name === 'cobblestone' ||
+        name.endsWith('_ore') || name.startsWith('deepslate_');
 }
 
 function hasOpenFace(bot, position) {
@@ -416,6 +654,10 @@ function describeStep(bot, position) {
 
 function isAir(block) {
     return ['air', 'cave_air', 'void_air'].includes(block?.name);
+}
+
+function isLiquid(block) {
+    return ['water', 'lava'].includes(block?.name);
 }
 
 module.exports = {

@@ -9,6 +9,13 @@ async function craftItem(bot, itemName, count = 1) {
 
     let table = null;
     let recipe = bot.recipesFor(item.id, null, 1, null)[0];
+    if (!recipe && itemName === 'crafting_table') {
+        if (totalPlanks(bot) < 4) {
+            const log = bot.inventory.items().find(entry => entry.name.endsWith('_log'));
+            if (log) await craftItem(bot, log.name.replace(/_log$/, '_planks'), 4);
+        }
+        recipe = bot.recipesFor(item.id, null, 1, null)[0];
+    }
     if (!recipe) {
         table = await ensureCraftingTable(bot);
         recipe = bot.recipesFor(item.id, null, 1, table)[0];

@@ -12,6 +12,7 @@ yarn-error.log*
 # Local runtime state
 data/
 memory/
+artifacts/
 *.bak
 
 # Minecraft server/runtime files
@@ -51,3 +52,4 @@ Thumbs.db
 .idea/
 .agents/
 .codex/
+.aider*

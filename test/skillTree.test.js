@@ -33,6 +33,20 @@ assert.equal(
     'L6_CRAFT_STONE_TOOLS'
 );
 
+const naturalStickTree = new SkillTree();
+assert.equal(
+    naturalStickTree.getLevel(observation({ stick: 2, dirt: 2 })).id,
+    'L1_COLLECT_WOOD',
+    'Natural stick drops must not prove that logs were collected'
+);
+
+const randomSwordLootTree = new SkillTree();
+assert.equal(
+    randomSwordLootTree.getLevel(observation({ oak_planks: 16, stone_sword: 1 })).id,
+    'L3_CRAFT_TABLE',
+    'Random weapon loot must not prove crafting-table or stone-mining milestones'
+);
+
 const completedStoneTools = new SkillTree();
 const stoneToolInventory = {
     stone_pickaxe: 1,
@@ -62,18 +76,25 @@ assert.equal(
 );
 assert.equal(
     completedStoneTools.getForcedAction(observation(stoneToolInventory), shelterLevel).action,
+    'collect_stone'
+);
+assert.equal(
+    completedStoneTools.getForcedAction(
+        observation({ ...stoneToolInventory, cobblestone: 34 }),
+        shelterLevel
+    ).action,
     'mine'
 );
 assert.equal(
     completedStoneTools.getForcedAction(
-        observation({ ...stoneToolInventory, oak_log: 1 }),
+        observation({ ...stoneToolInventory, cobblestone: 34, oak_log: 1 }),
         shelterLevel
     ).action,
     'craft'
 );
 assert.equal(
     completedStoneTools.getForcedAction(
-        observation({ ...stoneToolInventory, dirt: 28 }),
+        observation({ ...stoneToolInventory, cobblestone: 34, oak_planks: 60 }),
         shelterLevel
     ).action,
     'build_shelter'

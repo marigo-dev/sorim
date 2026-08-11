@@ -9,14 +9,20 @@ The deterministic skill tree is not the end goal. It exists as the bot's safety 
 Sorim is designed as an AI-controlled Minecraft body/runtime:
 
 ```text
-Minecraft world -> perception -> AI brain -> tool call -> safety validation -> skill execution
+Minecraft -> sensors -> normalized world state -> blackboard -> behavior tree
+          -> safety / player task / profession / AI planning -> validated skill
 ```
 
 Main parts:
 
 - `bot.js`: connects to Minecraft, observes the world, runs the agent loop, and executes tool calls.
 - `colony.js`: runs two cooperating agents with shared tasks and storage.
+- `docs/COLONY_ROADMAP.md`: defines the planned single-brain, multi-agent colony, identity, personality, election, succession, and memorial systems.
 - `llm.js`: talks to Ollama or an OpenAI-compatible API and asks the AI brain for the next tool call.
+- `perception/`: maintains a normalized world state and bounded event stream from health, inventory, blocks, entities, chat, damage, and sound packets.
+- `agent/`: contains the blackboard, persistent social/task memory, task queue, and behavior tree runtime.
+- `professions/`: defines persistent farmer, rancher, miner, lumberjack, fisher, builder, guard, and quartermaster profiles.
+- `safety/`: protects remembered builds from harvesting and scores terrain before construction.
 - `protocol26Shim.js`: native Minecraft 26.2 protocol compatibility layer.
 - `toolRegistry.js`: defines the body tools the AI is allowed to use and maps tool calls to Mineflayer skills.
 - `skillTree.js`: provides curriculum context and safe fallback decisions when AI output is invalid or unavailable.
@@ -30,6 +36,9 @@ The AI does not directly control Mineflayer APIs. It chooses from explicit tools
 - `build_shelter`
 - `find_food`
 - `maintain_food_supply`
+- `care_for_animals`
+- `fish`
+- `replant_sapling`
 - `fight_mob`
 - `evade_hostile`
 - `emergency_shelter`
@@ -78,6 +87,14 @@ The current AI-agent foundation includes:
 - prepare a mining kit, mine and smelt iron, craft the core iron kit, and equip full iron armor while preserving an 8-ingot reserve
 - execute creative-mode blueprints and showcase builds
 - run two-agent colony experiments with shared storage
+- remember player conversations, important episodes, active tasks, professions, and protected build zones across restarts
+- verify task outcomes from world state and inventory deltas instead of treating a resolved skill promise as success
+- insert dynamic base, material, terrain, and mining-kit preconditions before queued work
+- persist player commitments, rolling conversation summaries, and proactive task completion/failure reports
+- lease exclusive colony work with expiry and disconnect release so two citizens do not claim the same job
+- run safety, player commands, active tasks, professions, and autonomous progression through a priority behavior tree
+- assign persistent professions in chat; farmers alternate crops and livestock, fishers use open water, and lumberjacks replant outside protected builds
+- reject tree targets inside the base or connected to structural blocks, and score flatter low-terraform sites before building a shelter
 - ask an LLM for decisions when enabled
 - fall back to safe deterministic behavior when an AI response is invalid
 
@@ -221,7 +238,7 @@ https://ollama.com/download
 Pull a model:
 
 ```bash
-ollama pull hermes3:8b
+ollama pull qwen3.5:9b
 ```
 
 ### One-click Windows launch
@@ -247,14 +264,14 @@ PowerShell:
 
 ```powershell
 $env:LLM_PROVIDER='ollama'
-$env:OLLAMA_MODEL='hermes3:8b'
+$env:OLLAMA_MODEL='qwen3.5:9b'
 npm start
 ```
 
 Bash:
 
 ```bash
-LLM_PROVIDER=ollama OLLAMA_MODEL=hermes3:8b npm start
+LLM_PROVIDER=ollama OLLAMA_MODEL=qwen3.5:9b npm start
 ```
 
 Expected behavior:
@@ -273,16 +290,31 @@ Start autonomous planning in chat:
 marigo otonom basla
 ```
 
+Assign a persistent profession instead of general autonomous progression:
+
+```text
+marigo sen artik ciftcisin
+marigo madenci olarak calis
+marigo meslegini durdur
+marigo meslegine devam et
+marigo meslegini birak
+```
+
+The profession survives reconnects until it is stopped or replaced. Immediate
+survival reactions and direct player commands remain above profession work in
+the behavior-tree priority order. Free-form multi-step requests are interpreted
+into a validated persistent task queue; invalid or unknown tools are rejected.
+
 Default Ollama endpoint:
 
 ```text
-http://127.0.0.1:11434/api/generate
+http://127.0.0.1:11434/api/chat
 ```
 
 Override it if needed:
 
 ```powershell
-$env:OLLAMA_URL='http://127.0.0.1:11434/api/generate'
+$env:OLLAMA_URL='http://127.0.0.1:11434/api/chat'
 ```
 
 ## 7. Run With An OpenAI-Compatible API
@@ -332,6 +364,7 @@ Core:
 | `MC_VERSION` | `26.2` | Mineflayer protocol version; use `1.21` only with the optional bridge |
 | `MC_USERNAME` | `marigo` | Bot username |
 | `LOOP_DELAY_MS` | `1500` | Main loop delay |
+| `TASK_TOOL_TIMEOUT_MS` | `120000` | Cancel and retry a task tool that never reaches verification |
 | `LOG_LEVEL` | `info` | `silent`, `error`, `warn`, `info`, or `debug` |
 | `AUTONOMOUS_ON_START` | `false` | Start planning immediately instead of waiting for chat |
 | `ENABLE_EXPERIMENTAL_26_2` | `false` | Enable the native 26.2 protocol shim |
@@ -345,12 +378,15 @@ LLM:
 | `LLM_TIMEOUT_MS` | `30000` | AI planning request timeout |
 | `CHAT_TIMEOUT_MS` | `45000` | AI chat request timeout; allows a cold local model to load |
 | `LLM_MODEL` | empty | Shared model override |
-| `OLLAMA_URL` | `http://127.0.0.1:11434/api/generate` | Ollama native generate endpoint |
-| `OLLAMA_MODEL` | `hermes3:8b` | Ollama model |
+| `OLLAMA_URL` | `http://127.0.0.1:11434/api/chat` | Ollama native chat and tool-calling endpoint |
+| `OLLAMA_MODEL` | `qwen3.5:9b` | Ollama model; 8 GB GPUs should keep context bounded |
+| `OLLAMA_CONTEXT_SIZE` | `4096` | Benchmarked default that keeps Qwen 3.5 9B fully on an 8 GB GPU |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible base URL |
 | `OPENAI_API_KEY` | empty | API key for OpenAI-compatible provider |
 | `OPENAI_MODEL` | `gpt-4.1-mini` | OpenAI-compatible model |
 | `USE_LLM_PLANNER` | `false` | Let the LLM select high-level tools; `start-sorim.bat` enables it |
+
+The local context comparison and raw measurements are in [docs/benchmarks/ollama-context.md](docs/benchmarks/ollama-context.md). On the tested RTX 5060 8 GB system, `4096` kept Qwen 3.5 9B fully on GPU and was selected as the default.
 
 Copy `.env.example` values into your shell or preferred environment loader as a starting point. Node.js does not automatically load this file.
 
@@ -359,13 +395,25 @@ Copy `.env.example` values into your shell or preferred environment loader as a 
 Run the two-agent experiment:
 
 ```powershell
-$env:COLONY_ALPHA='marigo_alpha'
-$env:COLONY_BETA='marigo_beta'
-$env:COLONY_CENTER='1800,70,0'
+$env:MC_PORT='25566'
+$env:COLONY_ALPHA='Bot_Mico'
+$env:COLONY_BETA='Bot_Mira'
+$env:COLONY_ALPHA_ROLE='lumberjack'
+$env:COLONY_BETA_ROLE='miner'
 npm run colony
 ```
 
-The colony runtime coordinates roles, shared tasks, a common build center, and shared storage. It is an MVP experiment rather than the default solo progression mode.
+When `COLONY_CENTER` is omitted, the runtime derives the settlement center from the bots' actual spawn positions. Set an explicit center only for a prepared test area or an established settlement. `COLONY_SEED_RESOURCES=true` also requires both bot usernames to have server command permission; it is intended only for controlled tests.
+
+The colony runtime now has one `ColonyBrain`, a compact shared `ColonyBlackboard`, a persistent scheduler, task and resource leases, verified completion evidence, and one local safety behavior tree per body. The LLM proposes strategic work orders only. Hunger, drowning, nearby hostiles, movement cancellation, and task verification remain deterministic and local. A timed-out or disconnected worker releases its assignment for retry or reassignment.
+
+`CharacterRegistry` persists each citizen independently. The first profiles are `Bot_Mico` (`Mico` / `Miço`, lumberjack) and `Bot_Mira` (miner). Addressing `Miço` routes the reply only to Miço and supplies his stable personality to the dialogue prompt. Personality changes language and safe preferences; it cannot override survival rules.
+
+Supported role profiles include `builder`, `farmer`, `rancher`, `miner`, `lumberjack`, `fisher`, and `quartermaster`; `farmer_miner` remains as the legacy two-agent MVP role. Colony mode is experimental and does not replace solo progression.
+
+The next colony architecture uses one shared AI brain for high-level planning while every bot keeps its own sensors, behavior tree, safety reflexes, identity, memories, profession, and task execution state. The staged implementation plan, including named personalities such as `Bot_Mico`, leadership elections, succession, and memorial behavior, is documented in [docs/COLONY_ROADMAP.md](docs/COLONY_ROADMAP.md).
+
+Solo survival remains the first regression gate: one bot must independently reach a verified starter base and iron age before colony coordination can be considered stable. The same physical skills and local safety rules are shared by both modes; colony services are never a solo dependency.
 
 ## 10. Logs
 
@@ -442,6 +490,26 @@ If the bot gets stuck, restart with debug logs:
 $env:LOG_LEVEL='debug'
 npm start
 ```
+
+### Independent movement benchmark
+
+The movement benchmark builds a repeatable course and uses a second Mineflayer
+client to measure the actor from the server's point of view. It checks flat
+walking, a diagonal one-block step, a shallow pit exit, an uneven slope, and a
+two-block wall stop:
+
+```powershell
+$env:MC_HOST='127.0.0.1'
+$env:MC_PORT='25566'
+$env:MC_VERSION='26.2'
+npm run benchmark:movement
+```
+
+The command fails when the actor reports movement without observed displacement,
+stays airborne without progress, exceeds the walking speed limit, or remains
+desynchronized from the observer. Machine-readable and Markdown reports are
+written to `artifacts/movement/latest.json` and `artifacts/movement/latest.md`.
+The generated artifacts are intentionally excluded from Git.
 
 ## 13. Troubleshooting
 

@@ -176,6 +176,13 @@ function install26_2Shim() {
             }
         }
 
+        if (request === './lpVec3' && parent?.filename) {
+            const filename = parent.filename.replace(/\\/g, '/');
+            if (filename.endsWith('/node_modules/minecraft-protocol/src/datatypes/minecraft.js')) {
+                return createLpVec3262Codec();
+            }
+        }
+
         if (request.endsWith('PaletteChunkSection') && parent?.filename) {
             const filename = parent.filename.replace(/\\/g, '/');
             if (filename.includes('/node_modules/prismarine-chunk/src/pc/')) {
@@ -185,6 +192,80 @@ function install26_2Shim() {
 
         return originalLoad.apply(this, arguments);
     };
+}
+
+function createLpVec3262Codec() {
+    const [readVarInt, writeVarInt, sizeOfVarInt] = require('protodef').types.varint;
+    const mask = 32767;
+    const maxQuantized = 32766;
+    const absMin = 3.051944088384301e-5;
+    const absMax = 1.7179869183e10;
+
+    const unpack = (packed, shift) => {
+        const value = Math.floor(packed / (2 ** shift)) % (2 ** 15);
+        return (Math.min(value & mask, maxQuantized) * 2) / maxQuantized - 1;
+    };
+    const pack = value => Math.round((value * 0.5 + 0.5) * maxQuantized);
+
+    function read(buffer, offset) {
+        const first = buffer[offset];
+        if (first === 0) return { value: { x: 0, y: 0, z: 0 }, size: 1 };
+
+        const second = buffer[offset + 1];
+        const high = buffer.readUInt32BE(offset + 2);
+        const packed = high * (2 ** 16) + second * (2 ** 8) + first;
+        let scale = first & 3;
+        let size = 6;
+        if ((first & 4) === 4) {
+            const continuation = readVarInt(buffer, offset + 6);
+            scale |= continuation.value * 4;
+            size += continuation.size;
+        }
+        return {
+            value: {
+                x: unpack(packed, 3) * scale,
+                y: unpack(packed, 18) * scale,
+                z: unpack(packed, 33) * scale
+            },
+            size
+        };
+    }
+
+    function write(value, buffer, offset) {
+        const sanitize = component => Number.isNaN(component)
+            ? 0
+            : Math.max(-absMax, Math.min(component, absMax));
+        const x = sanitize(value.x);
+        const y = sanitize(value.y);
+        const z = sanitize(value.z);
+        const max = Math.max(Math.abs(x), Math.abs(y), Math.abs(z));
+        if (max < absMin) {
+            buffer[offset] = 0;
+            return offset + 1;
+        }
+
+        const scale = Math.ceil(max);
+        const continued = (scale & 3) !== scale;
+        const flags = continued ? ((scale & 3) | 4) : (scale & 3);
+        const packed = flags +
+            pack(x / scale) * (2 ** 3) +
+            pack(y / scale) * (2 ** 18) +
+            pack(z / scale) * (2 ** 33);
+        buffer[offset] = packed % 256;
+        buffer[offset + 1] = Math.floor(packed / 256) % 256;
+        buffer.writeUInt32BE(Math.floor(packed / (2 ** 16)), offset + 2);
+        if (continued) return writeVarInt(Math.floor(scale / 4), buffer, offset + 6);
+        return offset + 6;
+    }
+
+    function sizeOf(value) {
+        const max = Math.max(Math.abs(value.x), Math.abs(value.y), Math.abs(value.z));
+        if (max < absMin) return 1;
+        const scale = Math.ceil(max);
+        return (scale & 3) === scale ? 6 : 6 + sizeOfVarInt(Math.floor(scale / 4));
+    }
+
+    return [read, write, sizeOf];
 }
 
 function createMinecraftDataShim(originalMinecraftData) {
@@ -215,6 +296,11 @@ function make26_2Data(base) {
     version.dataVersion = 4903;
     version.releaseType = 'release';
     data.version = version;
+    const baseSupportFeature = typeof base.supportFeature === 'function'
+        ? base.supportFeature.bind(base)
+        : () => false;
+    data.supportFeature = feature =>
+        feature === 'attackUsesOwnPacket' || baseSupportFeature(feature);
     return data;
 }
 
@@ -239,6 +325,7 @@ function remapEntities(base, data) {
 
     data.entities = entities;
     data.entitiesByName = entitiesByName;
+    data.entitiesArray = Object.values(entities).sort((left, right) => left.id - right.id);
 
     const mobs = {};
     for (const entity of Object.values(base.mobs || {})) {
@@ -263,6 +350,7 @@ function remapItems(base, data) {
 
     data.items = items;
     data.itemsByName = itemsByName;
+    data.itemsArray = Object.values(items).sort((left, right) => left.id - right.id);
 }
 
 function remapBlocks(base, data) {
@@ -292,6 +380,7 @@ function remapBlocks(base, data) {
     data.blocks = blocks;
     data.blocksByName = blocksByName;
     data.blocksByStateId = blocksByStateId;
+    data.blocksArray = Object.values(blocks).sort((left, right) => left.id - right.id);
 }
 
 function remapRecipes(base, data) {
@@ -766,6 +855,8 @@ function createProtocolVersionShim(originalVersionModule) {
 
 function createMineflayerTimePluginShim() {
     return function inject(bot) {
+        let previousAge = null;
+        let dayTickRate = 1;
         bot.time = {
             doDaylightCycle: null,
             bigTime: null,
@@ -784,12 +875,21 @@ function createMineflayerTimePluginShim() {
             const dayClock = clocks.find(clock => Number(clock.clockId) === 0) || null;
             const explicitTime = packet.time ?? dayClock?.time;
             const previousTime = bot.time.bigTime ?? 0n;
-            const time = explicitTime === undefined ? previousTime : toBigInt(explicitTime);
+            if (dayClock && Number.isFinite(Number(dayClock.tickRate))) {
+                dayTickRate = Number(dayClock.tickRate);
+            }
             const doDaylightCycle = packet.tickDayTime !== undefined
                 ? !!packet.tickDayTime
                 : dayClock
                     ? (dayClock.tickRate ?? 1) > 0
                     : (bot.time.doDaylightCycle ?? true);
+            const ageDelta = previousAge === null || age < previousAge ? 0n : age - previousAge;
+            const inferredAdvance = doDaylightCycle
+                ? BigInt(Math.trunc(Number(ageDelta) * dayTickRate))
+                : 0n;
+            const time = explicitTime === undefined
+                ? previousTime + inferredAdvance
+                : toBigInt(explicitTime);
             const finalTime = doDaylightCycle ? time : (time < 0n ? -time : time);
 
             bot.time.doDaylightCycle = doDaylightCycle;
@@ -801,6 +901,7 @@ function createMineflayerTimePluginShim() {
             bot.time.moonPhase = bot.time.day % 8;
             bot.time.bigAge = age;
             bot.time.age = Number(age);
+            previousAge = age;
 
             bot.emit('time');
         });
@@ -856,7 +957,150 @@ function copyProperties(source, target) {
     }
 }
 
+function install26_2VelocityShim(bot) {
+    const enabled = process.env.ENABLE_EXPERIMENTAL_26_2 === 'true' ||
+        process.env.MC_VERSION === '26.2' || bot?.version === '26.2';
+    const client = bot?._client;
+    if (!enabled || !client || client._sorim26_2VelocityShimInstalled) return false;
+
+    // Since 1.21.9 the packet uses lpVec3, which is already expressed in
+    // blocks per tick. Mineflayer 4.37 still applies the legacy 1/8000 scale.
+    // Register after Mineflayer's entity plugin so the real packet value wins.
+    client.on('entity_velocity', packet => {
+        const velocity = packet?.velocity;
+        if (![velocity?.x, velocity?.y, velocity?.z].every(Number.isFinite)) return;
+        const restore = () => {
+            const entity = packet.entityId === bot.entity?.id
+                ? bot.entity
+                : bot.entities?.[packet.entityId];
+            if (!entity?.velocity) return;
+            entity.velocity.set(velocity.x, velocity.y, velocity.z);
+            if (entity === bot.entity) {
+                bot.emit('sorimVelocity', {
+                    entityId: packet.entityId,
+                    velocity: { x: velocity.x, y: velocity.y, z: velocity.z }
+                });
+            }
+        };
+        restore();
+        queueMicrotask(restore);
+    });
+    client._sorim26_2VelocityShimInstalled = true;
+    return true;
+}
+
+function install26_2PacketFallbacks(bot) {
+    const enabled = process.env.ENABLE_EXPERIMENTAL_26_2 === 'true' ||
+        process.env.MC_VERSION === '26.2' || bot?.version === '26.2';
+    const client = bot?._client;
+    if (!enabled || !client || client._sorim26_2PacketFallbacksInstalled) return false;
+
+    const originalEmit = client.emit.bind(client);
+    const originalWrite = typeof client.write === 'function' ? client.write.bind(client) : null;
+    let interactionSequence = -1;
+    if (originalWrite) {
+        client.write = function writeWith26_2MovementFlags(packetName, packet, ...args) {
+            if (['position', 'position_look', 'look', 'flying'].includes(packetName)) {
+                packet = {
+                    ...packet,
+                    flags: {
+                        onGround: Boolean(packet?.flags?.onGround ?? packet?.onGround),
+                        hasHorizontalCollision: Boolean(bot.entity?.isCollidedHorizontally)
+                    }
+                };
+            }
+            if (['block_place', 'use_item', 'block_dig'].includes(packetName)) {
+                packet = { ...packet, sequence: ++interactionSequence };
+            }
+            return originalWrite(packetName, packet, ...args);
+        };
+    }
+    install26_2PlayerInputShim(bot, client);
+    install26_2PlayerLoadedShim(bot, client);
+    client.emit = function emitWith26_2Fallbacks(eventName, packet, ...args) {
+        if (eventName === 'entity_metadata' && packet && !Array.isArray(packet.metadata)) {
+            packet.metadata = [];
+        }
+        if (
+            eventName === 'world_particles' &&
+            (!packet?.particle || typeof packet.particle.type !== 'number')
+        ) {
+            originalEmit('sorim_raw_particles', packet);
+            return false;
+        }
+        if (
+            (eventName === 'set_slot' && !isUsableNotchItem(packet?.item)) ||
+            (eventName === 'set_player_inventory' && !isUsableNotchItem(packet?.contents)) ||
+            (eventName === 'window_items' && (
+                !Array.isArray(packet?.items) ||
+                packet.items.some(item => !isUsableNotchItem(item))
+            ))
+        ) {
+            return false;
+        }
+        return originalEmit(eventName, packet, ...args);
+    };
+    client._sorim26_2PacketFallbacksInstalled = true;
+    return true;
+}
+
+function install26_2PlayerLoadedShim(bot, client) {
+    if (!bot?.on || bot._sorim26_2PlayerLoadedShimInstalled) return false;
+
+    // Since 26.2 the server ignores movement-sensitive interactions until the
+    // client confirms that the spawned world is ready. Mineflayer does not yet
+    // know this packet, so crafting, digging and combat otherwise fail silently.
+    bot.on('spawn', () => client.write('player_loaded', {}));
+    bot._sorim26_2PlayerLoadedShimInstalled = true;
+    return true;
+}
+
+function install26_2PlayerInputShim(bot, client) {
+    if (!bot?.setControlState || bot._sorim26_2PlayerInputShimInstalled) return false;
+    const originalSetControlState = bot.setControlState.bind(bot);
+    const originalClearControlStates = bot.clearControlStates?.bind(bot);
+    const send = () => client.write('player_input', {
+        inputs: {
+            forward: Boolean(bot.controlState?.forward),
+            backward: Boolean(bot.controlState?.back),
+            left: Boolean(bot.controlState?.left),
+            right: Boolean(bot.controlState?.right),
+            jump: Boolean(bot.controlState?.jump),
+            shift: Boolean(bot.controlState?.sneak),
+            sprint: Boolean(bot.controlState?.sprint)
+        }
+    });
+
+    bot.setControlState = function setControlState26_2(control, state) {
+        const changed = bot.controlState?.[control] !== state;
+        const result = originalSetControlState(control, state);
+        if (changed) send();
+        return result;
+    };
+    if (originalClearControlStates) {
+        bot.clearControlStates = function clearControlStates26_2() {
+            const hadInput = Object.values(bot.controlState || {}).some(Boolean);
+            const result = originalClearControlStates();
+            if (hadInput) send();
+            return result;
+        };
+    }
+    bot._sorim26_2PlayerInputShimInstalled = true;
+    return true;
+}
+
+function isUsableNotchItem(item) {
+    return Boolean(item) && (
+        typeof item.present === 'boolean' ||
+        typeof item.itemId === 'number' ||
+        typeof item.itemCount === 'number'
+    );
+}
+
 module.exports = {
     SLOT_COMPONENTS_26_2,
-    createMineflayerTimePluginShim
+    createLpVec3262Codec,
+    createMineflayerTimePluginShim,
+    install26_2PacketFallbacks,
+    install26_2VelocityShim
 };

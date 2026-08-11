@@ -7,6 +7,14 @@ const actionControl = require('./actionControl');
 const FUEL_ITEMS = [
     'coal',
     'charcoal',
+    'wooden_pickaxe',
+    'wooden_axe',
+    'wooden_sword',
+    'wooden_shovel',
+    'wooden_hoe',
+    'oak_door',
+    'birch_door',
+    'spruce_door',
     'oak_planks',
     'birch_planks',
     'spruce_planks',
@@ -14,6 +22,7 @@ const FUEL_ITEMS = [
     'birch_log',
     'spruce_log'
 ];
+const CHARCOAL_STARTER_FUEL_ITEMS = FUEL_ITEMS.filter(name => !name.endsWith('_log'));
 
 async function ensureFurnace(bot) {
     const nearby = findNearbyBlock(bot, 'furnace', 16);
@@ -197,6 +206,14 @@ async function ensureFuel(bot, furnace) {
     await furnace.putFuel(fuel.type, null, fuel.count);
 }
 
+function hasSmeltingFuel(bot) {
+    return FUEL_ITEMS.some(name => countItem(bot, name) > 0);
+}
+
+function hasCharcoalStarterFuel(bot) {
+    return CHARCOAL_STARTER_FUEL_ITEMS.some(name => countItem(bot, name) > 0);
+}
+
 async function waitForOutput(bot, furnace, outputName, count, actionVersion) {
     let collected = 0;
     const deadline = Date.now() + Math.max(35000, 15000 + count * 14000);
@@ -285,5 +302,7 @@ function isAir(block) {
 
 module.exports = {
     ensureFurnace,
-    smeltItem
+    smeltItem,
+    hasSmeltingFuel,
+    hasCharcoalStarterFuel
 };

@@ -17,6 +17,10 @@ const iron = require('./skills/iron');
 const build = require('./skills/build');
 const sharedStorage = require('./skills/sharedStorage');
 const colonyBuild = require('./skills/colonyBuild');
+const ranching = require('./skills/ranching');
+const fishing = require('./skills/fishing');
+const forestry = require('./skills/forestry');
+const base = require('./skills/base');
 
 const TOOL_DEFINITIONS = [
     {
@@ -28,7 +32,7 @@ const TOOL_DEFINITIONS = [
     {
         name: 'mine_block',
         description: 'Mine a reachable block by name. Use any_log when any reachable tree log is acceptable.',
-        args: { target: 'string required' },
+        args: { target: 'string required', count: 'number optional' },
         actions: ['mine']
     },
     {
@@ -62,6 +66,12 @@ const TOOL_DEFINITIONS = [
         actions: ['build_shelter']
     },
     {
+        name: 'ensure_base',
+        description: 'Acquire or convert enough safe building material, select suitable terrain, and establish the remembered base.',
+        args: {},
+        actions: ['build_shelter']
+    },
+    {
         name: 'eat_food',
         description: 'Eat the best available food from inventory.',
         args: {},
@@ -78,6 +88,24 @@ const TOOL_DEFINITIONS = [
         description: 'Harvest, replant, expand, or safely wait for the base food farm.',
         args: {},
         actions: ['maintain_food_supply']
+    },
+    {
+        name: 'care_for_animals',
+        description: 'Feed and breed a nearby pair of farm animals using the correct food.',
+        args: {},
+        actions: ['care_for_animals', 'maintain_food_supply']
+    },
+    {
+        name: 'fish',
+        description: 'Equip a fishing rod, find safe open water, and catch fish.',
+        args: {},
+        actions: ['fish', 'find_food']
+    },
+    {
+        name: 'replant_sapling',
+        description: 'Plant a carried sapling on safe natural ground outside protected buildings.',
+        args: {},
+        actions: ['replant_saplings', 'mine']
     },
     {
         name: 'fight_mob',
@@ -102,6 +130,12 @@ const TOOL_DEFINITIONS = [
         description: 'Get out of a pit or cramped hole.',
         args: {},
         actions: ['escape_pit']
+    },
+    {
+        name: 'recover_items',
+        description: 'Return to the last death position and collect dropped inventory before despawn.',
+        args: {},
+        actions: ['recover_items']
     },
     {
         name: 'escape_water',
@@ -232,7 +266,7 @@ function toolsForLevel(level) {
     const allowed = new Set(level.allowedActions);
     return TOOL_DEFINITIONS.filter(tool =>
             tool.actions.some(action => allowed.has(action)) ||
-        ['wait_safe', 'return_base', 'escape_pit', 'escape_water', 'fight_mob', 'evade_hostile', 'emergency_shelter', 'eat_food'].includes(tool.name)
+        ['wait_safe', 'return_base', 'recover_items', 'escape_pit', 'escape_water', 'fight_mob', 'evade_hostile', 'emergency_shelter', 'eat_food'].includes(tool.name)
     );
 }
 
@@ -263,12 +297,28 @@ function validateToolCall(call, availableTools) {
     if (!call || typeof call.tool !== 'string') return null;
     const allowedNames = new Set(availableTools.map(tool => tool.name));
     if (!allowedNames.has(call.tool)) return null;
-    if (!TOOLS_BY_NAME[call.tool]) return null;
+    const definition = TOOLS_BY_NAME[call.tool];
+    if (!definition) return null;
+    const args = sanitizeArgs(call.args || {}, definition.args || {});
+    if (!validateArgs(args, definition.args || {})) return null;
     return {
         tool: call.tool,
-        args: sanitizeArgs(call.args || {}),
+        args,
         reason: call.reason || ''
     };
+}
+
+function validateArgs(args, schema) {
+    for (const [name, description] of Object.entries(schema)) {
+        const rule = String(description);
+        const value = args[name];
+        if (rule.includes('required') && (value === undefined || value === null || value === '')) return false;
+        if (value === undefined) continue;
+        if (rule.startsWith('number') && !Number.isFinite(Number(value))) return false;
+        if (rule.startsWith('boolean') && typeof value !== 'boolean') return false;
+        if (rule.startsWith('string') && typeof value !== 'string') return false;
+    }
+    return true;
 }
 
 function actionToToolCall(action) {
@@ -292,6 +342,7 @@ function actionToToolCall(action) {
         evade_hostile: 'evade_hostile',
         emergency_shelter: 'emergency_shelter',
         escape_pit: 'escape_pit',
+        recover_items: 'recover_items',
         escape_water: 'escape_water',
         return_base: 'return_base',
         wait_safe: 'wait_safe',
@@ -343,13 +394,12 @@ async function executeToolCall(bot, call) {
     }
 
     if (call.tool === 'explore') {
-        await movement.explore(bot, { target: args.target || 'around' });
-        return;
+        return movement.explore(bot, { target: args.target || 'around' });
     }
 
     if (call.tool === 'mine_block') {
-        await mine.mineBlock(bot, { target: requireString(args.target, 'target') });
-        return;
+        const target = requireString(args.target, 'target');
+        return mine.mineBlock(bot, { target });
     }
 
     if (call.tool === 'craft_item') {
@@ -382,8 +432,11 @@ async function executeToolCall(bot, call) {
     }
 
     if (call.tool === 'build_shelter') {
-        await shelter.buildSafeShelter(bot);
-        return;
+        return shelter.buildSafeShelter(bot);
+    }
+
+    if (call.tool === 'ensure_base') {
+        return base.ensureBase(bot);
     }
 
     if (call.tool === 'eat_food') {
@@ -392,12 +445,24 @@ async function executeToolCall(bot, call) {
     }
 
     if (call.tool === 'find_food') {
-        await food.findFood(bot);
-        return;
+        return food.findFood(bot);
     }
 
     if (call.tool === 'maintain_food_supply') {
         await food.maintainFoodSupply(bot);
+        return;
+    }
+
+    if (call.tool === 'care_for_animals') {
+        return ranching.careForAnimals(bot);
+    }
+
+    if (call.tool === 'fish') {
+        return fishing.fish(bot);
+    }
+
+    if (call.tool === 'replant_sapling') {
+        await forestry.replantSapling(bot);
         return;
     }
 
@@ -421,14 +486,17 @@ async function executeToolCall(bot, call) {
         return;
     }
 
+    if (call.tool === 'recover_items') {
+        return survival.recoverDeathItems(bot);
+    }
+
     if (call.tool === 'escape_water') {
         await survival.escapeWater(bot);
         return;
     }
 
     if (call.tool === 'return_base') {
-        await survival.returnBase(bot);
-        return;
+        return survival.returnBase(bot);
     }
 
     if (call.tool === 'sleep_bed') {
@@ -442,13 +510,11 @@ async function executeToolCall(bot, call) {
     }
 
     if (call.tool === 'establish_wheat_farm') {
-        await homestead.establishWheatFarm(bot);
-        return;
+        return homestead.establishWheatFarm(bot);
     }
 
     if (call.tool === 'organize_storage') {
-        await storage.organizeStorage(bot);
-        return;
+        return storage.organizeStorage(bot);
     }
 
     if (call.tool === 'prepare_mining_kit') {
@@ -504,12 +570,11 @@ async function executeToolCall(bot, call) {
     }
 
     if (call.tool === 'ensure_shared_storage') {
-        await sharedStorage.ensureSharedStorage(bot, optionalPosition(args));
-        return;
+        return sharedStorage.ensureSharedStorage(bot, optionalPosition(args));
     }
 
     if (call.tool === 'deposit_shared_storage') {
-        await sharedStorage.depositToSharedStorage(
+        return sharedStorage.depositToSharedStorage(
             bot,
             requireString(args.item, 'item'),
             args.count ? Number(args.count) : null
@@ -518,7 +583,7 @@ async function executeToolCall(bot, call) {
     }
 
     if (call.tool === 'withdraw_shared_storage') {
-        await sharedStorage.withdrawFromSharedStorage(
+        return sharedStorage.withdrawFromSharedStorage(
             bot,
             requireString(args.item, 'item'),
             Number(args.count || 1)
@@ -529,21 +594,21 @@ async function executeToolCall(bot, call) {
     if (call.tool === 'count_shared_storage') {
         const counts = await sharedStorage.countSharedStorage(bot);
         console.log(`[SHARED] inventory=${JSON.stringify(counts)}`);
-        return;
+        return counts;
     }
 
     if (call.tool === 'build_colony_marker') {
-        await colonyBuild.buildColonyMarker(bot, args.material || 'cobblestone');
-        return;
+        return colonyBuild.buildColonyMarker(bot, args.material || 'cobblestone');
     }
 
     throw new Error(`Unknown tool: ${call.tool}`);
 }
 
-function sanitizeArgs(args) {
+function sanitizeArgs(args, schema = null) {
     if (!args || typeof args !== 'object' || Array.isArray(args)) return {};
     return Object.fromEntries(
-        Object.entries(args).filter(([, value]) =>
+        Object.entries(args).filter(([name, value]) =>
+            (!schema || Object.prototype.hasOwnProperty.call(schema, name)) &&
             ['string', 'number', 'boolean'].includes(typeof value) && value !== ''
         )
     );
