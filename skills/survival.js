@@ -800,6 +800,20 @@ function chooseThreatAction(bot, hostile, health = bot.health) {
             reason: `No weapon or base; break line of sight from ${hostile.name}`
         };
     }
+    if (
+        ranged &&
+        !hasShield(bot) &&
+        armorScore(bot) === 0 &&
+        health <= 16 &&
+        !memory.hasBase() &&
+        !emergencyShelterBlockedForNight &&
+        preferredRecoveryBlock(bot)
+    ) {
+        return {
+            action: 'emergency_shelter',
+            reason: `Low health without armor; block line of sight from ${hostile.name}`
+        };
+    }
     const canFightBareHanded = canFightUnarmed(bot, hostile, health);
     const rangedWithoutProtection = ranged && !hasShield(bot) && armorScore(bot) === 0;
     const shouldEvade = (
@@ -1374,7 +1388,7 @@ function findSafeRetreatPosition(bot, threatPosition) {
         const directionX = away.x * Math.cos(angle) - away.z * Math.sin(angle);
         const directionZ = away.x * Math.sin(angle) + away.z * Math.cos(angle);
         for (const distance of [12, 9, 6]) {
-            for (const dy of [2, 1, 0, -1, -2]) {
+            for (const dy of [2, 1, 0, -1]) {
                 const position = new Vec3(
                     Math.round(origin.x + directionX * distance),
                     origin.y + dy,
@@ -1386,12 +1400,42 @@ function findSafeRetreatPosition(bot, threatPosition) {
                 if (!isAir(feet) || !isAir(head) || floor?.boundingBox !== 'block') continue;
                 const threatDistance = position.offset(0.5, 0, 0.5).distanceTo(threatPosition);
                 if (threatDistance < currentThreatDistance + 4) continue;
+                if (!hasSafeRetreatCorridor(bot, origin, position)) continue;
                 candidates.push({ position, threatDistance });
             }
         }
     }
 
     return candidates.sort((left, right) => right.threatDistance - left.threatDistance)[0]?.position || null;
+}
+
+function hasSafeRetreatCorridor(bot, origin, target) {
+    const distance = horizontalDistance(origin, target);
+    const samples = Math.max(1, Math.ceil(distance));
+    let previousY = origin.y;
+
+    for (let index = 1; index <= samples; index++) {
+        const progress = index / samples;
+        const x = Math.round(origin.x + (target.x - origin.x) * progress);
+        const z = Math.round(origin.z + (target.z - origin.z) * progress);
+        const expectedY = Math.round(origin.y + (target.y - origin.y) * progress);
+        const standY = findRetreatStandY(bot, x, z, expectedY);
+        if (standY === null || previousY - standY > 1 || standY < origin.y - 1) return false;
+        previousY = standY;
+    }
+    return true;
+}
+
+function findRetreatStandY(bot, x, z, expectedY) {
+    for (const feetY of [expectedY, expectedY + 1, expectedY - 1]) {
+        const feet = bot.blockAt(new Vec3(x, feetY, z));
+        const head = bot.blockAt(new Vec3(x, feetY + 1, z));
+        const floor = bot.blockAt(new Vec3(x, feetY - 1, z));
+        if (!isAir(feet) || !isAir(head) || floor?.boundingBox !== 'block') continue;
+        if (['water', 'lava', 'magma_block', 'powder_snow'].includes(floor.name)) continue;
+        return feetY;
+    }
+    return null;
 }
 
 async function handleRangedThreat(bot, entity, weapon) {
@@ -2684,6 +2728,7 @@ module.exports = {
     isSurfaceRefugeSiteSafe,
     isUnsafeForwardStep: isUnsafeRetreatTrajectory,
     canRetreatJump,
+    findSafeRetreatPosition,
     shouldUseEmergencyShaft,
     shouldUseShallowBaseShaft,
     isMineRouteRelevant,

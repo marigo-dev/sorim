@@ -298,6 +298,35 @@ try {
         'evade_hostile',
         'an unarmored low-health bot must disengage from ranged combat'
     );
+    memory.clearBase();
+    const exposedWithBlocks = makeBot(6000);
+    exposedWithBlocks.inventory.items = () => [
+        { name: 'stone_sword', count: 1 },
+        { name: 'dirt', count: 12 }
+    ];
+    assert.equal(
+        survival.chooseThreatAction(
+            exposedWithBlocks,
+            { id: 11, name: 'skeleton', distance: 10, entity: {} },
+            15
+        ).action,
+        'emergency_shelter',
+        'an unarmored wounded bot with blocks must take cover from ranged fire'
+    );
+
+    const cliffRetreat = makeBot(6000);
+    cliffRetreat.blockAt = position => {
+        const surfaceY = Math.hypot(position.x, position.z) <= 2 ? 63 : 58;
+        return position.y <= surfaceY
+            ? { name: 'stone', boundingBox: 'block' }
+            : { name: 'air', boundingBox: 'empty' };
+    };
+    assert.equal(
+        survival.findSafeRetreatPosition(cliffRetreat, new Vec3(-3, 64, 0)),
+        null,
+        'retreat selection must reject routes that cross a sudden drop'
+    );
+    memory.setBase({ x: 0, y: 64, z: 0 });
     exposedNearBase.entity.position = new Vec3(8, 64, 0);
 
     day.entities.zombie = {

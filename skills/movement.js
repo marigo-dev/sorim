@@ -207,10 +207,9 @@ async function explore(bot, action = {}) {
     console.log(`[MOVE] Exploring target=${target} x=${position.x} z=${position.z}`);
     let scanTimer = null;
     try {
-        // Surface forests can be far below a mountain spawn. Pathfinder still
-        // forbids digging and drops above two blocks, so a wider Y window lets
-        // it follow safe slopes without turning wood search into cave travel.
-        const verticalAllowance = target === 'stone' ? 8 : target === 'wood' ? 40 : 12;
+        // Split mountain descents across attempts so a distant resource cannot
+        // pull the bot through a dangerous vertical route.
+        const verticalAllowance = target === 'stone' ? 8 : 12;
         const goal = target === 'wood' || target === 'food'
             ? new goals.GoalXZ(position.x, position.z)
             : new goals.GoalNear(position.x, position.y, position.z, 3);

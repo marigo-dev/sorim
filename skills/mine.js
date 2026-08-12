@@ -614,6 +614,7 @@ function findBestBlock(bot, targetName) {
         .filter(Boolean)
         .filter(block => !LOGS.has(block.name) || isRootedTree(bot, block))
         .filter(block => !LOGS.has(block.name) || blockPolicy.canHarvestTree(bot, block).allowed)
+        .filter(block => !LOGS.has(block.name) || isSafeTreeTravelCandidate(bot, block))
         .filter(block => !isFailedTree(block.position))
         .filter(block => bot.canDigBlock(block))
         .filter(block => isReachable(bot, block))
@@ -632,6 +633,7 @@ function findBestLog(bot) {
         .filter(Boolean)
         .filter(block => isRootedTree(bot, block))
         .filter(block => blockPolicy.canHarvestTree(bot, block).allowed)
+        .filter(block => isSafeTreeTravelCandidate(bot, block))
         .filter(block => !isFailedTree(lowestLogInTrunk(bot, block).position))
         .filter(block => bot.canDigBlock(block))
         .filter(block => isReachable(bot, block))
@@ -650,6 +652,7 @@ function findNearestVisibleLog(bot, targetName = 'any_log') {
         .map(block => lowestLogInTrunk(bot, block))
         .filter(block => isRootedTree(bot, block))
         .filter(block => blockPolicy.canHarvestTree(bot, block).allowed)
+        .filter(block => isSafeTreeTravelCandidate(bot, block))
         .filter(block => !isFailedTree(block.position))
         .filter(block => block.position.y <= bot.entity.position.y + 12)
         .filter(block => block.position.y >= bot.entity.position.y - 12)
@@ -1106,6 +1109,52 @@ function scoreBlock(bot, block) {
     return distance + vertical * 10 + (hasSameBelow ? 80 : 0);
 }
 
+function isSafeTreeTravelCandidate(bot, block) {
+    return Number.isFinite(treeTravelRisk(bot, block));
+}
+
+function treeTravelRisk(bot, block) {
+    if (!bot?.entity?.position || !block?.position) return Infinity;
+
+    const root = lowestLogInTrunk(bot, block);
+    const origin = bot.entity.position;
+    const horizontal = horizontalDistance(origin, root.position);
+    const descent = origin.y - root.position.y;
+    const ascent = root.position.y - origin.y;
+    const allowedDescent = Math.min(8, 4 + horizontal / 12);
+    if (descent > allowedDescent || (ascent > 10 && horizontal > 16)) return Infinity;
+
+    const samples = Math.max(1, Math.ceil(horizontal / 4));
+    let previousY = Math.floor(origin.y);
+    let terrainPenalty = 0;
+    for (let index = 1; index <= samples; index++) {
+        const progress = index / samples;
+        const x = Math.floor(origin.x + (root.position.x - origin.x) * progress);
+        const z = Math.floor(origin.z + (root.position.z - origin.z) * progress);
+        const expectedY = Math.floor(origin.y + (root.position.y - origin.y) * progress);
+        const standY = findSafeColumnStandY(bot, x, z, expectedY);
+        if (standY === null || previousY - standY > 2) return Infinity;
+        terrainPenalty += Math.abs(standY - previousY) * 3;
+        previousY = standY;
+    }
+
+    return horizontal + Math.abs(descent) * 6 + terrainPenalty;
+}
+
+function findSafeColumnStandY(bot, x, z, expectedY) {
+    let best = null;
+    for (let feetY = expectedY + 3; feetY >= expectedY - 5; feetY--) {
+        const feet = bot.blockAt(new Vec3(x, feetY, z));
+        const head = bot.blockAt(new Vec3(x, feetY + 1, z));
+        const floor = bot.blockAt(new Vec3(x, feetY - 1, z));
+        if (!isPassable(feet) || !isPassable(head)) continue;
+        if (!floor || floor.boundingBox !== 'block') continue;
+        if (['water', 'lava', 'magma_block', 'powder_snow'].includes(floor.name)) continue;
+        if (best === null || Math.abs(feetY - expectedY) < Math.abs(best - expectedY)) best = feetY;
+    }
+    return best;
+}
+
 function expectedDropFor(blockName) {
     if (blockName === 'stone') return 'cobblestone';
     return blockName;
@@ -1130,5 +1179,7 @@ function isAir(block) {
 module.exports = {
     mineBlock,
     mineSpecificBlock,
-    clearBlock
+    clearBlock,
+    treeTravelRisk,
+    isSafeTreeTravelCandidate
 };
