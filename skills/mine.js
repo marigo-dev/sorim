@@ -3,6 +3,7 @@ const { Vec3 } = require('vec3');
 const movement = require('./movement');
 const actionControl = require('./actionControl');
 const shelter = require('./shelter');
+const memory = require('./memory');
 const blockPolicy = require('../safety/blockPolicy');
 
 const LOGS = new Set([
@@ -41,7 +42,8 @@ async function mineBlock(bot, action) {
                 const exploration = await movement.explore(bot, {
                     target: 'wood',
                     stopWhen: () => findNearestVisibleLog(bot, targetName),
-                    isActive: () => actionControl.snapshot(bot) === actionVersion
+                    isActive: () => actionControl.snapshot(bot) === actionVersion,
+                    abortWhen: () => protectedMineOpeningReason(bot)
                 });
                 actionControl.assertActive(bot, actionVersion);
                 visibleLog = exploration?.found || findNearestVisibleLog(bot, targetName);
@@ -106,6 +108,14 @@ async function mineBlock(bot, action) {
     console.log(`[MINE] ${current.name} ${current.position.toString()}`);
     await digWithTimeout(bot, current);
     await collectDrop(bot, expectedDrop, before, current.position);
+}
+
+function protectedMineOpeningReason(bot) {
+    const exit = memory.getSurfaceExit();
+    if (!exit || !bot.entity?.position) return false;
+    if (horizontalDistance(bot.entity.position, exit) > 8) return false;
+    if (bot.entity.position.y >= exit.y - 0.25) return false;
+    return 'Wood exploration entered the protected mine opening';
 }
 
 async function approachTreeByWaypoints(bot, treeBlock, actionVersion) {

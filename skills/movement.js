@@ -184,6 +184,7 @@ async function explore(bot, action = {}) {
     const stopWhen = typeof action.stopWhen === 'function'
         ? action.stopWhen
         : explorationTargetSensor(bot, target);
+    const abortWhen = typeof action.abortWhen === 'function' ? action.abortWhen : null;
     const initiallyVisible = stopWhen ? stopWhen() : null;
     if (initiallyVisible) {
         stop(bot);
@@ -232,11 +233,12 @@ async function explore(bot, action = {}) {
             }));
         }
         const outcome = await withTimeout(
-            withVerticalGuard(
+            withExplorationGuard(
                 bot,
                 Promise.race(candidates),
                 origin.y - verticalAllowance,
-                origin.y + verticalAllowance
+                origin.y + verticalAllowance,
+                abortWhen
             ),
             target === 'wood' ? 20000 : 18000,
             'Exploration timed out'
@@ -250,12 +252,15 @@ async function explore(bot, action = {}) {
     } catch (error) {
         stop(bot);
         console.log(`[MOVE] Exploration could not complete: ${error.message}`);
+        if (error.code === 'EXPLORATION_ABORTED') {
+            return { found: null, reached: false, recovered: false, guarded: true, error };
+        }
         if (isActive && !isActive()) {
             return { found: null, reached: false, recovered: false, cancelled: true, error };
         }
         if (target === 'wood' || target === 'food') {
             const before = bot.entity.position.clone();
-            await moveTowardSafely(bot, position, 16, isActive);
+            await moveTowardSafely(bot, position, 16, isActive, abortWhen);
             if (isActive && !isActive()) {
                 return { found: null, reached: false, recovered: false, cancelled: true, error };
             }
@@ -316,14 +321,24 @@ function nextExplorationAngle(bot) {
     return (seed * 0.173 + step * 2.399963229728653) % (Math.PI * 2);
 }
 
-function withVerticalGuard(bot, navigation, minimumY, maximumY) {
+function withExplorationGuard(bot, navigation, minimumY, maximumY, abortWhen = null) {
     let timer = null;
     const guard = new Promise((_, reject) => {
         timer = setInterval(() => {
             const y = bot.entity?.position?.y;
-            if (!Number.isFinite(y) || (y >= minimumY && y <= maximumY)) return;
+            if (Number.isFinite(y) && (y < minimumY || y > maximumY)) {
+                stop(bot);
+                reject(new Error(`Exploration left safe Y range (${y.toFixed(1)})`));
+                return;
+            }
+            const abortReason = abortWhen?.();
+            if (!abortReason) return;
             stop(bot);
-            reject(new Error(`Exploration left safe Y range (${y.toFixed(1)})`));
+            const error = new Error(
+                typeof abortReason === 'string' ? abortReason : 'Exploration entered a protected area'
+            );
+            error.code = 'EXPLORATION_ABORTED';
+            reject(error);
         }, 100);
     });
     return Promise.race([navigation, guard])
@@ -616,13 +631,17 @@ function isFullStep(block) {
     return maximumHeight <= 1.01;
 }
 
-async function moveTowardSafely(bot, target, maxSteps = 12, isActive = null) {
+async function moveTowardSafely(bot, target, maxSteps = 12, isActive = null, abortWhen = null) {
     const startDistance = localTargetDistance(bot.entity.position, target);
     await centerForLocalRoute(bot);
     const route = findLocalRoute(bot, bot.entity.position.floored(), target, 20, 1600)
         .slice(0, maxSteps);
     for (const next of route) {
         if (isActive && !isActive()) {
+            stop(bot);
+            return false;
+        }
+        if (abortWhen?.()) {
             stop(bot);
             return false;
         }

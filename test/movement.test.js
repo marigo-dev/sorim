@@ -45,6 +45,33 @@ async function main() {
     assert.equal(sensed.found, sensedTree);
     assert.equal(sensorStopped, true);
 
+    let guardedStop = false;
+    const guardedBot = {
+        entity: { position: new Vec3(0, 64, 0) },
+        pathfinder: {
+            goto: () => new Promise(() => {}),
+            setGoal: goal => {
+                if (goal === null) guardedStop = true;
+            }
+        },
+        clearControlStates() {}
+    };
+    setTimeout(() => {
+        guardedBot.entity.position.y = 63;
+    }, 150);
+    const guardedAt = Date.now();
+    const guarded = await movement.explore(guardedBot, {
+        target: 'wood',
+        stopWhen: () => null,
+        abortWhen: () => guardedBot.entity.position.y < 64
+            ? 'Protected mine opening entered'
+            : false
+    });
+    assert.equal(guarded.guarded, true);
+    assert.match(guarded.error.message, /Protected mine opening/);
+    assert.equal(guardedStop, true);
+    assert.ok(Date.now() - guardedAt < 1500, 'protected-area guard must interrupt navigation promptly');
+
     const embedded = {
         entity: {
             position: new Vec3(0, 64, 0),
