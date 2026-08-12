@@ -220,6 +220,8 @@ assert.equal(
 assert.equal(iron.requiredCorePlanks(0), 10);
 assert.equal(iron.requiredCorePlanks(2), 8);
 assert.equal(iron.requiredCorePlanks(6), 6);
+assert.equal(iron.requiredCoreIngots({}), 9);
+assert.equal(iron.requiredCoreIngots({ iron_pickaxe: 1, shield: 1 }), 5);
 assert.equal(iron.ironInvestment({ iron_pickaxe: 1 }), 3);
 assert.equal(iron.ironInvestment({
     iron_pickaxe: 1,

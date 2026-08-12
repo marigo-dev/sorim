@@ -101,8 +101,35 @@ assert.equal(taskVerifier.verify(
 assert.equal(taskVerifier.verify(
     { tool: 'craft_iron_kit', args: {} },
     before,
-    { ...before, inventory: { iron_pickaxe: 1, iron_sword: 1, iron_axe: 1, shield: 1 }, equipment: [] }
+    { ...before, inventory: { iron_pickaxe: 1, iron_sword: 1, iron_axe: 1, shield: 1, iron_ingot: 8 }, equipment: [] }
 ).ok, true);
+assert.equal(taskVerifier.verify(
+    { tool: 'craft_iron_kit', args: {} },
+    before,
+    { ...before, inventory: { iron_pickaxe: 1, iron_sword: 1, iron_axe: 1, shield: 1 }, equipment: [] }
+).ok, false, 'Iron kit verification must preserve eight reserve ingots');
+
+const completeMiningKit = {
+    stone_pickaxe: 1,
+    stone_sword: 1,
+    furnace: 1,
+    coal: 1,
+    torch: 16,
+    cobblestone: 16,
+    bread: 16
+};
+assert.equal(taskVerifier.verify(
+    { tool: 'prepare_mining_kit', args: {} },
+    before,
+    { ...before, inventory: completeMiningKit },
+    { afterObservation: { inventory: completeMiningKit, nearbyBlocks: [] } }
+).ok, true);
+assert.equal(taskVerifier.verify(
+    { tool: 'prepare_mining_kit', args: {} },
+    before,
+    { ...before, inventory: { ...completeMiningKit, bread: 15 } },
+    { afterObservation: { inventory: { ...completeMiningKit, bread: 15 }, nearbyBlocks: [] } }
+).ok, false, 'Mining kit verification must reject a partial food reserve');
 
 assert.equal(taskVerifier.verify(
     { tool: 'build_blueprint', args: { name: 'spruce_cottage' } },

@@ -10,6 +10,7 @@ const memory = require('./memory');
 const actionControl = require('./actionControl');
 const survival = require('./survival');
 const blockPolicy = require('../safety/blockPolicy');
+const { assessMiningKit } = require('../agent/progressionContracts');
 
 const IRON_ORES = ['iron_ore', 'deepslate_iron_ore'];
 const LOG_ITEMS = ['oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log', 'cherry_log', 'mangrove_log', 'pale_oak_log'];
@@ -36,6 +37,10 @@ async function prepareMiningKit(bot, actionVersion = actionControl.snapshot(bot)
     actionControl.assertActive(bot, actionVersion);
     await ensureMiningPickaxes(bot);
     actionControl.assertActive(bot, actionVersion);
+    await ensureMiningWeapon(bot);
+    actionControl.assertActive(bot, actionVersion);
+    await ensureFoodReserve(bot, 16);
+    actionControl.assertActive(bot, actionVersion);
     await shelter.leaveBase(bot);
     actionControl.assertActive(bot, actionVersion);
     await ensureFurnace(bot);
@@ -54,6 +59,33 @@ async function prepareMiningKit(bot, actionVersion = actionControl.snapshot(bot)
     actionControl.assertActive(bot, actionVersion);
     await shelter.returnToBase(bot);
     actionControl.assertActive(bot, actionVersion);
+    const assessment = assessMiningKit(observationForKit(bot));
+    if (!assessment.ready) {
+        throw new Error(`Mining kit preparation incomplete: ${missingKitParts(assessment).join(', ')}`);
+    }
+    return assessment;
+}
+
+async function ensureMiningWeapon(bot) {
+    if (['stone_sword', 'iron_sword', 'diamond_sword', 'netherite_sword']
+        .some(name => countItem(bot, name) > 0)) return;
+    if (countItem(bot, 'cobblestone') < 2) {
+        await stone.collectStone(bot, 2 - countItem(bot, 'cobblestone'));
+    }
+    if (countItem(bot, 'stick') < 1) {
+        await ensurePlanks(bot, 2);
+        await craft.craftItem(bot, 'stick', 1);
+    }
+    await craft.craftItem(bot, 'stone_sword', 1);
+    if (countItem(bot, 'stone_sword') <= 0) throw new Error('Mining kit could not craft a stone sword');
+}
+
+async function ensureFoodReserve(bot, minimum) {
+    if (food.hasFoodStock(countInventory(bot), minimum)) return;
+    const result = await food.maintainFoodSupply(bot, { minimum });
+    if (!food.hasFoodStock(countInventory(bot), minimum)) {
+        throw new Error(`Mining food reserve incomplete after ${result?.status || 'food search'}`);
+    }
 }
 
 async function ensureMiningPickaxes(bot) {
@@ -758,6 +790,27 @@ function countInventory(bot) {
     return counts;
 }
 
+function observationForKit(bot) {
+    const furnace = findNearbyBlock(bot, 'furnace', 16);
+    return {
+        inventory: countInventory(bot),
+        nearbyBlocks: furnace ? [{ name: 'furnace', distance: furnace.position.distanceTo(bot.entity.position) }] : [],
+        hasPlacedFurnace: memory.hasPlacedBlock('furnace')
+    };
+}
+
+function missingKitParts(assessment) {
+    const missing = [];
+    if (!assessment.furnaceReady) missing.push('furnace');
+    if (!assessment.fuelReady) missing.push('fuel');
+    if (!assessment.pickaxeReady) missing.push('pickaxe');
+    if (!assessment.weaponReady) missing.push('sword');
+    if (assessment.torches < 16) missing.push(`torches ${assessment.torches}/16`);
+    if (assessment.support < 16) missing.push(`support ${assessment.support}/16`);
+    if (assessment.foodCount < 16) missing.push(`food ${assessment.foodCount}/16`);
+    return missing;
+}
+
 function fuelCount(bot) {
     return countItem(bot, 'coal') + countItem(bot, 'charcoal');
 }
@@ -799,5 +852,6 @@ module.exports = {
     mineIron,
     returnToSurface,
     needsPreparationSurfaceReturn,
-    remainingDurability
+    remainingDurability,
+    missingKitParts
 };

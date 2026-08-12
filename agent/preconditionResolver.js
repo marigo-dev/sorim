@@ -1,6 +1,7 @@
 const siteSelector = require('../safety/siteSelector');
 const worldMemory = require('../skills/memory');
 const shelter = require('../skills/shelter');
+const { assessMiningKit } = require('./progressionContracts');
 
 const BUILD_TARGET = 92;
 const UTILITY_RESERVE = 18;
@@ -46,9 +47,9 @@ class PreconditionResolver {
             if (craftPrerequisite) return [craftPrerequisite];
         }
         if (step.tool === 'mine_iron') {
-            const pickaxes = count(inventory, 'stone_pickaxe') + count(inventory, 'iron_pickaxe');
-            if (pickaxes < 1 || count(inventory, 'torch') < 16) {
-                return [prerequisite('prepare_mining_kit', {}, step, 'Iron mining requires a pickaxe and torches')];
+            const kit = assessMiningKit(observation);
+            if (!kit.ready) {
+                return [prerequisite('prepare_mining_kit', {}, step, 'Iron mining requires a complete survival mining kit')];
             }
         }
         if (step.tool === 'establish_wheat_farm' && !observation.base) {

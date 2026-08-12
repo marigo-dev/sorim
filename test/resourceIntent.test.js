@@ -43,6 +43,31 @@ assert.deepEqual(
     )[0].args,
     { item: 'oak_planks', count: 9 }
 );
+const miningKitInventory = {
+    stone_pickaxe: 1,
+    stone_sword: 1,
+    furnace: 1,
+    coal: 1,
+    torch: 16,
+    cobblestone: 16,
+    bread: 16
+};
+assert.equal(
+    resolver.resolve(
+        { id: 'iron', tool: 'mine_iron', args: { count: 16 } },
+        { observation: { inventory: { ...miningKitInventory, bread: 15 }, nearbyBlocks: [] } }
+    )[0].tool,
+    'prepare_mining_kit',
+    'Iron mining must resolve a missing food reserve before starting'
+);
+assert.deepEqual(
+    resolver.resolve(
+        { id: 'iron', tool: 'mine_iron', args: { count: 16 } },
+        { observation: { inventory: miningKitInventory, nearbyBlocks: [] } }
+    ),
+    [],
+    'A complete mining kit must not create redundant prerequisites'
+);
 
 assert.equal(taskVerifier.verify(
     { tool: 'mine_block', args: { target: 'any_log', count: 8 } },

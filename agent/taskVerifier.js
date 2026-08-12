@@ -3,6 +3,7 @@ const shelter = require('../skills/shelter');
 const storage = require('../skills/storage');
 const colonyMemory = require('../skills/colonyMemory');
 const { Vec3 } = require('vec3');
+const { assessMiningKit } = require('./progressionContracts');
 
 const VERIFIED_TOOLS = new Set([
     'explore', 'mine_block', 'craft_item', 'place_block', 'collect_stone',
@@ -279,26 +280,41 @@ function verify(call, before, after, options = {}) {
             : failed(`Smelting did not increase ${output || 'the requested output'}`, { gained, output });
     }
     if (tool === 'prepare_mining_kit') {
-        const inventory = after.inventory || {};
-        const hasPickaxe = count(inventory, 'stone_pickaxe') + count(inventory, 'iron_pickaxe') > 0;
-        const support = count(inventory, 'cobblestone') + count(inventory, 'dirt');
-        const furnaceReady = count(inventory, 'furnace') > 0 || safe(() => Boolean(options.bot.findBlock({
+        const observed = options.afterObservation || after;
+        const realFurnace = safe(() => options.bot?.findBlock({
             matching: options.bot.registry.blocksByName.furnace?.id,
             maxDistance: 16
-        })), false);
-        return hasPickaxe && count(inventory, 'torch') >= 16 && support >= 16 && furnaceReady
-            ? passed('Mining kit has pickaxe, furnace, torches, and support blocks')
-            : failed('Mining kit remains incomplete', { hasPickaxe, torches: count(inventory, 'torch'), support, furnaceReady });
+        }), null);
+        const kit = assessMiningKit({
+            ...observed,
+            hasPlacedFurnace: false,
+            nearbyBlocks: [
+                ...(observed.nearbyBlocks || []).filter(block => block.name !== 'furnace'),
+                ...(realFurnace ? [{
+                    name: 'furnace',
+                    distance: realFurnace.position.distanceTo(options.bot.entity.position)
+                }] : [])
+            ]
+        });
+        return kit.ready
+            ? passed('Complete survival mining kit verified', kit)
+            : failed('Mining kit remains incomplete', kit);
     }
     if (tool === 'craft_iron_kit') {
         const missing = ['iron_pickaxe', 'iron_sword', 'iron_axe', 'shield']
             .filter(name => count(after.inventory, name) < 1 && !after.equipment.includes(name));
-        return missing.length === 0 ? passed('Full iron tool kit exists') : failed(`Missing iron kit: ${missing.join(', ')}`);
+        const reserve = count(after.inventory, 'iron_ingot');
+        return missing.length === 0 && reserve >= 8
+            ? passed(`Full iron tool kit exists with ${reserve} reserve ingots`)
+            : failed(`Iron kit incomplete; missing=${missing.join(', ') || 'none'} reserve=${reserve}/8`);
     }
     if (tool === 'craft_iron_armor') {
         const armor = ['iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots'];
         const missing = armor.filter(name => count(after.inventory, name) < 1 && !after.equipment.includes(name));
-        return missing.length === 0 ? passed('Full iron armor exists or is equipped') : failed(`Missing iron armor: ${missing.join(', ')}`);
+        const reserve = count(after.inventory, 'iron_ingot');
+        return missing.length === 0 && reserve >= 8
+            ? passed(`Full iron armor exists or is equipped with ${reserve} reserve ingots`)
+            : failed(`Iron armor incomplete; missing=${missing.join(', ') || 'none'} reserve=${reserve}/8`);
     }
     if (tool === 'build_blueprint') {
         const result = options.executionResult || {};

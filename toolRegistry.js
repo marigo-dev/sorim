@@ -564,8 +564,7 @@ async function executeToolCall(bot, call) {
     }
 
     if (call.tool === 'prepare_mining_kit') {
-        await mining.prepareMiningKit(bot);
-        return;
+        return mining.prepareMiningKit(bot);
     }
 
     if (call.tool === 'mine_iron') {

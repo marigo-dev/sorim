@@ -35,6 +35,11 @@ const IRON_COSTS = {
 };
 
 async function craftIronKit(bot) {
+    const inventory = countInventory(bot);
+    const required = requiredCoreIngots(inventory);
+    if (countItem(bot, 'iron_ingot') < required + 8) {
+        throw new Error(`Iron core kit requires ${required} ingots plus an 8 ingot reserve`);
+    }
     const plankMinimum = requiredCorePlanks(countItem(bot, 'stick'));
     await ensurePlanks(bot, plankMinimum);
     await ensureSticks(bot, 6);
@@ -78,6 +83,12 @@ function hasFullIronArmor(inventory) {
 function requiredCorePlanks(stickCount = 0) {
     const missingSticks = Math.max(0, 6 - stickCount);
     return 6 + Math.ceil(missingSticks / 4) * 2;
+}
+
+function requiredCoreIngots(inventory = {}) {
+    return CORE_KIT
+        .filter(item => (inventory[item] || 0) <= 0)
+        .reduce((total, item) => total + ingotsFor(item), 0);
 }
 
 function requiredArmorIngots(inventory = {}) {
@@ -143,6 +154,13 @@ function countItem(bot, itemName) {
     return Math.max(slotCount, heldCount);
 }
 
+function countInventory(bot) {
+    return bot.inventory.items().reduce((inventory, item) => {
+        inventory[item.name] = (inventory[item.name] || 0) + item.count;
+        return inventory;
+    }, {});
+}
+
 function totalPlanks(bot) {
     return bot.inventory.items()
         .filter(item => item.name.endsWith('_planks'))
@@ -156,6 +174,7 @@ module.exports = {
     hasIronCoreItems,
     hasFullIronArmor,
     requiredCorePlanks,
+    requiredCoreIngots,
     requiredArmorIngots,
     ironInvestment
 };

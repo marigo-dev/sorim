@@ -16,6 +16,7 @@ const memory = require('./skills/memory');
 const shelter = require('./skills/shelter');
 const storage = require('./skills/storage');
 const homestead = require('./skills/homestead');
+const { assessMiningKit } = require('./agent/progressionContracts');
 
 const FULL_IRON_TARGET = 44;
 const SHELTER_STONE_TARGET = 24;
@@ -688,18 +689,7 @@ function hasMiningKit(observation) {
     const inventory = observation.inventory;
     if (iron.hasIronCoreKit(inventory)) return true;
     if (rawIronPotential(inventory) > 0) return true;
-    const hasFurnace = (inventory.furnace || 0) > 0 ||
-        observation.nearbyBlocks.some(block => block.name === 'furnace' && block.distance <= 16) ||
-        observation.hasPlacedFurnace === true ||
-        (inventory.charcoal || 0) > 0;
-    const hasFuel = (inventory.coal || 0) > 0 ||
-        (inventory.charcoal || 0) > 0 ||
-        totalLogs(inventory) > 0;
-    const hasTools = (inventory.stone_pickaxe || 0) > 0 &&
-        ((inventory.stone_sword || 0) > 0 || (inventory.iron_sword || 0) > 0);
-    const hasBlocks = ((inventory.cobblestone || 0) + (inventory.dirt || 0)) >= 16;
-    const hasFood = food.hasFoodStock(inventory, 16);
-    return hasFurnace && hasFuel && (inventory.torch || 0) >= 16 && hasTools && hasBlocks && hasFood;
+    return assessMiningKit(observation).ready;
 }
 
 function rawIronPotential(inventory) {
