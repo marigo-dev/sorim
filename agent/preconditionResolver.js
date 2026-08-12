@@ -1,6 +1,9 @@
 const siteSelector = require('../safety/siteSelector');
+const worldMemory = require('../skills/memory');
+const shelter = require('../skills/shelter');
 
-const BUILD_TARGET = 88;
+const BUILD_TARGET = 92;
+const UTILITY_RESERVE = 18;
 
 class PreconditionResolver {
     resolve(step, context = {}) {
@@ -14,11 +17,13 @@ class PreconditionResolver {
         }
         if (['ensure_base', 'build_shelter'].includes(step.tool) && !observation.base) {
             const potential = materialPotential(inventory);
-            if (potential < BUILD_TARGET) {
-                const logCount = Math.ceil((BUILD_TARGET - potential) / 4);
+            const required = remainingBuildBudget(context.bot);
+            if (potential < required) {
+                const logCount = Math.ceil((required - potential) / 4);
                 return [prerequisite('mine_block', { target: 'any_log', count: logCount }, step, 'Acquire enough building material before construction')];
             }
-            if (context.bot && Number(attempts.explore_safe_terrain || 0) < 2 && !safeBuildSite(context.bot)) {
+            if (context.bot && !worldMemory.getConstructionBase() &&
+                Number(attempts.explore_safe_terrain || 0) < 2 && !safeBuildSite(context.bot)) {
                 return [prerequisite('explore', { target: 'safe_terrain' }, step, 'Find flat unprotected terrain before construction')];
             }
         }
@@ -51,6 +56,13 @@ class PreconditionResolver {
         }
         return [];
     }
+}
+
+function remainingBuildBudget(bot) {
+    const construction = worldMemory.getConstructionBase();
+    if (!bot || !construction) return BUILD_TARGET;
+    const shellScore = shelter.scoreShelterShell(bot, construction);
+    return Math.max(0, shelter.SHELL_TARGET - shellScore) + UTILITY_RESERVE;
 }
 
 function requiresBase(tool) {
@@ -170,5 +182,6 @@ module.exports = {
     materialPotential,
     requiresBase,
     resolveCraftPrerequisite,
-    hasCraftingTable
+    hasCraftingTable,
+    remainingBuildBudget
 };

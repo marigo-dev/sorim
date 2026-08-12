@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { Vec3 } = require('vec3');
 const shelter = require('../skills/shelter');
+const siteSelector = require('../safety/siteSelector');
 
 const base = new Vec3(0, 64, 0);
 const shell = new Set();
@@ -41,5 +42,19 @@ assert.equal(
     shelter.isInsideShelter(new Vec3(0.5, 64, -2.5), base),
     false,
     'the outside door apron must not count as the shelter interior'
+);
+
+const unevenBot = {
+    entity: { position: new Vec3(0, 64, 0) },
+    blockAt(position) {
+        const surfaceY = position.x === 1 ? 65 : 64;
+        if (position.y < surfaceY) return { name: 'dirt', boundingBox: 'block' };
+        return { name: 'air', boundingBox: 'empty' };
+    }
+};
+assert.equal(
+    siteSelector.assessFootprint(unevenBot, base, 3, 3, { maxTerrainVariation: 0 }).valid,
+    false,
+    'Shelter sites must reject uneven interior floors when no terraforming step exists'
 );
 console.log('5x5 shelter geometry passed.');

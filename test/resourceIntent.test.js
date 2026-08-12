@@ -20,7 +20,7 @@ const resolver = new PreconditionResolver();
 const parent = { id: 'base', tool: 'ensure_base', args: {} };
 assert.deepEqual(
     resolver.resolve(parent, { observation: { inventory: {}, base: null } })[0].args,
-    { target: 'any_log', count: 22 }
+    { target: 'any_log', count: 23 }
 );
 assert.equal(
     resolver.resolve(
@@ -69,4 +69,27 @@ async function verifyCountedExecution() {
     }
 }
 
-verifyCountedExecution().then(() => console.log('Counted resource intent and preconditions passed.'));
+async function verifyPartialExecutionStopsPromptly() {
+    const original = mine.mineBlock;
+    const slots = [];
+    let calls = 0;
+    const bot = { inventory: { items: () => slots } };
+    mine.mineBlock = async () => {
+        calls++;
+        if (calls > 1) throw new Error('next tree is temporarily unreachable');
+        slots.push({ name: 'oak_log', count: 4 });
+    };
+    try {
+        const result = await toolRegistry.executeToolCall(bot, {
+            tool: 'mine_block', args: { target: 'any_log', count: 16 }
+        });
+        assert.deepEqual(result, { target: 'any_log', requested: 16, gained: 4, attempts: 2 });
+    } finally {
+        mine.mineBlock = original;
+    }
+}
+
+Promise.resolve()
+    .then(verifyCountedExecution)
+    .then(verifyPartialExecutionStopsPromptly)
+    .then(() => console.log('Counted resource intent and preconditions passed.'));

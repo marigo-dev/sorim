@@ -20,7 +20,7 @@ function findBuildSite(bot, options = {}) {
             const center = surfaceNear(bot, origin.offset(x, 0, z));
             if (!center || blockPolicy.protectedZoneAt(center)) continue;
             if (Math.abs(center.y - origin.y) > maxVerticalDelta) continue;
-            const assessment = assessFootprint(bot, center, width, depth);
+            const assessment = assessFootprint(bot, center, width, depth, options);
             if (!assessment.valid) continue;
             candidates.push({ position: center, ...assessment });
         }
@@ -30,7 +30,7 @@ function findBuildSite(bot, options = {}) {
     return candidates[0] || null;
 }
 
-function assessFootprint(bot, center, width, depth) {
+function assessFootprint(bot, center, width, depth, options = {}) {
     const heights = [];
     let hazards = 0;
     let occupied = 0;
@@ -56,7 +56,9 @@ function assessFootprint(bot, center, width, depth) {
 
     const variation = Math.max(...heights) - Math.min(...heights);
     const terraform = heights.reduce((sum, height) => sum + Math.abs(height - center.y), 0) + occupied;
-    const valid = hazards === 0 && variation <= 2 && terraform <= width * depth;
+    const maxTerrainVariation = Math.max(0, Number(options.maxTerrainVariation ?? 2));
+    const maxTerraformBlocks = Math.max(0, Number(options.maxTerraformBlocks ?? width * depth));
+    const valid = hazards === 0 && variation <= maxTerrainVariation && terraform <= maxTerraformBlocks;
     const distance = center.distanceTo(bot.entity.position);
     const verticalDistance = Math.abs(center.y - bot.entity.position.y);
     const score = 100 - variation * 25 - terraform * 2 - distance * 0.25 - verticalDistance * 12;

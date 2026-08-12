@@ -651,8 +651,8 @@ function findNearestVisibleLog(bot, targetName = 'any_log') {
         .filter(block => isRootedTree(bot, block))
         .filter(block => blockPolicy.canHarvestTree(bot, block).allowed)
         .filter(block => !isFailedTree(block.position))
-        .filter(block => block.position.y <= bot.entity.position.y + 4)
-        .filter(block => block.position.y >= bot.entity.position.y - 4)
+        .filter(block => block.position.y <= bot.entity.position.y + 12)
+        .filter(block => block.position.y >= bot.entity.position.y - 12)
         .filter((block, index, list) =>
             list.findIndex(other => other.position.equals(block.position)) === index
         )

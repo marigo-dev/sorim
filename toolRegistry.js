@@ -684,6 +684,7 @@ async function mineRequestedBlocks(bot, target, requestedCount) {
             lastError = error;
         }
         stagnantAttempts = countMineDrop(bot, target) > prior ? 0 : stagnantAttempts + 1;
+        if (countMineDrop(bot, target) > before && stagnantAttempts > 0) break;
         if (stagnantAttempts >= 4) break;
     }
     const gained = countMineDrop(bot, target) - before;

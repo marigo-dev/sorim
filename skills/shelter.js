@@ -21,7 +21,7 @@ const BUILD_BLOCKS = [
 ];
 const HOUSE_RADIUS = 2;
 const HOUSE_ROOF_Y = 3;
-const SHELL_TARGET = 67;
+const SHELL_TARGET = 71;
 const STONE_BLOCKS = ['cobblestone'];
 const WOOD_BLOCKS = [
     'oak_planks', 'birch_planks', 'spruce_planks', 'jungle_planks',
@@ -53,7 +53,9 @@ async function buildSafeShelter(bot) {
             width: 5,
             depth: 5,
             radius: 24,
-            maxVerticalDelta: 2
+            maxVerticalDelta: 2,
+            maxTerrainVariation: 0,
+            maxTerraformBlocks: 4
         };
         let site = pendingShelterSite || siteSelector.findBuildSite(bot, siteOptions);
         if (!site) {
@@ -87,6 +89,7 @@ async function buildSafeShelter(bot) {
                     bot.entity.position.z - (site.position.z + 0.5)
                 );
                 if (horizontal > 2.5 || Math.abs(bot.entity.position.y - site.position.y) > 1.2) {
+                    pendingShelterSite = null;
                     throw new Error('Could not reach the selected flat shelter site');
                 }
                 selectedBase = site.position;
