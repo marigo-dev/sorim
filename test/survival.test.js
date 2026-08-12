@@ -164,6 +164,32 @@ try {
         'escape_pit',
         'A hostile above a recovery shaft must not cause an evade loop underground'
     );
+    threatenedInShaft.entities = {
+        skeleton: {
+            id: 12,
+            name: 'skeleton',
+            type: 'mob',
+            position: new Vec3(8, 64, 0)
+        }
+    };
+    threatenedInShaft.inventory.items = () => [{ name: 'stone_sword', count: 1 }];
+    assert.equal(
+        survival.chooseImmediateAction(
+            threatenedInShaft,
+            observation(20, { stone_sword: 1, dirt: 12 }),
+            { id: 'L7_BUILD_SAFE_SHELTER' }
+        ).action,
+        'escape_pit',
+        'A distant skeleton must not preempt the last steps of surface recovery'
+    );
+    threatenedInShaft.entities = {
+        zombie: {
+            id: 8,
+            name: 'zombie',
+            type: 'mob',
+            position: new Vec3(2, 61, 0)
+        }
+    };
     threatenedInShaft.entities.zombie.position = new Vec3(2, 61, 0);
     threatenedInShaft.inventory.items = () => [{ name: 'stone_sword', count: 1 }];
     assert.equal(

@@ -68,6 +68,7 @@ const PLANNED_UNDERGROUND_LEVELS = new Set([
 ]);
 let emergencyShelterBlockedForNight = false;
 let emergencyShelterPosition = null;
+let emergencyShelterFailures = 0;
 let deathRecoveryState = null;
 const blockedBedsForNight = new Set();
 
@@ -78,6 +79,7 @@ function chooseImmediateAction(bot, observation, level = null) {
     if (!isNight(bot)) {
         emergencyShelterBlockedForNight = false;
         emergencyShelterPosition = null;
+        emergencyShelterFailures = 0;
         blockedBedsForNight.clear();
     }
     if (needsAir(bot) || bot.entity?.isInWater) {
@@ -141,6 +143,19 @@ function chooseImmediateAction(bot, observation, level = null) {
         hasCombatWeapon(bot)
     ) {
         return chooseThreatAction(bot, trappedThreat, observation.health);
+    }
+
+    const climbThreat = nearestHostile(bot, 10);
+    if (
+        shouldReachSurfaceForWork(bot, observation, level) &&
+        (!climbThreat || climbThreat.distance > 4)
+    ) {
+        return {
+            action: 'escape_pit',
+            reason: climbThreat
+                ? `Reach the surface before engaging distant ${climbThreat.name}`
+                : 'Trapped below the remembered surface; finish recovery first'
+        };
     }
 
     const hostile = nearestHostile(bot, 10);
@@ -340,9 +355,16 @@ async function recoverDeathItems(bot) {
 
 async function buildEmergencyShelter(bot) {
     try {
-        return await buildEmergencyShelterAttempt(bot);
+        const result = await buildEmergencyShelterAttempt(bot);
+        emergencyShelterFailures = 0;
+        return result;
     } catch (error) {
-        emergencyShelterBlockedForNight = true;
+        emergencyShelterFailures++;
+        emergencyShelterBlockedForNight = emergencyShelterFailures >= 3;
+        console.log(
+            `[SURVIVAL] emergency shelter attempt failed ` +
+            `${emergencyShelterFailures}/3: ${error.message}`
+        );
         throw error;
     }
 }
@@ -1528,8 +1550,9 @@ async function escapePit(bot) {
         const fallbackExit = memory.getSurfaceExit();
         const rise = fallbackExit ? fallbackExit.y - bot.entity.position.y : Infinity;
         if (fallbackExit && rise > 0 && rise <= 12 && hasRecoveryBlock(bot)) {
-            console.log('[SURVIVAL] saved route blocked; switching to local ramp recovery');
+            console.log('[SURVIVAL] saved route blocked; switching to local step recovery');
             memory.clearMineRoute();
+            if (await carveEscapeStaircase(bot, fallbackExit, actionVersion)) return;
             if (await carveRunUpEscape(bot, fallbackExit, actionVersion)) return;
             const localExit = new Vec3(
                 Math.floor(bot.entity.position.x),
@@ -1804,15 +1827,13 @@ async function followMineRoute(bot, route, actionVersion) {
         const climbing = target.y > bot.entity.position.y + 0.45;
         let reached = climbing && await finishSafeAscent(bot, target);
         if (climbing && !reached) {
-            await widenAscentApproach(bot, target);
-            reached = await finishSafeAscent(bot, target);
+            reached = await syncRecoveryStep(bot, target);
         }
-        if (!reached) {
+        if (!reached && !climbing) {
             try {
-                await movement.moveBlock(bot, target, 3500);
+                await movement.moveBlock(bot, target, 2200);
             } catch {
                 movement.stop(bot);
-                reached = await finishSafeAscent(bot, target);
             }
         }
         reached ||= isAtMineRouteStand(bot, target);
@@ -2153,22 +2174,6 @@ async function finishSafeAscent(bot, next) {
     const reached = isAtMineRouteStand(bot, next);
     console.log(`[SURVIVAL] direct ascent target=${next.toString()} reached=${reached}`);
     return reached;
-}
-
-async function widenAscentApproach(bot, next) {
-    const current = bot.entity.position.floored();
-    if (next.y < current.y || horizontalDistance(current, next) > 2.5) return;
-    const dx = next.x - current.x;
-    const dz = next.z - current.z;
-    const sides = Math.abs(dx) >= Math.abs(dz)
-        ? [new Vec3(0, 0, -1), new Vec3(0, 0, 1)]
-        : [new Vec3(-1, 0, 0), new Vec3(1, 0, 0)];
-
-    for (const side of sides) {
-        const sideFeet = next.plus(side);
-        await digIfNeeded(bot, sideFeet);
-        await digIfNeeded(bot, sideFeet.offset(0, 1, 0));
-    }
 }
 
 async function digIfNeeded(bot, position) {
