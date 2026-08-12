@@ -68,6 +68,13 @@ try {
         true,
         'Blind retreat must stop before a three-block drop'
     );
+    const flatRetreat = makeBot(6000);
+    flatRetreat.entity.yaw = 0;
+    flatRetreat.blockAt = position => position.y <= 63
+        ? { name: 'stone', boundingBox: 'block' }
+        : { name: 'air', boundingBox: 'empty' };
+    assert.equal(survival.isUnsafeForwardStep(flatRetreat), false);
+    assert.equal(survival.canRetreatJump(flatRetreat), false, 'Flat retreat must not bunny-hop');
     const submerged = makeBot(6000);
     submerged.entity.isInWater = true;
     submerged.oxygenLevel = 12;

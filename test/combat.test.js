@@ -18,6 +18,14 @@ assert.deepEqual(
     parseCombatIntent('Marigo Steve oyuncusunu oldur', 'owner', ['owner', 'Steve']),
     { intent: 'combat', targetPlayer: 'Steve', combatMode: 'lethal' }
 );
+assert.deepEqual(
+    parseCombatIntent('Marigo zombiyi oldur', 'owner', ['owner']),
+    { intent: 'combat_mob', targetMob: 'zombie', combatMode: 'lethal' }
+);
+assert.deepEqual(
+    parseCombatIntent('Marigo su yaratikla savas', 'owner', ['owner']),
+    { intent: 'combat_mob', targetMob: null, combatMode: 'lethal' }
+);
 assert.equal(parseCombatIntent('Marigo eve don', 'owner', ['owner']), null);
 
 const originalSleep = movement.sleep;
@@ -46,6 +54,40 @@ movement.sleep = async () => {};
             combat.fightPlayer(cancelledBot, 'Target', { mode: 'lethal' }),
             /Action cancelled: test stop command/
         );
+
+        const rangedBot = fakeBot();
+        rangedBot.inventory.slots.push({ name: 'bow', count: 1 }, { name: 'arrow', count: 8 });
+        rangedBot.players.Target.entity.position = new Vec3(9, 64, 0);
+        const ranged = await combat.chooseWeapon(rangedBot, rangedBot.players.Target.entity, 9);
+        assert.equal(ranged.type, 'bow');
+        assert.equal(rangedBot.heldItem.name, 'bow');
+
+        const axeBot = fakeBot();
+        axeBot.inventory.slots.push({ name: 'iron_axe', count: 1 });
+        axeBot.players.Target.entity.equipment = [{ name: 'shield' }];
+        const axe = await combat.chooseWeapon(axeBot, axeBot.players.Target.entity, 2);
+        assert.equal(axe.type, 'melee');
+        assert.equal(axe.item.name, 'iron_axe');
+
+        const shieldBot = fakeBot();
+        shieldBot.inventory.slots.push({ name: 'shield', count: 1 });
+        let raisedOffhand = false;
+        let lowered = false;
+        shieldBot.activateItem = offhand => { raisedOffhand = offhand === true; };
+        shieldBot.deactivateItem = () => { lowered = true; };
+        await combat.guardRecovery(shieldBot, shieldBot.players.Target.entity, 650);
+        assert.equal(raisedOffhand, true);
+        assert.equal(lowered, true);
+
+        const pursuitBot = fakeBot();
+        pursuitBot.players.Target.entity.position = new Vec3(5, 64, 0);
+        const controls = [];
+        pursuitBot.blockAt = position => position.y <= 63
+            ? { name: 'stone', boundingBox: 'block' }
+            : { name: 'air', boundingBox: 'empty' };
+        pursuitBot.setControlState = (name, value) => controls.push([name, value]);
+        await combat.pursueTarget(pursuitBot, 'Target', pursuitBot.players.Target.entity);
+        assert.equal(controls.some(([name, value]) => name === 'sprint' && value), true);
 
         assert.equal(taskVerifier.verify(
             { tool: 'fight_player', args: { username: 'Target', mode: 'lethal' } },

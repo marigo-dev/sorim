@@ -495,7 +495,12 @@ runtime JavaScript are forbidden inside generated skills.
 
 Player combat is opt-in. A duel uses a bounded number of strikes and stops at the
 bot's critical-health threshold; lethal mode is selected only from explicit kill
-or to-the-death wording. `marigo dur` cancels either mode immediately.
+or to-the-death wording. Combat selects a bow with ammunition at range, an axe
+against a shielded target, and a sword for ordinary melee; it uses weapon
+cooldowns, shield recovery, sprint pursuit, safe strafing, and terrain-checked
+retreats. Explicit commands such as `marigo zombiyi oldur` lock a visible mob by
+entity ID and verify that it leaves the world. `marigo dur` cancels combat
+immediately.
 
 Status returns:
 

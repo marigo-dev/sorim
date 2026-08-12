@@ -722,6 +722,24 @@ function parseUserCommand(username, lowerMessage) {
 
     const combatIntent = parseCombatIntent(message, username, Object.keys(bot.players || {}));
     if (combatIntent) {
+        if (combatIntent.intent === 'combat_mob') {
+            const target = findRequestedCombatMob(combatIntent.targetMob, 32);
+            if (!target) {
+                return {
+                    type: 'combat_unavailable',
+                    reply: combatIntent.targetMob
+                        ? `${combatIntent.targetMob} hedefini su anda goremiyorum.`
+                        : 'Saldirmami istedigin yaratik gorus alaninda degil.'
+                };
+            }
+            return {
+                type: 'combat_mob',
+                username,
+                entityId: target.id,
+                targetName: target.name,
+                reply: `${target.name} hedefini kilitledim; savasa giriyorum.`
+            };
+        }
         return {
             type: 'combat',
             username,
@@ -834,6 +852,25 @@ function parseUserCommand(username, lowerMessage) {
     return null;
 }
 
+function findRequestedCombatMob(requestedName, maxDistance) {
+    const hostileNames = new Set([
+        'zombie', 'skeleton', 'creeper', 'spider', 'cave_spider', 'witch',
+        'enderman', 'drowned', 'husk', 'stray', 'slime', 'pillager',
+        'vindicator', 'ravager', 'phantom', 'blaze', 'piglin', 'hoglin'
+    ]);
+    return Object.values(bot.entities || {})
+        .filter(entity => entity?.id !== bot.entity?.id && entity?.position)
+        .map(entity => ({
+            entity,
+            name: String(entity.name || entity.mobType || '').toLowerCase(),
+            distance: entity.position.distanceTo(bot.entity.position)
+        }))
+        .filter(entry => entry.distance <= maxDistance)
+        .filter(entry => requestedName ? entry.name === requestedName : hostileNames.has(entry.name))
+        .sort((left, right) => left.distance - right.distance)
+        .map(entry => ({ id: entry.entity.id, name: entry.name, distance: entry.distance }))[0] || null;
+}
+
 function looksLikeAdminCommand(lowerMessage) {
     const stripped = lowerMessage.replace(BOT_NAME.toLowerCase(), '').replace('marigo', '').trim();
     const firstWord = stripped.split(/\s+/)[0];
@@ -854,12 +891,13 @@ function looksLikeAdminCommand(lowerMessage) {
         'gamemode',
         'summon'
     ].includes(firstWord) ||
-        ['gave', 'removed', 'teleported', 'changed', 'set', 'made', 'killed', 'applied']
+        ['gave', 'removed', 'teleported', 'changed', 'set', 'made', 'killed', 'applied',
+            'successfully', 'summoned', 'filled']
             .includes(firstWord);
 }
 
 function applyUserCommand(command) {
-    if (command.type === 'help') return;
+    if (command.type === 'help' || command.type === 'combat_unavailable') return;
 
     if (command.type === 'auto_start') {
         autonomousMode = true;
@@ -938,6 +976,24 @@ function applyUserCommand(command) {
             }]
         });
         haltCurrentAction('player combat command');
+        return;
+    }
+
+    if (command.type === 'combat_mob') {
+        autonomousMode = false;
+        directiveManager.stop();
+        queuedUserCommand = null;
+        taskQueue.cancelAll('replaced by explicit mob combat command');
+        taskQueue.enqueue({
+            goal: `defeat ${command.targetName}`,
+            requestedBy: command.username,
+            steps: [{
+                tool: 'fight_mob',
+                args: { entityId: command.entityId },
+                reason: `Explicit mob combat requested by ${command.username}`
+            }]
+        });
+        haltCurrentAction('mob combat command');
         return;
     }
 

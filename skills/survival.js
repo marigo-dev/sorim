@@ -2415,7 +2415,7 @@ async function backAway(bot, threatPosition, durationMs = 900) {
         let redirects = 0;
         await lookTowardSafeRetreat(bot, threatPosition);
         while (Date.now() < deadline) {
-            if (isUnsafeForwardStep(bot)) {
+            if (isUnsafeRetreatTrajectory(bot)) {
                 if (redirects++ >= 2 || !await lookTowardSafeRetreat(bot, threatPosition)) {
                     console.log('[SURVIVAL] retreat stopped at unsafe drop or liquid');
                     break;
@@ -2423,7 +2423,7 @@ async function backAway(bot, threatPosition, durationMs = 900) {
                 continue;
             }
             bot.setControlState('forward', true);
-            bot.setControlState('jump', true);
+            bot.setControlState('jump', canRetreatJump(bot));
             bot.setControlState('sprint', true);
             await movement.sleep(100);
         }
@@ -2483,21 +2483,42 @@ function findSafeRetreatTarget(bot, threatPosition) {
         )[0]?.target || null;
 }
 
-function isUnsafeForwardStep(bot) {
+function isUnsafeRetreatTrajectory(bot) {
     const yaw = bot.entity.yaw;
     const dx = Math.round(-Math.sin(yaw));
     const dz = Math.round(-Math.cos(yaw));
     const feet = bot.entity.position.floored();
-    const front = feet.offset(dx, 0, dz);
-    const frontFeet = bot.blockAt(front);
-    const frontHead = bot.blockAt(front.offset(0, 1, 0));
-    if (['water', 'lava', 'powder_snow'].includes(frontFeet?.name)) return true;
-    if (['water', 'lava'].includes(frontHead?.name)) return true;
-    for (let depth = 1; depth <= 3; depth++) {
-        const floor = bot.blockAt(front.offset(0, -depth, 0));
-        if (floor?.boundingBox === 'block' && !['magma_block'].includes(floor.name)) return false;
+    for (let distance = 1; distance <= 2; distance++) {
+        const front = feet.offset(dx * distance, 0, dz * distance);
+        const frontFeet = bot.blockAt(front);
+        const frontHead = bot.blockAt(front.offset(0, 1, 0));
+        if (['water', 'lava', 'powder_snow'].includes(frontFeet?.name)) return true;
+        if (['water', 'lava'].includes(frontHead?.name)) return true;
+        let supported = false;
+        for (let depth = 1; depth <= 2; depth++) {
+            const floor = bot.blockAt(front.offset(0, -depth, 0));
+            if (floor?.boundingBox === 'block' && floor.name !== 'magma_block') {
+                supported = true;
+                break;
+            }
+        }
+        if (!supported) return true;
     }
-    return true;
+    return false;
+}
+
+function canRetreatJump(bot) {
+    const yaw = bot.entity.yaw;
+    const dx = Math.round(-Math.sin(yaw));
+    const dz = Math.round(-Math.cos(yaw));
+    const feet = bot.entity.position.floored();
+    const obstacle = bot.blockAt(feet.offset(dx, 0, dz));
+    if (obstacle?.boundingBox !== 'block') return false;
+    const landing = feet.offset(dx * 2, 0, dz * 2);
+    const landingFeet = bot.blockAt(landing);
+    const landingHead = bot.blockAt(landing.offset(0, 1, 0));
+    const landingFloor = bot.blockAt(landing.offset(0, -1, 0));
+    return isAir(landingFeet) && isAir(landingHead) && landingFloor?.boundingBox === 'block';
 }
 
 async function jumpForward(bot) {
@@ -2554,7 +2575,8 @@ module.exports = {
     escapeWater,
     buildEmergencyShelter,
     isEmergencyShelter,
-    isUnsafeForwardStep,
+    isUnsafeForwardStep: isUnsafeRetreatTrajectory,
+    canRetreatJump,
     shouldUseEmergencyShaft,
     shouldUseShallowBaseShaft,
     isMineRouteRelevant,

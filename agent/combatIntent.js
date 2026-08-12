@@ -8,6 +8,13 @@ function parseCombatIntent(message, speaker, onlineUsernames = []) {
     const selfTarget = /\b(benimle savas|bana saldir|beni oldur|fight me|attack me|kill me)\b/.test(text) ||
         (/\bolene kadar\b/.test(text) && /\bbenimle|bana|beni\b/.test(text));
 
+    if (!selfTarget) {
+        const targetMob = findMobTarget(text);
+        if (targetMob !== undefined) {
+            return { intent: 'combat_mob', targetMob, combatMode: 'lethal' };
+        }
+    }
+
     let targetPlayer = selfTarget ? speaker : findMentionedPlayer(text, onlineUsernames, speaker);
     if (!targetPlayer) targetPlayer = extractNamedTarget(text);
     if (!targetPlayer) return null;
@@ -17,6 +24,38 @@ function parseCombatIntent(message, speaker, onlineUsernames = []) {
         targetPlayer,
         combatMode: lethal ? 'lethal' : 'duel'
     };
+}
+
+function findMobTarget(text) {
+    const aliases = {
+        zombie: ['zombie', 'zombi'],
+        skeleton: ['skeleton', 'iskelet'],
+        creeper: ['creeper'],
+        spider: ['spider', 'orumcek'],
+        cave_spider: ['cave spider', 'magara orumcegi'],
+        witch: ['witch', 'cadi'],
+        enderman: ['enderman'],
+        drowned: ['drowned', 'bogulmus'],
+        husk: ['husk'],
+        stray: ['stray'],
+        slime: ['slime'],
+        pillager: ['pillager', 'yagmaci'],
+        vindicator: ['vindicator'],
+        ravager: ['ravager'],
+        phantom: ['phantom'],
+        blaze: ['blaze'],
+        piglin: ['piglin'],
+        hoglin: ['hoglin']
+    };
+    for (const [name, names] of Object.entries(aliases)) {
+        if (names.some(alias => new RegExp(
+            `(^|[^a-z0-9_])${escapeRegExp(alias)}(?:yi|i|ye|ya|yle|la)?([^a-z0-9_]|$)`
+        ).test(text))) {
+            return name;
+        }
+    }
+    if (/\b(su yaratik(?:la|i)?|bu yaratik(?:la|i)?|yaratigi|canavari|hostile mob|this mob|that mob)\b/.test(text)) return null;
+    return undefined;
 }
 
 function findMentionedPlayer(text, onlineUsernames, speaker) {
@@ -50,4 +89,4 @@ function escapeRegExp(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-module.exports = { parseCombatIntent };
+module.exports = { parseCombatIntent, findMobTarget };
