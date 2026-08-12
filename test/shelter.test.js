@@ -57,4 +57,26 @@ assert.equal(
     false,
     'Shelter sites must reject uneven interior floors when no terraforming step exists'
 );
+const lowerOpenSurfaceBot = {
+    entity: { position: new Vec3(8.5, 60, 0.5) },
+    blockAt(position) {
+        return position.y <= 59
+            ? { name: 'grass_block', boundingBox: 'block' }
+            : { name: 'air', boundingBox: 'empty' };
+    }
+};
+assert.equal(
+    shelter.needsPitRecoveryBeforeReturn(lowerOpenSurfaceBot, base),
+    false,
+    'Returning from open terrain below base elevation must use normal navigation, not pit recovery'
+);
+const lowerClosedPitBot = {
+    ...lowerOpenSurfaceBot,
+    blockAt: () => ({ name: 'stone', boundingBox: 'block' })
+};
+assert.equal(
+    shelter.needsPitRecoveryBeforeReturn(lowerClosedPitBot, base),
+    true,
+    'A genuinely enclosed position below base elevation must still recover before returning'
+);
 console.log('5x5 shelter geometry passed.');

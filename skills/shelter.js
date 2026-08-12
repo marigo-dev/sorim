@@ -206,7 +206,7 @@ async function returnToBase(bot) {
         return true;
     }
     await descendFromShelterWall(bot, target);
-    if (bot.entity.position.y < target.y - 1) {
+    if (needsPitRecoveryBeforeReturn(bot, target)) {
         await require('./survival').escapePit(bot);
     }
     const initialApproach = findBaseApproach(bot, target);
@@ -856,6 +856,11 @@ function isAir(block) {
     return ['air', 'cave_air', 'void_air'].includes(block?.name);
 }
 
+function needsPitRecoveryBeforeReturn(bot, target) {
+    if (bot.entity.position.y >= target.y - 1) return false;
+    return require('./survival').isInPit(bot);
+}
+
 function clearBlock(bot, block) {
     // Lazy loading avoids the shelter -> mine -> shelter module cycle.
     return require('./mine').clearBlock(bot, block);
@@ -871,5 +876,6 @@ module.exports = {
     ensureBaseEgress,
     leaveBase,
     isInsideShelter,
+    needsPitRecoveryBeforeReturn,
     placeSpecific
 };

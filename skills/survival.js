@@ -2287,7 +2287,7 @@ function hasSkyExposure(bot) {
 }
 
 function isInPit(bot) {
-    const position = bot.entity.position.floored();
+    const position = occupiedFeetCell(bot);
     const neighbors = [
         [1, 0], [-1, 0], [0, 1], [0, -1]
     ].map(([dx, dz]) => {
@@ -2298,6 +2298,29 @@ function isInPit(bot) {
     if (neighbors.some(({ feet, body }) => isPassable(feet) && isPassable(body))) return false;
     if (neighbors.some(({ feet, body }) => isFoliage(feet) || isFoliage(body))) return false;
     return true;
+}
+
+function occupiedFeetCell(bot) {
+    const position = bot.entity.position.floored();
+    const current = bot.blockAt(position);
+    const above = bot.blockAt(position.offset(0, 1, 0));
+    if (current?.boundingBox !== 'block' || !isPassable(above)) return position;
+
+    const shapeTop = highestCollisionTop(current);
+    const localY = bot.entity.position.y - position.y;
+    if (shapeTop > 0 && localY >= shapeTop - 0.08) {
+        return position.offset(0, 1, 0);
+    }
+    return position;
+}
+
+function highestCollisionTop(block) {
+    const shapes = Array.isArray(block?.shapes) ? block.shapes : [];
+    if (shapes.length === 0) return block?.boundingBox === 'block' ? 1 : 0;
+    return shapes.reduce((top, shape) =>
+        Array.isArray(shape) && Number.isFinite(shape[4])
+            ? Math.max(top, shape[4])
+            : top, 0);
 }
 
 function isFoliage(block) {
@@ -2549,7 +2572,9 @@ function isAir(block) {
 }
 
 function isPassable(block) {
-    return isAir(block) || ['water', 'bubble_column'].includes(block?.name);
+    const name = block?.name || '';
+    if (['lava', 'fire', 'soul_fire', 'powder_snow'].includes(name)) return false;
+    return isAir(block) || ['water', 'bubble_column'].includes(name) || block?.boundingBox === 'empty';
 }
 
 function woodUnits(inventory) {

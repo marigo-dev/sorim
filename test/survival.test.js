@@ -183,6 +183,35 @@ try {
         null,
         'Leaves around a freshly cut tree must not be classified as a pit'
     );
+    const farmlandSurface = makeBot(6000);
+    farmlandSurface.entity.position = new Vec3(0.5, 62.9375, 0.5);
+    farmlandSurface.blockAt = position => {
+        if (position.y === 62) {
+            return {
+                name: 'farmland',
+                boundingBox: 'block',
+                shapes: [[0, 0, 0, 1, 0.9375, 1]]
+            };
+        }
+        if (position.y === 63 && (position.x !== 0 || position.z !== 0)) {
+            return { name: 'wheat', boundingBox: 'empty', shapes: [] };
+        }
+        return { name: 'air', boundingBox: 'empty', shapes: [] };
+    };
+    assert.equal(
+        survival.isInPit(farmlandSurface),
+        false,
+        'Standing on farmland must use the air cell above it as the bot feet position'
+    );
+    assert.equal(
+        survival.chooseImmediateAction(
+            farmlandSurface,
+            observation(20, { wheat_seeds: 8 }),
+            { id: 'L17_ESTABLISH_WHEAT_FARM' }
+        ),
+        null,
+        'Farm maintenance on partial-height blocks must not trigger pit recovery'
+    );
     memory.setBase({ x: 0, y: 64, z: 0 });
 
     const night = makeBot(14000);
