@@ -1,17 +1,37 @@
 const { resolveProfession } = require('./professionRegistry');
+const { validateProfile, selectRoutine } = require('./professionFactory');
 
 class ProfessionManager {
-    constructor(memory) {
+    constructor(memory, options = {}) {
         this.memory = memory;
+        this.allowedToolNames = (options.tools || []).map(tool => typeof tool === 'string' ? tool : tool.name).filter(Boolean);
+        this.validateToolCall = options.validateToolCall || (call => call);
         this.lastActionAt = 0;
         this.minimumIntervalMs = 1200;
+        this.routineCursor = 0;
     }
 
     assign(value, assignedBy) {
-        const profile = resolveProfession(value);
+        const profile = this.resolve(value);
         if (!profile) return null;
         this.memory.setProfession(profile.id, assignedBy);
         return profile;
+    }
+
+    createAndAssign(value, assignedBy) {
+        const validation = validateProfile(value, this.allowedToolNames);
+        if (!validation.ok) return validation;
+        const invalidRoutine = validation.profile.routines.find(routine => !this.validateToolCall({
+            tool: routine.tool,
+            args: routine.args,
+            reason: routine.reason
+        }));
+        if (invalidRoutine) {
+            return { ok: false, error: `Routine arguments are invalid for ${invalidRoutine.tool}` };
+        }
+        this.memory.saveCustomProfession(validation.profile);
+        this.memory.setProfession(validation.profile.id, assignedBy);
+        return { ok: true, profile: validation.profile };
     }
 
     stop() {
@@ -21,18 +41,38 @@ class ProfessionManager {
     current() {
         const saved = this.memory.getProfession();
         if (!saved) return null;
-        const profile = resolveProfession(saved.id);
+        const profile = this.resolve(saved.id);
         return profile ? { ...profile, ...saved } : null;
+    }
+
+    resolve(value) {
+        const builtIn = resolveProfession(value);
+        if (builtIn) return builtIn;
+        const normalized = String(value || '').toLocaleLowerCase('tr-TR');
+        return Object.values(this.memory.getCustomProfessions?.() || {}).find(profile =>
+            profile.id === normalized || profile.aliases?.includes(normalized)
+        ) || null;
     }
 
     nextTool(observation) {
         const profession = this.current();
         if (!profession || profession.status !== 'active') return null;
         if (Date.now() - this.lastActionAt < this.minimumIntervalMs) return null;
-        const call = selectProfessionTool(profession.id, observation);
-        if (call) this.lastActionAt = Date.now();
-        return call;
+        const call = profession.custom
+            ? selectCustomProfessionTool(profession, observation, this.routineCursor++)
+            : selectProfessionTool(profession.id, observation);
+        const validated = call ? this.validateToolCall(call) : null;
+        if (validated) this.lastActionAt = Date.now();
+        return validated;
     }
+}
+
+function selectCustomProfessionTool(profile, observation, cursor) {
+    const routine = selectRoutine(profile, observation, cursor);
+    if (routine?.tool === 'organize_storage' && !observation?.base) {
+        return call('ensure_base', {}, `${profile.displayName}: establish a safe workplace before storage`);
+    }
+    return routine ? call(routine.tool, routine.args, `${profile.displayName}: ${routine.reason}`) : null;
 }
 
 function selectProfessionTool(id, observation) {

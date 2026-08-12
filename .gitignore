@@ -10,6 +10,18 @@ yarn-debug.log*
 yarn-error.log*
 
 # Local runtime state
+.env
+.env.*
+!.env.example
+keys.json
+**/keys.json
+*credentials*.json
+*secrets*.json
+*.pem
+*.p12
+*.pfx
+*.jks
+.npmrc
 data/
 memory/
 artifacts/

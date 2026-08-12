@@ -37,6 +37,39 @@ async function moveNear(bot, position, range = 2, timeoutMs = 20000) {
     await navigate(bot, goal, position, timeoutMs, 'Timed out walking to target');
 }
 
+async function followPlayer(bot, username, options = {}) {
+    const range = Math.max(2, Math.min(8, Number(options.range || 3)));
+    const durationMs = Math.max(500, Math.min(5000, Number(options.durationMs || 1800)));
+    const player = bot.players?.[username]?.entity;
+    if (!player?.position) return { status: 'target_unavailable', username };
+    const actionVersion = Number(bot.sorimActionVersion || 0);
+    const distance = bot.entity?.position?.distanceTo(player.position) ?? Infinity;
+    if (distance <= range) {
+        stop(bot);
+        await sleep(Math.min(durationMs, 600));
+        return { status: 'near', username, distance };
+    }
+
+    const navigationVersion = beginNavigation(bot);
+    const goal = new goals.GoalFollow(player, range);
+    bot.pathfinder.setGoal(goal, true);
+    const deadline = Date.now() + durationMs;
+    try {
+        while (Date.now() < deadline) {
+            assertActionVersion(bot, actionVersion);
+            const current = bot.players?.[username]?.entity;
+            if (!current?.position) return { status: 'target_lost', username };
+            await sleep(150);
+        }
+        const finalTarget = bot.players?.[username]?.entity;
+        const finalDistance = finalTarget?.position && bot.entity?.position
+            ? bot.entity.position.distanceTo(finalTarget.position) : Infinity;
+        return { status: 'tracking', username, distance: finalDistance };
+    } finally {
+        stopNavigation(bot, navigationVersion);
+    }
+}
+
 async function moveBlock(bot, position, timeoutMs = 12000) {
     if (bot.entity?.position?.floored?.().equals(position)) return;
     const goal = new goals.GoalBlock(position.x, position.y, position.z);
@@ -403,6 +436,7 @@ async function waitForStableGround(bot, timeoutMs) {
 async function stepUpToward(bot, position) {
     let contact = contactObstacle(bot, position);
     if (contact.type !== 'step' || !contact.position) return false;
+    const initialContact = contact;
     let top = contact.position.offset(0, 1, 0);
     let reachedJumpHeight = false;
     let crossedOntoStep = false;
@@ -413,10 +447,10 @@ async function stepUpToward(bot, position) {
         // so diagonal and hillside jumps behave like ordinary player input.
         await bot.lookAt(top.offset(0.5, 0.7, 0.5), true);
         bot.setControlState('back', true);
-        await sleep(100);
+        await sleep(140);
         stop(bot);
         contact = contactObstacle(bot, position);
-        if (contact.type !== 'step' || !contact.position) return false;
+        if (contact.type !== 'step' || !contact.position) contact = initialContact;
         top = contact.position.offset(0, 1, 0);
         const origin = bot.entity.position.clone();
         synchronizeGroundedState(bot);
@@ -424,9 +458,13 @@ async function stepUpToward(bot, position) {
         bot.setControlState('forward', true);
         bot.setControlState('sprint', false);
         bot.setControlState('jump', true);
-        const deadline = Date.now() + 1400;
+        const deadline = Date.now() + 1050;
         while (Date.now() < deadline) {
-            reachedJumpHeight ||= bot.entity.position.y >= origin.y + 0.55;
+            const nowAtJumpHeight = bot.entity.position.y >= origin.y + 0.55;
+            if (nowAtJumpHeight && !reachedJumpHeight) {
+                reachedJumpHeight = true;
+                bot.setControlState('jump', false);
+            }
             const topCenter = top.offset(0.5, 0, 0.5);
             crossedOntoStep = reachedJumpHeight &&
                 bot.entity.position.y >= top.y - 0.08 &&
@@ -955,6 +993,7 @@ module.exports = {
     configure,
     resyncCollision,
     moveNear,
+    followPlayer,
     moveBlock,
     moveNearXZ,
     explore,

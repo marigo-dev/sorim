@@ -81,6 +81,17 @@ assert.equal(taskVerifier.verify(
 ).ok, false);
 
 assert.equal(taskVerifier.verify(
+    { tool: 'move_near', args: { x: 10, y: 64, z: 10, range: 2 } },
+    before,
+    { ...before, position: { x: 11, y: 64, z: 10 } }
+).ok, true);
+assert.equal(taskVerifier.verify(
+    { tool: 'move_near', args: { x: 10, y: 64, z: 10, range: 2 } },
+    before,
+    { ...before, position: { x: 20, y: 64, z: 20 } }
+).ok, false);
+
+assert.equal(taskVerifier.verify(
     { tool: 'organize_storage', args: {} },
     { ...before, inventory: { oak_log: 12 } },
     { ...before, inventory: { oak_log: 1 }, hasUsableChest: true },

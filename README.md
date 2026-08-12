@@ -243,15 +243,14 @@ ollama pull qwen3.5:9b
 
 ### One-click Windows launch
 
-After installing Java, Node.js, and Ollama and pulling the model, double-click
+After installing Java and Node.js and configuring the DeepSeek API key, double-click
 `start-sorim.bat` or run:
 
 ```powershell
 .\start-sorim.bat
 ```
 
-The launcher checks the Paper server, starts it when necessary, checks Ollama,
-warms the selected model, and then starts Marigo. In this development workspace
+The launcher checks the Paper server, starts it when necessary, and then starts Marigo with DeepSeek. In this development workspace
 it automatically uses `mc-server-26-2-test` on `127.0.0.1:25566`. In a clean
 clone it uses the published `mc-server` directory on `127.0.0.1:25565`.
 
@@ -260,19 +259,18 @@ without permission. Join the server and send `marigo otonom basla` in chat.
 
 Start the bot:
 
-PowerShell:
+Create a local `.env` file:
 
-```powershell
-$env:LLM_PROVIDER='ollama'
-$env:OLLAMA_MODEL='qwen3.5:9b'
-npm start
+```env
+USE_LLM=true
+LLM_PROVIDER=deepseek
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_API_KEY=your-deepseek-api-key
+DEEPSEEK_MODEL=deepseek-v4-flash
+USE_LLM_PLANNER=true
 ```
 
-Bash:
-
-```bash
-LLM_PROVIDER=ollama OLLAMA_MODEL=qwen3.5:9b npm start
-```
+Then run `npm start` or `start-sorim.bat`. The ignored `.env` file is loaded automatically.
 
 Expected behavior:
 
@@ -305,7 +303,7 @@ survival reactions and direct player commands remain above profession work in
 the behavior-tree priority order. Free-form multi-step requests are interpreted
 into a validated persistent task queue; invalid or unknown tools are rejected.
 
-Default Ollama endpoint:
+Optional local Ollama endpoint:
 
 ```text
 http://127.0.0.1:11434/api/chat
@@ -374,10 +372,13 @@ LLM:
 | Variable | Default | Description |
 | --- | --- | --- |
 | `USE_LLM` | `true` | Keep this enabled for normal AI-agent runs |
-| `LLM_PROVIDER` | `ollama` | `ollama`, `openai`, `openai-compatible`; `none` is only for diagnostics |
+| `LLM_PROVIDER` | `deepseek` | `deepseek`, `ollama`, `openai`, `openai-compatible`; `none` is only for diagnostics |
 | `LLM_TIMEOUT_MS` | `30000` | AI planning request timeout |
 | `CHAT_TIMEOUT_MS` | `45000` | AI chat request timeout; allows a cold local model to load |
 | `LLM_MODEL` | empty | Shared model override |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | DeepSeek Chat Completions API base URL |
+| `DEEPSEEK_API_KEY` | empty | Secret key stored only in the ignored local `.env` file |
+| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | Model used for chat, intent, tool selection, and colony planning |
 | `OLLAMA_URL` | `http://127.0.0.1:11434/api/chat` | Ollama native chat and tool-calling endpoint |
 | `OLLAMA_MODEL` | `qwen3.5:9b` | Ollama model; 8 GB GPUs should keep context bounded |
 | `OLLAMA_CONTEXT_SIZE` | `4096` | Benchmarked default that keeps Qwen 3.5 9B fully on an 8 GB GPU |
@@ -388,7 +389,7 @@ LLM:
 
 The local context comparison and raw measurements are in [docs/benchmarks/ollama-context.md](docs/benchmarks/ollama-context.md). On the tested RTX 5060 8 GB system, `4096` kept Qwen 3.5 9B fully on GPU and was selected as the default.
 
-Copy `.env.example` values into your shell or preferred environment loader as a starting point. Node.js does not automatically load this file.
+Copy `.env.example` to `.env` as a starting point. Sorim loads `.env` automatically and Git ignores it.
 
 ## 9. Colony Mode
 
@@ -452,8 +453,27 @@ marigo durum
 marigo otonom basla
 marigo otonom dur
 marigo beni takip et
+marigo yanima gel
+marigo beni koru
+marigo burayi koru
+marigo dur
 marigo agac kes
 ```
+
+`follow` and `guard` are persistent directives: they survive ordinary task loops
+and reconnects until the player says `dur` or replaces them. `come` is a one-time,
+distance-verified movement task. Safety reactions such as eating, surfacing, and
+combat remain above all three behaviors.
+
+DeepSeek can also compose a new profession from Sorim's registered tools:
+
+```text
+marigo artik orman bekcisisin; guvenli agaclari kes, fidan dik ve 32 odunu depola
+```
+
+Generated professions are schema-checked, persisted, and rejected if they request
+an unknown tool or invalid arguments. This composes existing body skills; it does
+not allow the model to generate or execute JavaScript at runtime.
 
 Status returns:
 

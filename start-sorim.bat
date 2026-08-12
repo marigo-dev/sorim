@@ -17,7 +17,9 @@ if not defined SORIM_SERVER_DIR (
 if not defined MC_HOST set "MC_HOST=127.0.0.1"
 if not defined MC_USERNAME set "MC_USERNAME=marigo"
 if not defined MC_VERSION set "MC_VERSION=26.2"
-if not defined LLM_PROVIDER set "LLM_PROVIDER=ollama"
+if not defined LLM_PROVIDER set "LLM_PROVIDER=deepseek"
+if not defined DEEPSEEK_BASE_URL set "DEEPSEEK_BASE_URL=https://api.deepseek.com"
+if not defined DEEPSEEK_MODEL set "DEEPSEEK_MODEL=deepseek-v4-flash"
 if not defined OLLAMA_MODEL set "OLLAMA_MODEL=qwen3.5:9b"
 if not defined OLLAMA_URL set "OLLAMA_URL=http://127.0.0.1:11434/api/chat"
 if not defined OLLAMA_CONTEXT_SIZE set "OLLAMA_CONTEXT_SIZE=4096"
@@ -29,7 +31,11 @@ if not defined AUTONOMOUS_ON_START set "AUTONOMOUS_ON_START=false"
 echo [SORIM] Server: !SORIM_SERVER_DIR!
 echo [SORIM] Minecraft: !MC_HOST!:!MC_PORT! version !MC_VERSION!
 echo [SORIM] Bot: !MC_USERNAME!
-echo [SORIM] AI: !LLM_PROVIDER! / !OLLAMA_MODEL! planner=!USE_LLM_PLANNER!
+if /I "!LLM_PROVIDER!"=="deepseek" (
+    echo [SORIM] AI: !LLM_PROVIDER! / !DEEPSEEK_MODEL! planner=!USE_LLM_PLANNER!
+) else (
+    echo [SORIM] AI: !LLM_PROVIDER! / !OLLAMA_MODEL! planner=!USE_LLM_PLANNER!
+)
 
 if /I "%SORIM_DRY_RUN%"=="true" (
     echo [SORIM] Dry run complete.

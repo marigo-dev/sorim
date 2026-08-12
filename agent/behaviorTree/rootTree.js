@@ -13,9 +13,9 @@ function createRootTree(options) {
             if (!context.commandCall) return null;
             return decision('command', context.commandCall);
         }),
-        new Action('follow_owner', context => {
-            if (!context.followCall) return null;
-            return decision('follow', context.followCall);
+        new Action('persistent_directive', context => {
+            if (!context.directiveCall && !context.followCall) return null;
+            return decision('directive', context.directiveCall || context.followCall);
         }),
         new Action('active_task', context => {
             const call = taskQueue.toolCall({ observation: context.observation, bot: context.bot });

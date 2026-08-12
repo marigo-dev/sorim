@@ -1725,9 +1725,12 @@ async function followMineRoute(bot, route, actionVersion) {
     for (; index >= 0; index--) {
         actionControl.assertActive(bot, actionVersion);
         const target = new Vec3(route[index].x, route[index].y, route[index].z);
-        await widenAscentApproach(bot, target);
         const climbing = target.y > bot.entity.position.y + 0.45;
         let reached = climbing && await finishSafeAscent(bot, target);
+        if (climbing && !reached) {
+            await widenAscentApproach(bot, target);
+            reached = await finishSafeAscent(bot, target);
+        }
         if (!reached) {
             try {
                 await movement.moveBlock(bot, target, 3500);
@@ -2024,7 +2027,6 @@ async function syncRecoveryStep(bot, next) {
 }
 
 async function finishSafeAscent(bot, next) {
-    await widenAscentApproach(bot, next);
     const current = bot.entity.position.floored();
     await digIfNeeded(bot, current.offset(0, 2, 0));
     const feet = bot.blockAt(next);
@@ -2050,6 +2052,7 @@ async function finishSafeAscent(bot, next) {
             primeGroundedJump(bot);
             await bot.lookAt(new Vec3(center.x, beforeY + 1.2, center.z), true);
             bot.setControlState('sprint', false);
+            bot.setControlState('forward', true);
             bot.setControlState('jump', true);
             const riseDeadline = Date.now() + 800;
             while (
@@ -2059,7 +2062,7 @@ async function finishSafeAscent(bot, next) {
                 await movement.sleep(25);
             }
             if (bot.entity.position.y >= next.y - 0.22) {
-                bot.setControlState('forward', true);
+                bot.setControlState('jump', false);
             }
             const deadline = Date.now() + 1500;
             while (Date.now() < deadline) {

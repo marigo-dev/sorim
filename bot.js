@@ -20,6 +20,7 @@ const TaskQueue = require('./agent/taskQueue');
 const taskVerifier = require('./agent/taskVerifier');
 const { PreconditionResolver } = require('./agent/preconditionResolver');
 const persistentMemory = require('./agent/persistentMemory');
+const DirectiveManager = require('./agent/directiveManager');
 const ProfessionManager = require('./professions/professionManager');
 const { createRootTree } = require('./agent/behaviorTree/rootTree');
 const blockPolicy = require('./safety/blockPolicy');
@@ -52,7 +53,17 @@ const skillTree = new SkillTree();
 const sensors = new SensorManager(bot, { getBase: memory.getBase });
 const blackboard = new Blackboard();
 const taskQueue = new TaskQueue(persistentMemory, { preconditionResolver: new PreconditionResolver() });
-const professionManager = new ProfessionManager(persistentMemory);
+const professionManager = new ProfessionManager(persistentMemory, {
+    tools: toolRegistry.TOOL_DEFINITIONS.filter(tool => ![
+        'follow_player', 'move_near', 'fight_mob', 'evade_hostile',
+        'build_blueprint', 'build_showcase', 'recover_items'
+    ].includes(tool.name)),
+    validateToolCall: call => toolRegistry.validateToolCall(
+        toolRegistry.normalizeToolCall(call),
+        toolRegistry.TOOL_DEFINITIONS
+    )
+});
+const directiveManager = new DirectiveManager(persistentMemory);
 const behaviorTree = createRootTree({ taskQueue, professionManager });
 let running = true;
 let busy = false;
@@ -66,7 +77,6 @@ const SOLO_CHARACTER = {
     speech: { tone: 'warm, curious, and conversational', verbosity: 'medium' },
     values: ['friendship', 'cooperation', 'survival', 'honesty']
 };
-let activeFollowUsername = null;
 let queuedUserCommand = null;
 let autonomousMode = process.env.AUTONOMOUS_ON_START === 'true';
 let cancelRequested = false;
@@ -139,8 +149,9 @@ bot.on('chat', async (username, message) => {
     if (lower.includes('status') || lower.includes('durum')) {
         const pos = observation.position;
         const profession = professionManager.current()?.id || 'none';
+        const directive = directiveManager.current()?.type || 'none';
         const task = taskQueue.summary()?.goal || 'none';
-        bot.chat(`Mode:${autonomousMode ? 'auto' : 'manual'} job:${profession} task:${task} xyz:${pos.x},${pos.y},${pos.z} health:${bot.health.toFixed(1)} food:${bot.food}`);
+        bot.chat(`Mode:${autonomousMode ? 'auto' : 'manual'} job:${profession} directive:${directive} task:${task} xyz:${pos.x},${pos.y},${pos.z} health:${bot.health.toFixed(1)} food:${bot.food}`);
         return;
     }
 
@@ -302,8 +313,9 @@ async function loop() {
             const commandCall = queuedUserCommand;
             queuedUserCommand = null;
 
+            const directiveCall = directiveManager.nextTool(bot, observation);
             const directedMode = autonomousMode || Boolean(
-                activeFollowUsername || commandCall || taskQueue.active() ||
+                directiveCall || commandCall || taskQueue.active() ||
                 professionManager.current()?.status === 'active'
             );
             const immediate = pendingSafetyCall || (directedMode
@@ -311,18 +323,6 @@ async function loop() {
                 : choosePassiveSafetyAction(observation, level));
             pendingSafetyCall = null;
             const safetyCall = immediate ? toolRegistry.normalizeToolCall(immediate) : null;
-            const followed = activeFollowUsername ? bot.players[activeFollowUsername]?.entity : null;
-            const followCall = followed ? {
-                tool: 'move_near',
-                args: {
-                    x: followed.position.x,
-                    y: followed.position.y,
-                    z: followed.position.z,
-                    range: 2
-                },
-                reason: `Follow ${activeFollowUsername}`
-            } : null;
-
             const availableTools = toolRegistry.constrainToolsForObservation(
                 toolRegistry.toolsForLevel(level),
                 level,
@@ -331,7 +331,7 @@ async function loop() {
             let source = 'fallback';
             let toolCall = null;
 
-            const hasDirectedWork = Boolean(commandCall || followCall || taskQueue.active() || professionManager.current());
+            const hasDirectedWork = Boolean(commandCall || directiveCall || taskQueue.active() || professionManager.current());
             const deterministicProgression = autonomousMode && !safetyCall && !hasDirectedWork &&
                 level.id !== 'L21_STABLE_SURVIVAL';
             if (deterministicProgression) {
@@ -372,7 +372,7 @@ async function loop() {
                 observation,
                 safetyCall,
                 commandCall,
-                followCall,
+                directiveCall,
                 autonomousCall: toolCall,
                 autonomousSource: source,
                 bot
@@ -554,7 +554,7 @@ function parseUserCommand(username, lowerMessage) {
     ])) {
         return {
             type: 'help',
-            reply: 'Komutlar: beni takip et, dur, odun topla/agac kes, tas topla, yemek bul, build showcase, build <isim>, otonom basla, otonom dur, durum.'
+        reply: 'Komutlar: beni takip et, yanima gel, beni/burayi koru, dur, odun veya tas topla, yemek bul, meslek ver, otonom basla, durum.'
         };
     }
 
@@ -661,6 +661,47 @@ function parseUserCommand(username, lowerMessage) {
             type: 'follow',
             username,
             reply: 'Tamam, seni takip ediyorum.'
+        };
+    }
+
+    if (includesAny(foldedMessage, [
+        'yanima gel',
+        'buraya gel',
+        'come here',
+        'come to me'
+    ])) {
+        return {
+            type: 'come',
+            username,
+            reply: 'Tamam, yanina geliyorum.'
+        };
+    }
+
+    if (includesAny(foldedMessage, [
+        'beni koru',
+        'yanimda nobet tut',
+        'guard me',
+        'protect me'
+    ])) {
+        return {
+            type: 'guard',
+            username,
+            target: 'player',
+            reply: 'Tamam, yaninda kalip seni koruyacagim.'
+        };
+    }
+
+    if (includesAny(foldedMessage, [
+        'burayi koru',
+        'burada nobet tut',
+        'guard here',
+        'protect this place'
+    ])) {
+        return {
+            type: 'guard',
+            username,
+            target: 'position',
+            reply: 'Tamam, bu noktada nobet tutacagim.'
         };
     }
 
@@ -796,14 +837,14 @@ function applyUserCommand(command) {
     if (command.type === 'auto_start') {
         autonomousMode = true;
         persistentMemory.pauseProfession(false);
-        activeFollowUsername = null;
+        directiveManager.stop();
         queuedUserCommand = null;
         return;
     }
 
     if (command.type === 'auto_stop') {
         autonomousMode = false;
-        activeFollowUsername = null;
+        directiveManager.stop();
         queuedUserCommand = null;
         haltCurrentAction();
         return;
@@ -811,14 +852,49 @@ function applyUserCommand(command) {
 
     if (command.type === 'follow') {
         autonomousMode = false;
-        activeFollowUsername = command.username;
+        directiveManager.follow(command.username);
         queuedUserCommand = null;
+        taskQueue.cancelAll('replaced by follow directive');
+        haltCurrentAction('follow directive');
+        return;
+    }
+
+    if (command.type === 'come') {
+        const entity = bot.players?.[command.username]?.entity;
+        if (!entity?.position) return;
+        autonomousMode = false;
+        directiveManager.stop();
+        taskQueue.cancelAll('replaced by come command');
+        taskQueue.enqueue({
+            goal: `come to ${command.username}`,
+            requestedBy: command.username,
+            steps: [{
+                tool: 'move_near',
+                args: { x: entity.position.x, y: entity.position.y, z: entity.position.z, range: 2 },
+                reason: `Go to ${command.username}'s requested position`
+            }]
+        });
+        haltCurrentAction('come command');
+        return;
+    }
+
+    if (command.type === 'guard') {
+        const entity = bot.players?.[command.username]?.entity;
+        autonomousMode = false;
+        taskQueue.cancelAll('replaced by guard directive');
+        directiveManager.guard({
+            username: command.target === 'player' ? command.username : null,
+            anchor: command.target === 'position' ? entity?.position : null,
+            assignedBy: command.username,
+            range: 5
+        });
+        haltCurrentAction('guard directive');
         return;
     }
 
     if (command.type === 'stop') {
         autonomousMode = false;
-        activeFollowUsername = null;
+        directiveManager.stop();
         queuedUserCommand = null;
         taskQueue.cancelAll('stopped by player');
         persistentMemory.pauseProfession(true);
@@ -830,7 +906,7 @@ function applyUserCommand(command) {
         const profile = professionManager.assign(command.profession, command.username);
         if (!profile) return;
         autonomousMode = false;
-        activeFollowUsername = null;
+        directiveManager.stop();
         queuedUserCommand = null;
         taskQueue.cancelAll('replaced by profession assignment');
         haltCurrentAction('profession changed');
@@ -856,7 +932,7 @@ function applyUserCommand(command) {
 
     if (command.type === 'tool') {
         autonomousMode = false;
-        activeFollowUsername = null;
+        directiveManager.stop();
         queuedUserCommand = null;
         taskQueue.cancelAll('replaced by player command');
         taskQueue.enqueue({
@@ -873,15 +949,46 @@ function applyAiIntent(username, intent) {
         const profile = professionManager.assign(intent.profession, username);
         if (!profile) return null;
         autonomousMode = false;
-        activeFollowUsername = null;
+        directiveManager.stop();
         taskQueue.cancelAll('replaced by profession assignment');
         haltCurrentAction('profession changed');
         return `Tamam, artik ${profile.id} olarak calisacagim.`;
+    }
+    if (intent.intent === 'create_profession') {
+        const created = professionManager.createAndAssign(intent.professionProfile, username);
+        if (!created.ok) return `Bu meslegi guvenli sekilde olusturamadim: ${created.error}`.slice(0, 220);
+        autonomousMode = false;
+        directiveManager.stop();
+        taskQueue.cancelAll('replaced by custom profession assignment');
+        haltCurrentAction('custom profession created');
+        return `${created.profile.displayName} meslegini ogrendim ve bu isi yapmaya basliyorum.`;
     }
     if (intent.intent === 'stop_profession') {
         professionManager.stop();
         haltCurrentAction('profession stopped');
         return 'Tamam, meslegimi biraktim.';
+    }
+    if (intent.intent === 'follow') {
+        applyUserCommand({ type: 'follow', username });
+        return 'Tamam, dur diyene kadar seni takip edecegim.';
+    }
+    if (intent.intent === 'come') {
+        applyUserCommand({ type: 'come', username });
+        return 'Tamam, bulundugun noktaya geliyorum.';
+    }
+    if (intent.intent === 'guard') {
+        applyUserCommand({
+            type: 'guard',
+            username,
+            target: intent.target === 'position' ? 'position' : 'player'
+        });
+        return intent.target === 'position'
+            ? 'Tamam, bu noktada nobet tutacagim.'
+            : 'Tamam, yaninda kalip seni koruyacagim.';
+    }
+    if (intent.intent === 'stop') {
+        applyUserCommand({ type: 'stop' });
+        return 'Tamam, mevcut direktif ve gorevi durdurdum.';
     }
     if (intent.intent === 'create_goal' && Array.isArray(intent.steps) && intent.steps.length > 0) {
         const available = toolRegistry.TOOL_DEFINITIONS;
@@ -896,7 +1003,7 @@ function applyAiIntent(username, intent) {
             steps
         });
         autonomousMode = false;
-        activeFollowUsername = null;
+        directiveManager.stop();
         return `Tamam, ${steps.length} adimli gorevi baslatiyorum.`;
     }
     return null;

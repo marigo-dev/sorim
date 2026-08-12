@@ -252,6 +252,12 @@ const TOOL_DEFINITIONS = [
         actions: ['build_colony_marker']
     },
     {
+        name: 'follow_player',
+        description: 'Track a visible player continuously for a short bounded interval. Persistent directives reissue it until stopped.',
+        args: { username: 'string required', range: 'number optional', durationMs: 'number optional' },
+        actions: ['follow_player', 'move_near']
+    },
+    {
         name: 'move_near',
         description: 'Move near explicit coordinates. Use sparingly; higher level tools are safer.',
         args: { x: 'number required', y: 'number required', z: 'number required', range: 'number optional' },
@@ -363,6 +369,7 @@ function actionToToolCall(action) {
         count_shared_storage: 'count_shared_storage',
         build_colony_marker: 'build_colony_marker',
         move_near: 'move_near',
+        follow_player: 'follow_player',
         idle: 'wait_safe'
     };
 
@@ -419,6 +426,13 @@ async function executeToolCall(bot, call) {
             Number(args.range || 2)
         );
         return;
+    }
+
+    if (call.tool === 'follow_player') {
+        return movement.followPlayer(bot, requireString(args.username, 'username'), {
+            range: Number(args.range || 3),
+            durationMs: Number(args.durationMs || 1800)
+        });
     }
 
     if (call.tool === 'collect_stone') {

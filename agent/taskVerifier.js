@@ -57,6 +57,14 @@ function verify(call, before, after, options = {}) {
         return distance <= 4 ? passed(`Reached base at distance ${distance.toFixed(2)}`, { distance }) :
             failed(`Still ${distance.toFixed(2)} blocks from base`, { distance });
     }
+    if (tool === 'move_near') {
+        const target = { x: Number(args.x), y: Number(args.y), z: Number(args.z) };
+        const distance = distanceBetween(after.position, target);
+        const accepted = Math.max(1, Number(args.range || 2)) + 1.25;
+        return distance <= accepted
+            ? passed(`Movement target reached within ${distance.toFixed(1)} blocks`, { distance, accepted })
+            : failed(`Movement ended ${distance.toFixed(1)} blocks from target`, { distance, accepted });
+    }
     if (tool === 'ensure_base' || tool === 'build_shelter') {
         const base = after.base || memory.getBase();
         if (!base) return failed('Base was not written to memory');
@@ -83,12 +91,6 @@ function verify(call, before, after, options = {}) {
             return passed('Storage is ready; there were no excess items to deposit', { deposited: {} });
         }
         return failed('No inventory transfer into a usable chest was confirmed', { deposited });
-    }
-    if (tool === 'move_near') {
-        const distance = distanceBetween(after.position, args);
-        const range = Number(args.range || 2) + 0.75;
-        return distance <= range ? passed(`Reached target at distance ${distance.toFixed(2)}`, { distance }) :
-            failed(`Movement ended ${distance.toFixed(2)} blocks from target`, { distance });
     }
     if (tool === 'eat_food') {
         const foodBefore = Number(options.beforeObservation?.food ?? 20);

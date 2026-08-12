@@ -1,7 +1,8 @@
+require('dotenv').config({ quiet: true });
 const axios = require('axios');
 
 const USE_LLM = process.env.USE_LLM !== 'false';
-const LLM_PROVIDER = (process.env.LLM_PROVIDER || (USE_LLM ? 'ollama' : 'none')).toLowerCase();
+const LLM_PROVIDER = (process.env.LLM_PROVIDER || (USE_LLM ? 'deepseek' : 'none')).toLowerCase();
 
 const OLLAMA_URL = toOllamaChatUrl(process.env.OLLAMA_URL || 'http://127.0.0.1:11434/api/chat');
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || process.env.LLM_MODEL || 'qwen3.5:9b';
@@ -10,6 +11,10 @@ const OPENAI_BASE_URL = stripTrailingSlash(process.env.OPENAI_BASE_URL || 'https
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_MODEL = process.env.OPENAI_MODEL || process.env.LLM_MODEL || 'gpt-4.1-mini';
 
+const DEEPSEEK_BASE_URL = stripTrailingSlash(process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com');
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || process.env.LLM_MODEL || 'deepseek-v4-flash';
+
 async function askForToolCall({ level, observation, tools }) {
     if (!USE_LLM || LLM_PROVIDER === 'none') return null;
 
@@ -17,6 +22,10 @@ async function askForToolCall({ level, observation, tools }) {
     try {
         if (LLM_PROVIDER === 'ollama') {
             return await askOllamaToolCall(prompt, tools);
+        }
+
+        if (LLM_PROVIDER === 'deepseek') {
+            return await askDeepSeekToolCall(prompt, tools);
         }
 
         if (LLM_PROVIDER === 'openai' || LLM_PROVIDER === 'openai-compatible') {
@@ -44,6 +53,10 @@ async function askForChatReply({ username, message, observation, level, professi
             return sanitizeChatReply(await askOllamaChatReply(prompt));
         }
 
+        if (LLM_PROVIDER === 'deepseek') {
+            return sanitizeChatReply(await askDeepSeekChatReply(prompt));
+        }
+
         if (LLM_PROVIDER === 'openai' || LLM_PROVIDER === 'openai-compatible') {
             return sanitizeChatReply(await askOpenAiCompatibleChatReply(prompt));
         }
@@ -61,6 +74,9 @@ async function interpretPlayerIntent({ username, message, observation, professio
     try {
         if (LLM_PROVIDER === 'ollama') {
             return normalizeIntent(await askOllamaJson(prompt, intentSchema(), 360), message, observation);
+        }
+        if (LLM_PROVIDER === 'deepseek') {
+            return normalizeIntent(await askDeepSeekJson(prompt, 360), message, observation);
         }
         if (LLM_PROVIDER === 'openai' || LLM_PROVIDER === 'openai-compatible') {
             return normalizeIntent(await askOpenAiJson(prompt, 360), message, observation);
@@ -80,6 +96,9 @@ async function askForColonyPlan({ snapshot, existing, tools }) {
         if (LLM_PROVIDER === 'ollama') {
             return await askOllamaJson(prompt, colonyPlanSchema(allowedTools), 420);
         }
+        if (LLM_PROVIDER === 'deepseek') {
+            return await askDeepSeekJson(prompt, 420);
+        }
         if (LLM_PROVIDER === 'openai' || LLM_PROVIDER === 'openai-compatible') {
             return await askOpenAiJson(prompt, 420);
         }
@@ -87,6 +106,69 @@ async function askForColonyPlan({ snapshot, existing, tools }) {
         console.log(`[LLM] Colony planning failed, deterministic planner will continue: ${error.message}`);
     }
     return null;
+}
+
+async function askDeepSeekToolCall(prompt, tools) {
+    const response = await postDeepSeek({
+        messages: [
+            {
+                role: 'system',
+                content: 'You control a Minecraft agent through tools. Select exactly one safe tool.'
+            },
+            { role: 'user', content: prompt }
+        ],
+        tools: tools.map(toOllamaTool),
+        tool_choice: 'auto',
+        thinking: { type: 'disabled' },
+        temperature: 0,
+        max_tokens: 180
+    });
+    const message = response.data?.choices?.[0]?.message || {};
+    const toolCall = message.tool_calls?.[0]?.function;
+    if (toolCall?.name) {
+        return {
+            tool: toolCall.name,
+            args: parseArguments(toolCall.arguments),
+            reason: 'DeepSeek selected a native tool call'
+        };
+    }
+    return parseJson(message.content || '');
+}
+
+async function askDeepSeekChatReply(prompt) {
+    const value = await askDeepSeekJson(
+        prompt,
+        Number(process.env.CHAT_MAX_TOKENS || 220),
+        Number(process.env.CHAT_TIMEOUT_MS || 45000)
+    );
+    return value?.reply || value?.message || value?.answer || '';
+}
+
+async function askDeepSeekJson(prompt, maxTokens, timeout) {
+    const response = await postDeepSeek({
+        messages: [{ role: 'user', content: prompt }],
+        thinking: { type: 'disabled' },
+        temperature: 0.15,
+        max_tokens: maxTokens,
+        response_format: { type: 'json_object' }
+    }, timeout);
+    return parseJson(response.data?.choices?.[0]?.message?.content || '');
+}
+
+async function postDeepSeek(body, timeout) {
+    if (!DEEPSEEK_API_KEY) throw new Error('DEEPSEEK_API_KEY is required for the deepseek provider');
+    const timeoutMs = Number(timeout || process.env.LLM_TIMEOUT_MS || 45000);
+    return axios.post(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+        model: DEEPSEEK_MODEL,
+        ...body
+    }, {
+        timeout: timeoutMs,
+        signal: AbortSignal.timeout(timeoutMs),
+        headers: {
+            Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+            'Content-Type': 'application/json'
+        }
+    });
 }
 
 async function askOllamaToolCall(prompt, tools) {
@@ -321,7 +403,11 @@ function buildIntentPrompt({ username, message, observation, profession, task, t
         'Interpret a Minecraft player request for Marigo.',
         'Return JSON only. Never invent tools outside the supplied list.',
         'Use intent chat when the message is not an actionable request.',
-        'Valid intents: chat, assign_profession, stop_profession, create_goal.',
+        'Valid intents: chat, follow, come, guard, stop, assign_profession, create_profession, stop_profession, create_goal.',
+        'Use follow for a persistent follow-me request, come for a one-time come-here request, and guard for a persistent guard-me or guard-here request.',
+        'Use create_profession when the player invents a profession that is not already available.',
+        'A custom profession must contain safe repeatable routines using only supplied tools. Never use coordinate movement, player following, creative showcases, or direct combat as profession routines.',
+        'Supported routine conditions: always, inventory_below, inventory_at_least, observation_equals.',
         'For create_goal, produce 1-8 ordered tool steps.',
         'Use exact tool argument names and include every required argument. Do not invent arguments.',
         'For collecting wood use mine_block with target any_log and the requested count.',
@@ -380,8 +466,34 @@ function intentSchema() {
     return {
         type: 'object',
         properties: {
-            intent: { type: 'string', enum: ['chat', 'assign_profession', 'stop_profession', 'create_goal'] },
+            intent: { type: 'string', enum: ['chat', 'follow', 'come', 'guard', 'stop', 'assign_profession', 'create_profession', 'stop_profession', 'create_goal'] },
             profession: { type: 'string' },
+            target: { type: 'string', enum: ['player', 'position'] },
+            professionProfile: {
+                type: 'object',
+                properties: {
+                    id: { type: 'string' },
+                    displayName: { type: 'string' },
+                    purpose: { type: 'string' },
+                    aliases: { type: 'array', items: { type: 'string' } },
+                    protectedBlocks: { type: 'array', items: { type: 'string' } },
+                    stockTargets: { type: 'object' },
+                    routines: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                tool: { type: 'string' },
+                                args: { type: 'object' },
+                                reason: { type: 'string' },
+                                when: { type: 'object' }
+                            },
+                            required: ['tool', 'args', 'reason']
+                        }
+                    }
+                },
+                required: ['id', 'displayName', 'purpose', 'routines']
+            },
             goal: { type: 'string' },
             steps: {
                 type: 'array',
@@ -405,13 +517,40 @@ function looksActionable(message) {
     return [
         'topla', 'kes', 'yap', 'kur', 'git', 'gel', 'birak', 'gotur', 'koy',
         'takip', 'ol', 'calis', 'meslek', 'farmer', 'miner', 'builder', 'fisher',
-        'collect', 'build', 'follow', 'bring', 'store', 'profession'
+        'collect', 'build', 'follow', 'bring', 'store', 'profession', 'guard', 'protect', 'koru', 'nobet', 'dur', 'artik'
     ].some(word => new RegExp(`(^|[^a-z0-9_])${word}([^a-z0-9_]|$)`, 'i').test(text));
 }
 
 function normalizeIntent(value, message, observation) {
     if (!value || typeof value !== 'object') return null;
     const result = { ...value };
+    const foldedMessage = foldTurkish(message);
+    if (result.intent === 'guard') {
+        result.target = result.target === 'position' || /burada|burayi|bu nokta|here|this place/.test(foldedMessage)
+            ? 'position' : 'player';
+    }
+    if (result.intent === 'assign_profession' && !result.profession) {
+        result.profession = result.professionName || result.job || '';
+    }
+    if (result.intent === 'create_profession') {
+        const source = result.professionProfile && typeof result.professionProfile === 'object'
+            ? result.professionProfile : result;
+        const id = source.id || source.professionName || source.profession || source.job || 'custom_profession';
+        result.professionProfile = {
+            id,
+            displayName: source.displayName || source.name || source.professionName || id,
+            purpose: source.purpose || source.description || `Perform the player-defined ${id} profession.`,
+            aliases: Array.isArray(source.aliases) ? source.aliases : [],
+            protectedBlocks: Array.isArray(source.protectedBlocks) ? source.protectedBlocks : [],
+            stockTargets: source.stockTargets && typeof source.stockTargets === 'object' ? source.stockTargets : {},
+            routines: (Array.isArray(source.routines) ? source.routines : []).slice(0, 10).map(routine => ({
+                tool: routine.tool,
+                args: parseArguments(routine.args),
+                reason: String(routine.reason || `${id}: ${routine.tool || 'work'}`).slice(0, 180),
+                when: routine.when || routine.condition || { type: 'always' }
+            }))
+        };
+    }
     if (Array.isArray(result.steps) && result.steps.length > 0 && result.intent === 'chat') {
         result.intent = 'create_goal';
     }
@@ -424,7 +563,7 @@ function normalizeIntent(value, message, observation) {
             }
             return normalized;
         });
-        const folded = foldTurkish(message);
+        const folded = foldedMessage;
         const wantsStorage = /sandik|sandig|chest|depo/.test(folded);
         if (wantsStorage) {
             const storageOnly = /birak|koy|duzenle|store|deposit/.test(folded) &&
@@ -605,5 +744,6 @@ module.exports = {
     askForChatReply,
     interpretPlayerIntent,
     askForColonyPlan,
-    buildChatPrompt
+    buildChatPrompt,
+    normalizeIntent
 };

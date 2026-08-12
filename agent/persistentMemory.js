@@ -33,6 +33,43 @@ function getProfession() {
     return clone(state.profession);
 }
 
+function getDirective() {
+    return clone(state.directive);
+}
+
+function setDirective(directive) {
+    state.directive = directive?.type ? {
+        type: String(directive.type),
+        username: directive.username || null,
+        anchor: directive.anchor ? position(directive.anchor) : null,
+        range: Math.max(1, Math.min(12, Number(directive.range || 3))),
+        assignedBy: directive.assignedBy || directive.username || null,
+        assignedAt: Number(directive.assignedAt || Date.now())
+    } : null;
+    addEpisode(
+        state.directive ? 'directive_started' : 'directive_stopped',
+        state.directive ? `Persistent ${state.directive.type} directive started.` : 'Persistent player directive stopped.',
+        0.75,
+        state.directive || {}
+    );
+    scheduleSave();
+    return clone(state.directive);
+}
+
+function getCustomProfessions() {
+    return clone(state.customProfessions);
+}
+
+function saveCustomProfession(profile) {
+    if (!profile?.id) return null;
+    state.customProfessions[profile.id] = clone(profile);
+    addEpisode('profession_created', `Learned custom profession ${profile.id}.`, 0.85, {
+        displayName: profile.displayName || profile.id
+    });
+    scheduleSave();
+    return clone(profile);
+}
+
 function setProfession(id, assignedBy) {
     state.profession = {
         id,
@@ -220,6 +257,8 @@ function flushTimer() {
 function defaults() {
     return {
         profession: null,
+        directive: null,
+        customProfessions: {},
         players: {},
         conversation: [],
         episodes: [],
@@ -236,6 +275,8 @@ function normalize(saved) {
     return {
         ...initial,
         profession: saved?.profession?.id ? plainObject(saved.profession) : null,
+        directive: saved?.directive?.type ? plainObject(saved.directive) : null,
+        customProfessions: plainObject(saved?.customProfessions),
         players: plainObject(saved?.players),
         conversation: Array.isArray(saved?.conversation) ? saved.conversation.slice(-MAX_CONVERSATION) : [],
         episodes: Array.isArray(saved?.episodes) ? saved.episodes.slice(-MAX_EPISODES) : [],
@@ -296,6 +337,10 @@ module.exports = {
     flush,
     getState,
     getProfession,
+    getDirective,
+    setDirective,
+    getCustomProfessions,
+    saveCustomProfession,
     setProfession,
     stopProfession,
     pauseProfession,
