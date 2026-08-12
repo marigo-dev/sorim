@@ -82,6 +82,11 @@ class TaskQueue {
         const step = this.currentStep();
         if (!task || !step) return;
         step.lastError = String(error?.message || error || 'unknown error').slice(0, 300);
+        const progress = applyCountedProgress(step, error?.details);
+        if (progress > 0) {
+            step.attempts = Math.max(0, step.attempts - 1);
+            step.progress = Number(step.progress || 0) + progress;
+        }
         if (step.attempts >= Number(step.maxAttempts || 3)) {
             step.status = 'failed';
             task.status = 'failed';
@@ -131,6 +136,15 @@ class TaskQueue {
     save() {
         this.store?.setTaskQueue?.(this.tasks);
     }
+}
+
+function applyCountedProgress(step, details = {}) {
+    if (!['mine_block', 'collect_stone'].includes(step.tool)) return 0;
+    const gained = Math.max(0, Math.floor(Number(details?.gained || 0)));
+    const requested = Math.max(1, Math.floor(Number(step.args?.count || details?.requested || 1)));
+    if (gained <= 0 || gained >= requested) return 0;
+    step.args = { ...step.args, count: requested - gained };
+    return gained;
 }
 
 function normalizeTasks(tasks) {

@@ -12,13 +12,22 @@ const BUILD_BLOCKS = [
     'oak_planks',
     'birch_planks',
     'spruce_planks',
+    'jungle_planks',
+    'acacia_planks',
+    'dark_oak_planks',
+    'cherry_planks',
+    'mangrove_planks',
     'pale_oak_planks'
 ];
 const HOUSE_RADIUS = 2;
 const HOUSE_ROOF_Y = 3;
 const SHELL_TARGET = 67;
 const STONE_BLOCKS = ['cobblestone'];
-const WOOD_BLOCKS = ['oak_planks', 'birch_planks', 'spruce_planks', 'pale_oak_planks'];
+const WOOD_BLOCKS = [
+    'oak_planks', 'birch_planks', 'spruce_planks', 'jungle_planks',
+    'acacia_planks', 'dark_oak_planks', 'cherry_planks', 'mangrove_planks',
+    'pale_oak_planks'
+];
 let activeShelterBase = null;
 let activeShelterShellReady = false;
 let pendingShelterSite = null;
@@ -135,13 +144,18 @@ async function buildSafeShelter(bot) {
         throw new Error('Shelter chest could not be placed inside the base');
     }
     await placeDoor(bot, base.offset(0, 0, -2));
-    await movement.moveNear(bot, base, 1, 10000);
     memory.setBase(base);
     memory.clearConstructionBase();
     baseEntryFailures = 0;
     blockPolicy.syncBaseProtection(base);
     activeShelterBase = null;
     activeShelterShellReady = false;
+    try {
+        await movement.moveNear(bot, base, 1, 10000);
+    } catch (error) {
+        movement.stop(bot);
+        console.log(`[SHELTER] base complete; entry deferred: ${error.message}`);
+    }
     return { base: { x: base.x, y: base.y, z: base.z }, shellScore };
 }
 
@@ -845,6 +859,7 @@ function clearBlock(bot, block) {
 }
 
 module.exports = {
+    SHELL_TARGET,
     buildSafeShelter,
     scoreShelterShell,
     returnToBase,

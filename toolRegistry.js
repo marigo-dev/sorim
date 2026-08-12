@@ -426,7 +426,7 @@ async function executeToolCall(bot, call) {
 
     if (call.tool === 'mine_block') {
         const target = requireString(args.target, 'target');
-        return mine.mineBlock(bot, { target });
+        return mineRequestedBlocks(bot, target, Number(args.count || 1));
     }
 
     if (call.tool === 'craft_item') {
@@ -664,6 +664,45 @@ function optionalPosition(args) {
         return { x: args.x, y: args.y, z: args.z };
     }
     return null;
+}
+
+async function mineRequestedBlocks(bot, target, requestedCount) {
+    const requested = Math.max(1, Math.min(64, Math.floor(requestedCount || 1)));
+    const before = countMineDrop(bot, target);
+    let attempts = 0;
+    let stagnantAttempts = 0;
+    let lastError = null;
+    const attemptLimit = Math.min(24, requested + 8);
+    while (countMineDrop(bot, target) - before < requested && attempts < attemptLimit) {
+        const prior = countMineDrop(bot, target);
+        attempts++;
+        try {
+            await mine.mineBlock(bot, { target });
+            const current = countMineDrop(bot, target);
+            if (current <= prior) lastError = new Error(`${target} mining produced no collectible drop`);
+        } catch (error) {
+            lastError = error;
+        }
+        stagnantAttempts = countMineDrop(bot, target) > prior ? 0 : stagnantAttempts + 1;
+        if (stagnantAttempts >= 4) break;
+    }
+    const gained = countMineDrop(bot, target) - before;
+    if (gained <= 0 && lastError) throw lastError;
+    return { target, requested, gained, attempts };
+}
+
+function countMineDrop(bot, target) {
+    const inventory = bot.inventory?.items?.() || bot.inventory?.slots?.filter(Boolean) || [];
+    const dropName = {
+        stone: 'cobblestone',
+        coal_ore: 'coal',
+        deepslate_coal_ore: 'coal',
+        iron_ore: 'raw_iron',
+        deepslate_iron_ore: 'raw_iron'
+    }[target] || target;
+    return inventory
+        .filter(item => target === 'any_log' ? item.name.endsWith('_log') : item.name === dropName)
+        .reduce((sum, item) => sum + Number(item.count || 0), 0);
 }
 
 function sleep(ms) {

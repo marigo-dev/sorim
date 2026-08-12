@@ -540,7 +540,7 @@ async function chopTreeDownwardFromCanopy(bot, base, actionVersion) {
 
 async function approachTreeEntry(bot, block) {
     const center = block.position.offset(0.5, 0.5, 0.5);
-    if (bot.entity.position.distanceTo(center) <= 2.6) return;
+    if (bot.entity.position.distanceTo(center) <= 2.6 || bot.canDigBlock(block)) return;
 
     for (const stand of findWorkPositions(bot, block.position).slice(0, 4)) {
         try {
@@ -548,19 +548,19 @@ async function approachTreeEntry(bot, block) {
         } catch {
             movement.stop(bot);
         }
-        if (bot.entity.position.distanceTo(center) <= 2.6) return;
+        if (bot.entity.position.distanceTo(center) <= 2.6 || bot.canDigBlock(block)) return;
     }
 
     await clearTreeFoliageToward(bot, block.position);
     await movement.moveTowardSafely(bot, block.position, 8);
-    if (bot.entity.position.distanceTo(center) <= 2.8) return;
+    if (bot.entity.position.distanceTo(center) <= 2.8 || bot.canDigBlock(block)) return;
 
     try {
         await movement.moveNear(bot, block.position, 1, 5000);
     } catch {
         movement.stop(bot);
     }
-    if (bot.entity.position.distanceTo(center) > 2.8) {
+    if (bot.entity.position.distanceTo(center) > 2.8 && !bot.canDigBlock(block)) {
         throw new Error(`Could not enter pickup range for ${block.name} at ${block.position.toString()}`);
     }
 }
@@ -623,14 +623,12 @@ function findBestBlock(bot, targetName) {
 }
 
 function findBestLog(bot) {
-    return [...LOGS]
-        .flatMap(name => {
-            const id = bot.registry.blocksByName[name]?.id;
-            if (!id) return [];
-            return bot.findBlocks({ matching: id, maxDistance: 56, count: 64 })
-                .map(position => bot.blockAt(position))
-                .filter(Boolean);
-        })
+    return bot.findBlocks({
+        matching: block => LOGS.has(block?.name),
+        maxDistance: 56,
+        count: 128
+    })
+        .map(position => bot.blockAt(position))
         .filter(Boolean)
         .filter(block => isRootedTree(bot, block))
         .filter(block => blockPolicy.canHarvestTree(bot, block).allowed)
@@ -641,15 +639,13 @@ function findBestLog(bot) {
 }
 
 function findNearestVisibleLog(bot, targetName = 'any_log') {
-    const names = targetName === 'any_log' ? [...LOGS] : [targetName];
-    return names
-        .flatMap(name => {
-            const id = bot.registry.blocksByName[name]?.id;
-            if (!id) return [];
-            return bot.findBlocks({ matching: id, maxDistance: 160, count: 512 })
-                .map(position => bot.blockAt(position))
-                .filter(Boolean);
-        })
+    const names = targetName === 'any_log' ? LOGS : new Set([targetName]);
+    return bot.findBlocks({
+        matching: block => names.has(block?.name),
+        maxDistance: 72,
+        count: 128
+    })
+        .map(position => bot.blockAt(position))
         .filter(Boolean)
         .map(block => lowestLogInTrunk(bot, block))
         .filter(block => isRootedTree(bot, block))
@@ -690,7 +686,27 @@ function lowestLogInTrunk(bot, block) {
 function isRootedTree(bot, block) {
     const base = lowestLogInTrunk(bot, block);
     const support = bot.blockAt(base.position.offset(0, -1, 0));
-    return Boolean(support && support.boundingBox === 'block' && !LOGS.has(support.name));
+    const trunk = findTrunkBlocks(bot, base);
+    return Boolean(
+        support &&
+        support.boundingBox === 'block' &&
+        !LOGS.has(support.name) &&
+        trunk.length >= 2 &&
+        hasNaturalCanopy(bot, trunk[trunk.length - 1].position)
+    );
+}
+
+function hasNaturalCanopy(bot, top) {
+    let leaves = 0;
+    for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -3; dx <= 3; dx++) {
+            for (let dz = -3; dz <= 3; dz++) {
+                if (bot.blockAt(top.offset(dx, dy, dz))?.name?.endsWith('_leaves')) leaves++;
+                if (leaves >= 4) return true;
+            }
+        }
+    }
+    return false;
 }
 
 function findTrunkBlocks(bot, block) {
@@ -862,10 +878,16 @@ function hasNearbyDrop(bot, origin, radius) {
 }
 
 async function patrolTreeDrops(bot, itemName, before, base) {
-    const deadline = Date.now() + 8000;
+    const deadline = Date.now() + 12000;
     const visited = new Set();
+    try {
+        await movement.moveNear(bot, base, 1, 2600);
+    } catch {
+        movement.stop(bot);
+        await nudgeToward(bot, base);
+    }
+    await movement.sleep(500);
     await collectLooseDrops(bot, itemName, before, base, 18, deadline, visited);
-    if (!hasNearbyDrop(bot, base, 18)) return;
     const points = [
         base.offset(1, 0, 0),
         base.offset(-1, 0, 0),
@@ -875,12 +897,13 @@ async function patrolTreeDrops(bot, itemName, before, base) {
 
     for (const point of points) {
         if (Date.now() >= deadline) break;
-        if (!hasNearbyDrop(bot, base, 18)) break;
         try {
             await movement.moveNear(bot, point, 1, 1400);
         } catch {
             movement.stop(bot);
+            await nudgeToward(bot, point);
         }
+        await movement.sleep(300);
         await collectLooseDrops(bot, itemName, before, base, 18, deadline, visited);
         before = countItem(bot, itemName);
     }

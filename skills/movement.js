@@ -229,7 +229,7 @@ async function explore(bot, action = {}) {
                     if (found) resolve({ type: 'found', value: found });
                 };
                 scan();
-                scanTimer = setInterval(scan, 250);
+                scanTimer = setInterval(scan, 1000);
             }));
         }
         const outcome = await withTimeout(
@@ -281,7 +281,7 @@ function explorationTargetSensor(bot, target) {
     if (target === 'wood') {
         return () => bot.findBlock?.({
             matching: block => Boolean(block?.name?.endsWith('_log')),
-            maxDistance: 128
+            maxDistance: 72
         }) || null;
     }
     if (target === 'food') {

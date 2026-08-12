@@ -26,6 +26,7 @@ const { createRootTree } = require('./agent/behaviorTree/rootTree');
 const blockPolicy = require('./safety/blockPolicy');
 const { parseCombatIntent } = require('./agent/combatIntent');
 const { detectClarificationNeed, resolveClarificationMessage } = require('./agent/clarification');
+const { parseResourceIntent } = require('./agent/resourceIntent');
 const dynamicSkillSandbox = require('./agent/dynamicSkillSandbox');
 
 const BOT_NAME = process.env.MC_USERNAME || 'marigo';
@@ -795,40 +796,20 @@ function parseUserCommand(username, lowerMessage) {
         };
     }
 
-    if (!isMultiStepRequest(message) && includesAny(message, [
-        'agac kes',
-        'ağaç kes',
-        'odun topla',
-        'wood',
-        'chop tree',
-        'cut tree'
-    ])) {
+    const resourceIntent = !isMultiStepRequest(message) ? parseResourceIntent(message) : null;
+    if (resourceIntent) {
         return {
             type: 'tool',
             toolCall: {
-                tool: 'mine_block',
-                args: { target: 'any_log' },
-                reason: `Player ${username} requested wood`
+                tool: resourceIntent.tool,
+                args: resourceIntent.tool === 'mine_block'
+                    ? { target: resourceIntent.target, count: resourceIntent.count }
+                    : { count: resourceIntent.count },
+                reason: `Player ${username} requested ${resourceIntent.count} ${resourceIntent.resource}`
             },
-            reply: 'Tamam, en yakin agaci kesmeye gidiyorum.'
-        };
-    }
-
-    if (!isMultiStepRequest(message) && includesAny(message, [
-        'tas topla',
-        'taş topla',
-        'stone',
-        'cobblestone',
-        'kaya topla'
-    ])) {
-        return {
-            type: 'tool',
-            toolCall: {
-                tool: 'collect_stone',
-                args: { count: 16 },
-                reason: `Player ${username} requested stone`
-            },
-            reply: 'Tamam, guvenli merdivenle tas toplamaya basliyorum.'
+            reply: resourceIntent.resource === 'wood'
+                ? `Tamam, ${resourceIntent.count} odun toplamaya gidiyorum.`
+                : `Tamam, guvenli merdivenle ${resourceIntent.count} tas toplamaya basliyorum.`
         };
     }
 

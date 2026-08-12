@@ -4,6 +4,7 @@ const TaskQueue = require('../agent/taskQueue');
 const taskVerifier = require('../agent/taskVerifier');
 const { PreconditionResolver, materialPotential } = require('../agent/preconditionResolver');
 const storage = require('../skills/storage');
+const shelter = require('../skills/shelter');
 const { TOOL_DEFINITIONS } = require('../toolRegistry');
 const { Vec3 } = require('vec3');
 
@@ -17,6 +18,32 @@ const afterMine = {
     ...before,
     inventory: { oak_log: 5, dirt: 2 }
 };
+
+assert.equal(taskVerifier.verify(
+    { tool: 'ensure_base', args: {} },
+    before,
+    { ...before, base: { x: 0, y: 64, z: 0 } },
+    {
+        bot: { blockAt: () => ({ name: 'crafting_table' }) },
+        executionResult: { shellScore: 39 }
+    }
+).ok, false, 'A partial 5x5 shell must never verify as a safe base');
+
+assert.equal(taskVerifier.verify(
+    { tool: 'ensure_base', args: {} },
+    before,
+    { ...before, base: { x: 20, y: 64, z: 20 } },
+    {
+        bot: {
+            blockAt: position => ({
+                name: position.x === 21 && position.y === 64 && position.z === 21
+                    ? 'crafting_table'
+                    : 'air'
+            })
+        },
+        executionResult: { shellScore: shelter.SHELL_TARGET }
+    }
+).ok, true, 'A complete shell with the table at the real interior offset must verify');
 
 const unsupported = TOOL_DEFINITIONS.map(tool => tool.name).filter(tool => !taskVerifier.supports(tool));
 assert.deepEqual(unsupported, [], `Tools without verification contracts: ${unsupported.join(', ')}`);
@@ -218,5 +245,19 @@ assert.deepEqual(storage.deposableInventory({ oak_planks: 48, bread: 20, stone_p
 queue.completeCurrentStep({ ok: true, reason: 'wood gained', details: { gained: 4 } });
 assert.equal(saved[0].steps[0].verification.ok, true);
 assert.match(saved[0].steps[0].verification.reason, /wood gained/);
+
+const progressQueue = new TaskQueue({ getTaskQueue: () => [], setTaskQueue: () => {} });
+progressQueue.enqueue({
+    id: 'counted_progress',
+    goal: 'collect sixteen logs',
+    steps: [{ id: 'logs', tool: 'mine_block', args: { target: 'any_log', count: 16 } }]
+});
+progressQueue.toolCall();
+progressQueue.failCurrentStep(new taskVerifier.TaskVerificationError(
+    'Inventory gained only 5/16 for any_log',
+    { gained: 5, requested: 16 }
+));
+assert.equal(progressQueue.currentStep().args.count, 11);
+assert.equal(progressQueue.currentStep().attempts, 0, 'Verified partial progress must not consume a retry');
 
 console.log('Task verification and dynamic precondition resolution passed.');

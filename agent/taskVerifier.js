@@ -63,9 +63,10 @@ function verify(call, before, after, options = {}) {
     if (tool === 'mine_block') {
         const names = inventoryNamesForBlock(args.target);
         const gained = total(after.inventory, names) - total(before.inventory, names);
-        return gained > 0
+        const requested = Math.max(1, Number(args.count || 1));
+        return gained >= requested
             ? passed(`Collected ${gained} ${names.join('/')}`, { gained })
-            : failed(`Inventory did not gain a drop for ${args.target}`, { gained });
+            : failed(`Inventory gained only ${gained}/${requested} for ${args.target}`, { gained, requested });
     }
     if (tool === 'craft_item') {
         const gained = count(after.inventory, args.item) - count(before.inventory, args.item);
@@ -82,7 +83,10 @@ function verify(call, before, after, options = {}) {
     }
     if (tool === 'collect_stone') {
         const gained = count(after.inventory, 'cobblestone') - count(before.inventory, 'cobblestone');
-        return gained > 0 ? passed(`Collected ${gained} cobblestone`, { gained }) : failed('Cobblestone did not increase');
+        const requested = Math.max(1, Number(args.count || 16));
+        return gained >= requested
+            ? passed(`Collected ${gained} cobblestone`, { gained, requested })
+            : failed(`Collected only ${gained}/${requested} cobblestone`, { gained, requested });
     }
     if (tool === 'craft_stone_tools') {
         const missing = ['stone_pickaxe', 'stone_axe', 'stone_sword'].filter(name => count(after.inventory, name) < 1);
@@ -107,16 +111,16 @@ function verify(call, before, after, options = {}) {
         const base = after.base || memory.getBase();
         if (!base) return failed('Base was not written to memory');
         const basePosition = new Vec3(base.x, base.y, base.z);
-        const tablePosition = basePosition.offset(1, 0, 0);
+        const tablePosition = basePosition.offset(1, 0, 1);
         const hasInteriorTable = options.bot?.blockAt(tablePosition)?.name === 'crafting_table';
         if (!hasInteriorTable) return failed('Base has no verified interior crafting table');
         const shellScore = options.executionResult?.shellScore ?? safe(
             () => shelter.scoreShelterShell(options.bot, base),
             0
         );
-        return shellScore >= 18
-            ? passed(`Base remembered and shell validated ${shellScore}/22`, { shellScore })
-            : failed(`Base shell validation failed ${shellScore}/22`, { shellScore });
+        return shellScore >= shelter.SHELL_TARGET
+            ? passed(`Base remembered and shell validated ${shellScore}/${shelter.SHELL_TARGET}`, { shellScore })
+            : failed(`Base shell validation failed ${shellScore}/${shelter.SHELL_TARGET}`, { shellScore });
     }
     if (tool === 'organize_storage') {
         const deposited = options.executionResult?.deposited || {};

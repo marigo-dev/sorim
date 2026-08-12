@@ -3,7 +3,7 @@ const craft = require('./craft');
 const shelter = require('./shelter');
 const memory = require('./memory');
 
-const BUILD_TARGET = 28;
+const BUILD_TARGET = 88;
 
 async function ensureBase(bot) {
     if (memory.hasBase()) return memory.getBase();
