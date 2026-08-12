@@ -1115,6 +1115,11 @@ function needsAir(bot) {
     return Boolean(bot.entity.isInWater && (headSubmerged || oxygenFalling));
 }
 
+function shouldInterruptForWater(bot, activeToolName = null) {
+    if (activeToolName === 'escape_water') return false;
+    return needsAir(bot) || Boolean(bot.entity?.isInWater);
+}
+
 async function escapeWater(bot) {
     movement.resyncCollision(bot);
     const actionVersion = actionControl.snapshot(bot);
@@ -2722,6 +2727,7 @@ module.exports = {
     fightMob,
     evadeHostile,
     needsAir,
+    shouldInterruptForWater,
     escapeWater,
     buildEmergencyShelter,
     isEmergencyShelter,

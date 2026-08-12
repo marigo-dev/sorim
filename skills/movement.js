@@ -1,7 +1,8 @@
 const { goals, Movements } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
+const memory = require('./memory');
 
-const explorationSteps = new WeakMap();
+const explorationSessions = new WeakMap();
 const navigationVersions = new WeakMap();
 
 function configure(bot) {
@@ -191,19 +192,8 @@ async function explore(bot, action = {}) {
         console.log(`[MOVE] Exploration target already visible: ${target}.`);
         return { found: initiallyVisible, reached: false, initiallyVisible: true };
     }
-    const origin = bot.entity.position;
-    const angle = nextExplorationAngle(bot);
-    const explorationAttempt = explorationSteps.get(bot) || 1;
-    const distance = target === 'wood'
-        ? Math.min(72, 28 + (explorationAttempt - 1) * 8)
-        : target === 'stone' ? 16
-            : target === 'food' ? Math.min(48, 24 + (explorationAttempt - 1) * 4)
-                : 24;
-    const position = new Vec3(
-        Math.floor(origin.x + Math.cos(angle) * distance),
-        Math.floor(origin.y),
-        Math.floor(origin.z + Math.sin(angle) * distance)
-    );
+    const origin = bot.entity.position.clone();
+    const position = selectExplorationWaypoint(bot, target);
 
     console.log(`[MOVE] Exploring target=${target} x=${position.x} z=${position.z}`);
     let scanTimer = null;
@@ -245,9 +235,11 @@ async function explore(bot, action = {}) {
         );
         if (outcome?.type === 'found') {
             stop(bot);
+            completeExplorationWaypoint(bot, target);
             console.log(`[MOVE] Exploration found ${target} while walking.`);
             return { found: outcome.value, reached: false };
         }
+        completeExplorationWaypoint(bot, target);
         return { found: null, reached: true };
     } catch (error) {
         stop(bot);
@@ -266,14 +258,17 @@ async function explore(bot, action = {}) {
             }
             const found = stopWhen ? stopWhen() : null;
             if (found) {
+                completeExplorationWaypoint(bot, target);
                 console.log(`[MOVE] Local traversal found ${target}.`);
                 return { found, reached: false, recovered: true };
             }
             const moved = bot.entity.position.distanceTo(before);
             if (moved >= 1) {
+                noteExplorationProgress(bot, target, true);
                 console.log(`[MOVE] Local traversal advanced ${moved.toFixed(1)} blocks.`);
                 return { found: null, reached: false, recovered: true, error };
             }
+            noteExplorationProgress(bot, target, false);
         }
         return { found: null, reached: false, recovered: false, error };
     } finally {
@@ -313,12 +308,78 @@ function explorationTargetSensor(bot, target) {
     return null;
 }
 
-function nextExplorationAngle(bot) {
-    const step = explorationSteps.get(bot) || 0;
-    explorationSteps.set(bot, step + 1);
-    const name = String(bot.username || 'marigo');
-    const seed = [...name].reduce((sum, character) => sum + character.charCodeAt(0), 0);
-    return (seed * 0.173 + step * 2.399963229728653) % (Math.PI * 2);
+function selectExplorationWaypoint(bot, target) {
+    const sessions = explorationSessions.get(bot) || new Map();
+    explorationSessions.set(bot, sessions);
+    let session = sessions.get(target);
+    if (!session) {
+        session = {
+            anchor: bot.entity.position.floored(),
+            nextIndex: 0,
+            active: null,
+            failures: 0
+        };
+        sessions.set(target, session);
+    }
+    if (session.active) return session.active.clone();
+
+    const visited = memory.getExploredCells(target);
+    for (let attempts = 0; attempts < 512; attempts++) {
+        const grid = squareSpiralCell(session.nextIndex++);
+        const spacing = explorationSpacing(target);
+        const candidate = new Vec3(
+            session.anchor.x + grid.x * spacing,
+            session.anchor.y,
+            session.anchor.z + grid.z * spacing
+        );
+        if (visited.some(cell => horizontalDistance(cell, candidate) < spacing * 0.6)) continue;
+        session.active = candidate;
+        session.failures = 0;
+        return candidate.clone();
+    }
+    session.anchor = bot.entity.position.floored();
+    session.nextIndex = 0;
+    session.active = null;
+    return selectExplorationWaypoint(bot, target);
+}
+
+function completeExplorationWaypoint(bot, target) {
+    const session = explorationSessions.get(bot)?.get(target);
+    if (!session?.active) return;
+    memory.rememberExploredCell(target, session.active);
+    session.active = null;
+    session.failures = 0;
+}
+
+function noteExplorationProgress(bot, target, progressed) {
+    const session = explorationSessions.get(bot)?.get(target);
+    if (!session?.active) return;
+    if (progressed) {
+        session.failures = 0;
+        return;
+    }
+    session.failures++;
+    if (session.failures >= 2) completeExplorationWaypoint(bot, target);
+}
+
+function explorationSpacing(target) {
+    if (target === 'stone') return 16;
+    if (target === 'food') return 20;
+    return 24;
+}
+
+function squareSpiralCell(index) {
+    let cursor = 0;
+    for (let ring = 1; ring < 1024; ring++) {
+        const cells = [];
+        for (let z = 1 - ring; z <= ring; z++) cells.push({ x: ring, z });
+        for (let x = ring - 1; x >= -ring; x--) cells.push({ x, z: ring });
+        for (let z = ring - 1; z >= -ring; z--) cells.push({ x: -ring, z });
+        for (let x = -ring + 1; x <= ring; x++) cells.push({ x, z: -ring });
+        if (index < cursor + cells.length) return cells[index - cursor];
+        cursor += cells.length;
+    }
+    return { x: 1, z: 0 };
 }
 
 function withExplorationGuard(bot, navigation, minimumY, maximumY, abortWhen = null) {
@@ -651,9 +712,46 @@ async function moveTowardSafely(bot, target, maxSteps = 12, isActive = null, abo
         const moved = next.y > current.y
             ? await stepUpToward(bot, next)
             : await walkToward(bot, next, { durationMs: 1100 });
-        if (!moved || bot.entity.position.distanceTo(before) < 0.45) break;
+        if (!moved || bot.entity.position.distanceTo(before) < 0.45) {
+            const detoured = await sidestepAroundLocalObstacle(bot, target, next);
+            if (!detoured) break;
+        }
     }
     return localTargetDistance(bot.entity.position, target) <= startDistance - 2;
+}
+
+async function sidestepAroundLocalObstacle(bot, target, blockedStep) {
+    const before = bot.entity.position.clone();
+    const candidates = localDetourCandidates(bot, target, blockedStep).slice(0, 4);
+    for (const candidate of candidates) {
+        const attemptOrigin = bot.entity.position.clone();
+        const moved = await walkToward(bot, candidate, { durationMs: 900 });
+        if (moved && bot.entity.position.distanceTo(attemptOrigin) >= 0.55) {
+            console.log(`[MOVE] local detour escaped blocked step via ${candidate.toString()}`);
+            return true;
+        }
+    }
+    return bot.entity.position.distanceTo(before) >= 0.55;
+}
+
+function localDetourCandidates(bot, target, blockedStep = null) {
+    const origin = bot.entity.position.floored();
+    return localWalkableSteps(bot, origin)
+        .filter(position => position.y >= origin.y - 1 && position.y <= origin.y)
+        .filter(position => !blockedStep || !position.equals(blockedStep))
+        .sort((left, right) => {
+            const leftCost = localTargetDistance(left, target) + detourBacktrackPenalty(origin, left, target);
+            const rightCost = localTargetDistance(right, target) + detourBacktrackPenalty(origin, right, target);
+            return leftCost - rightCost;
+        });
+}
+
+function detourBacktrackPenalty(origin, candidate, target) {
+    const targetX = target.x - origin.x;
+    const targetZ = target.z - origin.z;
+    const stepX = candidate.x - origin.x;
+    const stepZ = candidate.z - origin.z;
+    return targetX * stepX + targetZ * stepZ < 0 ? 3 : 0;
 }
 
 async function centerForLocalRoute(bot) {
@@ -1030,6 +1128,11 @@ module.exports = {
     clearStepToward,
     clearNearbyFoliage,
     descendFromCanopy,
+    selectExplorationWaypoint,
+    completeExplorationWaypoint,
+    noteExplorationProgress,
+    squareSpiralCell,
+    localDetourCandidates,
     stop,
     sleep,
     withTimeout

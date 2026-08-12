@@ -302,13 +302,16 @@ process.on('SIGTERM', shutdown);
 
 const safetyWatchdog = setInterval(() => {
     if (!running || !busy || cancelRequested || !bot.entity || bot.health <= 0) return;
-    if (survival.needsAir(bot) && activeToolName !== 'escape_water') {
-        console.log(`[SAFETY_INTERRUPT] cancelling=${activeToolName || 'unknown'} danger=drowning`);
+    if (survival.shouldInterruptForWater(bot, activeToolName)) {
+        const danger = survival.needsAir(bot) ? 'drowning' : 'entered-water';
+        console.log(`[SAFETY_INTERRUPT] cancelling=${activeToolName || 'unknown'} danger=${danger}`);
         pendingSafetyCall = toolRegistry.normalizeToolCall({
             action: 'escape_water',
-            reason: 'Oxygen safety override'
+            reason: danger === 'drowning'
+                ? 'Oxygen safety override'
+                : 'Surface task entered water; reach dry ground first'
         });
-        haltCurrentAction('drowning');
+        haltCurrentAction(danger);
         return;
     }
     if (['fight_mob', 'fight_player', 'evade_hostile', 'escape_water'].includes(activeToolName)) return;

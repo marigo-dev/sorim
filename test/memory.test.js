@@ -20,6 +20,7 @@ try {
     memory.appendMineRoute({ x: 5, y: 69, z: 8 });
     memory.rememberPlacedBlock('crafting_table');
     memory.setProgress('maxIronPotential', 17);
+    memory.rememberExploredCell('wood', { x: 24, y: 64, z: 0 });
     memory.flush();
 
     delete require.cache[modulePath];
@@ -37,6 +38,7 @@ try {
     assert.equal(memory.hasPlacedBlock('crafting_table'), true);
     assert.equal(memory.hasPlacedBlock('furnace'), false);
     assert.equal(memory.getProgress('maxIronPotential'), 17);
+    assert.deepEqual(memory.getExploredCells('wood'), [{ x: 24, y: 64, z: 0 }]);
     memory.clearSurfaceExit();
     memory.clearFarmCenter();
     memory.clearMineRoute();

@@ -3,6 +3,50 @@ const { Vec3 } = require('vec3');
 const movement = require('../skills/movement');
 
 async function main() {
+    assert.deepEqual(
+        Array.from({ length: 8 }, (_, index) => movement.squareSpiralCell(index)),
+        [
+            { x: 1, z: 0 }, { x: 1, z: 1 }, { x: 0, z: 1 }, { x: -1, z: 1 },
+            { x: -1, z: 0 }, { x: -1, z: -1 }, { x: 0, z: -1 }, { x: 1, z: -1 }
+        ],
+        'exploration must cover the first ring without duplicate cells'
+    );
+    const frontierBot = { entity: { position: new Vec3(0, 64, 0) } };
+    const firstFrontier = movement.selectExplorationWaypoint(frontierBot, 'test_frontier');
+    assert.deepEqual(firstFrontier, new Vec3(24, 64, 0));
+    assert.deepEqual(
+        movement.selectExplorationWaypoint(frontierBot, 'test_frontier'),
+        firstFrontier,
+        'a partially reached frontier must remain active across planning ticks'
+    );
+    movement.noteExplorationProgress(frontierBot, 'test_frontier', false);
+    movement.noteExplorationProgress(frontierBot, 'test_frontier', false);
+    assert.deepEqual(
+        movement.selectExplorationWaypoint(frontierBot, 'test_frontier'),
+        new Vec3(24, 64, 24),
+        'two stalled attempts must advance to the next unvisited spiral cell'
+    );
+    const detourBot = {
+        entity: { position: new Vec3(0, 64, 0) },
+        blockAt(position) {
+            if (position.y === 63) return { name: 'stone', boundingBox: 'block' };
+            if (position.x === -1 && position.z === 0 && position.y === 64) {
+                return { name: 'stone', boundingBox: 'block' };
+            }
+            return { name: 'air', boundingBox: 'empty' };
+        }
+    };
+    const detours = movement.localDetourCandidates(
+        detourBot,
+        new Vec3(-8, 64, 0),
+        new Vec3(-1, 64, 0)
+    );
+    assert.equal(detours.some(position => position.equals(new Vec3(-1, 64, 0))), false);
+    assert.equal(
+        detours.some(position => Math.abs(position.z) === 1),
+        true,
+        'a blocked forward step must expose a lateral walkable detour'
+    );
     const marker = { name: 'oak_log', position: new Vec3(12, 64, 4) };
     let scans = 0;
     let stopped = false;

@@ -104,6 +104,8 @@ try {
         ? { name: 'water', boundingBox: 'empty' }
         : { name: 'stone', boundingBox: 'block' };
     assert.equal(survival.needsAir(submerged), true);
+    assert.equal(survival.shouldInterruptForWater(submerged, 'mine_block'), true);
+    assert.equal(survival.shouldInterruptForWater(submerged, 'escape_water'), false);
     assert.equal(
         survival.chooseImmediateAction(
             submerged,
@@ -111,6 +113,18 @@ try {
             { id: 'L1_COLLECT_WOOD' }
         ).action,
         'escape_water'
+    );
+    const wading = makeBot(6000);
+    wading.entity.isInWater = true;
+    wading.oxygenLevel = undefined;
+    wading.blockAt = position => position.y === 64
+        ? { name: 'water', boundingBox: 'empty' }
+        : { name: 'air', boundingBox: 'empty' };
+    assert.equal(survival.needsAir(wading), false, 'shallow water does not consume oxygen');
+    assert.equal(
+        survival.shouldInterruptForWater(wading, 'mine_block'),
+        true,
+        'surface resource work must yield immediately after entering shallow water'
     );
     memory.setSurfaceExit({ x: 0, y: 64, z: 0 });
     const earlyMorningPit = makeBot(6000);

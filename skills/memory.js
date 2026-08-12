@@ -11,6 +11,7 @@ let surfaceExit = null;
 let mineRoute = [];
 let placedBlocks = new Set();
 let progression = {};
+let exploredCells = {};
 let memoryFile = null;
 let saveTimer = null;
 
@@ -24,6 +25,7 @@ function initialize(botName = 'marigo', options = {}) {
     mineRoute = [];
     placedBlocks = new Set();
     progression = {};
+    exploredCells = {};
 
     const directory = options.directory || path.join(__dirname, '..', 'data', 'memory');
     const safeName = String(botName).replace(/[^a-zA-Z0-9_-]/g, '_') || 'marigo';
@@ -45,6 +47,7 @@ function initialize(botName = 'marigo', options = {}) {
                 : []
         );
         progression = normalizeProgression(saved.progression);
+        exploredCells = normalizeExploredCells(saved.exploredCells);
         console.log(`[MEMORY] loaded ${memoryFile}`);
     } catch (error) {
         console.log(`[MEMORY] ignored unreadable state: ${error.message}`);
@@ -198,6 +201,29 @@ function getProgress(name) {
     return Number.isFinite(value) ? value : 0;
 }
 
+function rememberExploredCell(target, position) {
+    const name = normalizeMemoryKey(target);
+    const next = normalizePosition(position);
+    if (!name || !next) return;
+    const key = `${next.x},${next.z}`;
+    const cells = exploredCells[name] || [];
+    if (cells.some(cell => `${cell.x},${cell.z}` === key)) return;
+    exploredCells[name] = [...cells, { x: next.x, y: next.y, z: next.z }].slice(-256);
+    scheduleSave();
+}
+
+function getExploredCells(target) {
+    const name = normalizeMemoryKey(target);
+    return name ? (exploredCells[name] || []).map(cell => ({ ...cell })) : [];
+}
+
+function clearExploredCells(target) {
+    const name = normalizeMemoryKey(target);
+    if (!name || !exploredCells[name]) return;
+    delete exploredCells[name];
+    scheduleSave();
+}
+
 function scheduleSave() {
     if (!memoryFile || saveTimer) return;
     saveTimer = setTimeout(() => {
@@ -214,7 +240,7 @@ function flush() {
     const directory = path.dirname(memoryFile);
     const temporaryFile = `${memoryFile}.tmp`;
     const payload = JSON.stringify({
-        version: 3,
+        version: 4,
         base,
         constructionBase,
         lastDeath,
@@ -222,7 +248,8 @@ function flush() {
         surfaceExit,
         mineRoute,
         placedBlocks: [...placedBlocks].sort(),
-        progression
+        progression,
+        exploredCells
     }, null, 2);
 
     fs.mkdirSync(directory, { recursive: true });
@@ -281,6 +308,22 @@ function normalizeProgression(value) {
     );
 }
 
+function normalizeExploredCells(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const normalized = {};
+    for (const [target, cells] of Object.entries(value)) {
+        const name = normalizeMemoryKey(target);
+        if (!name || !Array.isArray(cells)) continue;
+        normalized[name] = cells.map(normalizePosition).filter(Boolean).slice(-256);
+    }
+    return normalized;
+}
+
+function normalizeMemoryKey(value) {
+    const key = String(value || '').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    return key || null;
+}
+
 function normalizeDeath(value) {
     const position = normalizePosition(value?.position);
     const at = Number(value?.at);
@@ -313,5 +356,8 @@ module.exports = {
     rememberPlacedBlock,
     hasPlacedBlock,
     setProgress,
-    getProgress
+    getProgress,
+    rememberExploredCell,
+    getExploredCells,
+    clearExploredCells
 };
