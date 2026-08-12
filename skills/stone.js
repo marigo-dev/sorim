@@ -490,13 +490,34 @@ async function digIfNeeded(bot, position) {
 }
 
 async function digBlock(bot, block) {
-    await equipToolForBlock(bot, block);
-    await bot.lookAt(block.position.offset(0.5, 0.5, 0.5), true);
-    await digWithTimeout(bot, block);
-    await movement.sleep(500);
-    if (bot.blockAt(block.position)?.name === block.name) {
-        throw new Error(`Block remained after digging ${block.name} ${block.position.toString()}`);
+    const position = block.position.clone();
+    const maxAttempts = isFallingBlock(block.name) ? 16 : 1;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const current = bot.blockAt(position);
+        if (!current || isAir(current)) return;
+        if (attempt > 0 && !isFallingBlock(current.name)) return;
+
+        await equipToolForBlock(bot, current);
+        await bot.lookAt(position.offset(0.5, 0.5, 0.5), true);
+        await digWithTimeout(bot, current);
+        await movement.sleep(isFallingBlock(current.name) ? 350 : 500);
+
+        const replacement = bot.blockAt(position);
+        if (!replacement || isAir(replacement) || replacement.name !== current.name) return;
+        if (!isFallingBlock(current.name)) {
+            throw new Error(`Block remained after digging ${current.name} ${position.toString()}`);
+        }
+        console.log(
+            `[STONE] clearing fallen ${replacement.name} ${position.toString()} ` +
+            `layer=${attempt + 2}`
+        );
     }
+    throw new Error(`Falling block column did not clear at ${position.toString()}`);
+}
+
+function isFallingBlock(name) {
+    return name === 'sand' || name === 'red_sand' || name === 'gravel' ||
+        name?.endsWith('_concrete_powder');
 }
 
 async function digWithTimeout(bot, block) {
@@ -661,5 +682,6 @@ function isLiquid(block) {
 }
 
 module.exports = {
-    collectStone
+    collectStone,
+    isFallingBlock
 };

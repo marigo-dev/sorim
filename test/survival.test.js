@@ -75,6 +75,28 @@ try {
         : { name: 'air', boundingBox: 'empty' };
     assert.equal(survival.isUnsafeForwardStep(flatRetreat), false);
     assert.equal(survival.canRetreatJump(flatRetreat), false, 'Flat retreat must not bunny-hop');
+    const refugeSite = makeBot(14000);
+    refugeSite.blockAt = position => position.y <= 63
+        ? { name: 'stone', boundingBox: 'block', hardness: 1.5 }
+        : { name: 'air', boundingBox: 'empty', hardness: 0 };
+    assert.equal(
+        survival.isSurfaceRefugeSiteSafe(refugeSite, new Vec3(0, 64, 0)),
+        true,
+        'A flat two-layer surface must accept a temporary refuge'
+    );
+    refugeSite.blockAt = position => {
+        if (position.x === 1 && position.z === 0 && position.y === 63) {
+            return { name: 'air', boundingBox: 'empty', hardness: 0 };
+        }
+        return position.y <= 63
+            ? { name: 'stone', boundingBox: 'block', hardness: 1.5 }
+            : { name: 'air', boundingBox: 'empty', hardness: 0 };
+    };
+    assert.equal(
+        survival.isSurfaceRefugeSiteSafe(refugeSite, new Vec3(0, 64, 0)),
+        false,
+        'A refuge must reject footing that overlaps a mine opening'
+    );
     const submerged = makeBot(6000);
     submerged.entity.isInWater = true;
     submerged.oxygenLevel = 12;

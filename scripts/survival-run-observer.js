@@ -17,15 +17,20 @@ const VERSION = process.env.MC_VERSION;
 const TARGET = process.env.MC_USERNAME || 'marigo';
 const OBSERVER = process.env.SURVIVAL_OBSERVER_NAME || 'Bot_Mico';
 const MAX_MS = Number(process.env.SURVIVAL_RUN_MAX_MS || 4 * 60 * 60 * 1000);
+const FRESH_RUN = process.env.SURVIVAL_FRESH_RUN === 'true';
+const WORLD_NAME = process.env.SURVIVAL_WORLD_NAME || 'unknown';
 const OUTPUT = process.env.SURVIVAL_RUN_REPORT_DIR ||
     path.join(__dirname, '..', 'artifacts', 'survival-run');
+const RUN_MEMORY = process.env.SURVIVAL_RUN_MEMORY_DIR ||
+    path.join(OUTPUT, `memory-${new Date().toISOString().replaceAll(':', '-')}`);
 const LEVELS = [
     'L1_COLLECT_WOOD', 'L2_CRAFT_PLANKS', 'L3_CRAFT_TABLE',
     'L4_CRAFT_WOODEN_PICKAXE', 'L5_COLLECT_STONE', 'L6_CRAFT_STONE_TOOLS',
     'L7_BUILD_SAFE_SHELTER', 'L8_SURVIVAL_MANAGER', 'L9_FOOD_LOOP',
-    'L10_STORAGE_AND_BASE_MEMORY', 'L11_SECURE_BED', 'L12_PREPARE_MINING_KIT',
+    'L10_STORAGE_AND_BASE_MEMORY', 'L17_ESTABLISH_WHEAT_FARM',
+    'L11_SECURE_BED', 'L12_PREPARE_MINING_KIT',
     'L13_SAFE_IRON_MINE', 'L14_COLLECT_RAW_IRON', 'L15_SMELT_IRON',
-    'L16_CRAFT_IRON_KIT', 'L17_ESTABLISH_WHEAT_FARM',
+    'L16_CRAFT_IRON_KIT',
     'L18_COLLECT_ARMOR_IRON', 'L19_SMELT_ARMOR_IRON',
     'L20_CRAFT_IRON_ARMOR', 'L21_STABLE_SURVIVAL'
 ];
@@ -46,7 +51,14 @@ const report = {
     runId: new Date().toISOString().replaceAll(':', '-'),
     startedAt: new Date().toISOString(),
     naturalWorld: true,
-    environment: { host: HOST, port: PORT, version: VERSION, difficulty: 'easy' },
+    freshRun: FRESH_RUN,
+    environment: {
+        host: HOST,
+        port: PORT,
+        version: VERSION,
+        difficulty: 'easy',
+        worldName: WORLD_NAME
+    },
     status: 'starting',
     target: TARGET,
     observer: OBSERVER,
@@ -67,7 +79,9 @@ async function main() {
             MC_PORT: String(PORT),
             MC_VERSION: VERSION,
             MC_USERNAME: TARGET,
-            AUTONOMOUS_ON_START: 'true',
+            AUTONOMOUS_ON_START: FRESH_RUN ? 'false' : 'true',
+            WORLD_MEMORY_DIR: path.join(RUN_MEMORY, 'world'),
+            AGENT_MEMORY_DIR: path.join(RUN_MEMORY, 'agent'),
             USE_LLM_PLANNER: process.env.USE_LLM_PLANNER || 'true',
             LOG_LEVEL: process.env.LOG_LEVEL || 'debug',
             STOP_AT_LEVEL: process.env.STOP_AT_LEVEL || 'L21_STABLE_SURVIVAL'
@@ -82,6 +96,7 @@ async function main() {
     await waitForPlayer(observer, TARGET, 30000);
     observer.chat(`/gamemode spectator ${OBSERVER}`);
     await sleep(500);
+    if (FRESH_RUN) await prepareFreshTarget();
     observer.chat(`/tp ${OBSERVER} ${TARGET}`);
     await sleep(1000);
     report.status = 'running';
@@ -93,6 +108,58 @@ async function main() {
     sampler.unref();
     writer.unref();
     setTimeout(() => finish('timeout', { maxMs: MAX_MS }), MAX_MS).unref();
+}
+
+async function prepareFreshTarget() {
+    observer.chat('/difficulty easy');
+    await sleep(200);
+    observer.chat('/time set day');
+    await sleep(200);
+    observer.chat('/weather clear');
+    await sleep(200);
+    observer.chat(`/gamemode survival ${TARGET}`);
+    await sleep(200);
+    observer.chat(`/clear ${TARGET}`);
+    await sleep(500);
+    observer.chat(`/effect clear ${TARGET}`);
+    await sleep(500);
+
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+        if (latestTelemetry && Object.keys(latestTelemetry.inventory || {}).length === 0) break;
+        await sleep(200);
+    }
+    if (!latestTelemetry) throw new Error('Fresh run did not receive target telemetry');
+    if (Object.keys(latestTelemetry.inventory || {}).length > 0) {
+        throw new Error(`Fresh run inventory was not empty: ${JSON.stringify(latestTelemetry.inventory)}`);
+    }
+    await setAutonomous(true);
+    report.preflight = {
+        inventoryEmpty: true,
+        position: latestTelemetry.position,
+        memoryDirectory: RUN_MEMORY,
+        worldName: WORLD_NAME,
+        startedAutonomyAt: new Date().toISOString()
+    };
+    recordIncident('fresh_preflight', 'Empty inventory and isolated memory verified before autonomy start');
+}
+
+function setAutonomous(enabled) {
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            child.off('message', onAck);
+            reject(new Error('Bot did not acknowledge autonomous control'));
+        }, 5000);
+        const onAck = message => {
+            if (message?.type !== 'sorimControlAck' || message.command !== 'setAutonomous') return;
+            if (message.enabled !== enabled) return;
+            clearTimeout(timeout);
+            child.off('message', onAck);
+            resolve();
+        };
+        child.on('message', onAck);
+        child.send({ type: 'sorimControl', command: 'setAutonomous', enabled, source: 'survival-observer' });
+    });
 }
 
 function onChildMessage(message) {
@@ -300,6 +367,7 @@ function markdownReport() {
         '# Natural Survival Run', '',
         `Status: **${report.status}**`,
         `Started: ${report.startedAt}`,
+        `World: ${WORLD_NAME}; fresh run: ${FRESH_RUN}`,
         `Target: ${TARGET}; observer: ${OBSERVER}`, '',
         '| Stage | State | Duration |',
         '| --- | --- | ---: |',

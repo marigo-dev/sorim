@@ -17,6 +17,12 @@ yarn-error.log*
 **/.env
 **/.env.*
 !**/.env.example
+.envrc
+.direnv/
+secrets/
+credentials/
+auth.json
+**/auth.json
 keys.json
 **/keys.json
 *credentials*.json
@@ -27,6 +33,8 @@ keys.json
 *.local.json
 *.local.yaml
 *.local.yml
+*.secret
+*.secrets
 *.key
 *.crt
 *.keystore

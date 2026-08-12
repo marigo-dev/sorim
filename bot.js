@@ -39,8 +39,12 @@ const AUTONOMOUS_TOOL_TIMEOUT_MS = Number(process.env.AUTONOMOUS_TOOL_TIMEOUT_MS
 const USE_LLM_PLANNER = process.env.USE_LLM_PLANNER === 'true';
 const STOP_AT_LEVEL = String(process.env.STOP_AT_LEVEL || '').trim();
 
-memory.initialize(BOT_NAME);
-persistentMemory.initialize(BOT_NAME);
+memory.initialize(BOT_NAME, process.env.WORLD_MEMORY_DIR
+    ? { directory: process.env.WORLD_MEMORY_DIR }
+    : {});
+persistentMemory.initialize(BOT_NAME, process.env.AGENT_MEMORY_DIR
+    ? { directory: process.env.AGENT_MEMORY_DIR }
+    : {});
 
 const bot = mineflayer.createBot({
     host: HOST,
@@ -92,6 +96,20 @@ let currentLevelId = 'BOOT';
 let lastIpcTelemetryAt = 0;
 let lastPhysicsPosition = null;
 let lastKnownInventoryCount = 0;
+
+process.on('message', message => {
+    if (message?.type !== 'sorimControl' || message.command !== 'setAutonomous') return;
+    autonomousMode = message.enabled === true;
+    console.log(`[CONTROL] autonomous=${autonomousMode} source=${message.source || 'ipc'}`);
+    if (typeof process.send === 'function') {
+        process.send({
+            type: 'sorimControlAck',
+            command: 'setAutonomous',
+            enabled: autonomousMode,
+            at: Date.now()
+        });
+    }
+});
 
 bot.once('spawn', async () => {
     console.log(`[BOOT] ${BOT_NAME} spawned. AI body runtime started.`);

@@ -362,6 +362,30 @@ async function buildEmergencyShelterAttempt(bot) {
     let targetBottomY = surfaceExit.y - 3;
     console.log(`[SURVIVAL] building emergency night shelter ${bot.entity.position.floored().toString()}`);
 
+    if (surfaceRefugeMaterialCount(bot) >= 9 && preferredRecoveryBlock(bot)) {
+        const refugeCenter = isSurfaceRefugeSiteSafe(bot, current)
+            ? current
+            : findNearbySurfaceRefugeCenter(bot, current);
+        if (refugeCenter) {
+            if (!refugeCenter.equals(current)) {
+                console.log(`[SURVIVAL] moving to surface refuge site ${refugeCenter.toString()}`);
+                await movement.moveBlock(bot, refugeCenter, 8000);
+                actionControl.assertActive(bot, actionVersion);
+            }
+            current = occupiedFeetCell(bot);
+            memory.setSurfaceExit(current);
+            await buildSurfaceNightRefuge(bot, current, actionVersion);
+            emergencyShelterPosition = occupiedFeetCell(bot);
+            if (!isEmergencyShelter(bot)) {
+                emergencyShelterPosition = null;
+                throw new Error('Surface emergency refuge could not be sealed');
+            }
+            console.log('[SURVIVAL] surface emergency refuge sealed');
+            await waitSafe(bot, 3000);
+            return;
+        }
+    }
+
     if (!isEmergencyColumnSafe(bot, current, targetBottomY)) {
         console.log(`[SURVIVAL] refuge column rejected: ${describeEmergencyColumn(bot, current, targetBottomY)}`);
         const safeColumn = findNearbyEmergencyColumn(bot, current);
@@ -457,7 +481,22 @@ function isEmergencyColumnSafe(bot, current, targetBottomY) {
         const below = bot.blockAt(new Vec3(current.x, y - 1, current.z));
         if (!isSafeEmergencyFloor(floor, below) || floor.hardness === -1) return false;
     }
-    return true;
+    return isEmergencyPocketEnclosed(bot, current, targetBottomY);
+}
+
+function isEmergencyPocketEnclosed(bot, current, targetBottomY) {
+    const offsets = [
+        new Vec3(1, 0, 0), new Vec3(-1, 0, 0),
+        new Vec3(0, 0, 1), new Vec3(0, 0, -1)
+    ];
+    return offsets.every(offset => [0, 1].every(dy => {
+        const wall = bot.blockAt(new Vec3(
+            current.x + offset.x,
+            targetBottomY + dy,
+            current.z + offset.z
+        ));
+        return wall?.boundingBox === 'block' && wall.hardness !== -1;
+    }));
 }
 
 function describeEmergencyColumn(bot, current, targetBottomY) {
@@ -491,6 +530,42 @@ function findNearbyEmergencyColumn(bot, origin, radius = 4) {
     }
     candidates.sort((left, right) => left.distance - right.distance);
     return candidates[0]?.feet || null;
+}
+
+function findNearbySurfaceRefugeCenter(bot, origin, radius = 5) {
+    const candidates = [];
+    for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+            for (let dy = 2; dy >= -2; dy--) {
+                const feet = origin.offset(dx, dy, dz);
+                if (!isSurfaceRefugeSiteSafe(bot, feet)) continue;
+                candidates.push({
+                    feet,
+                    distance: Math.hypot(dx, dz) + Math.abs(dy) * 0.75
+                });
+                break;
+            }
+        }
+    }
+    candidates.sort((left, right) => left.distance - right.distance);
+    return candidates[0]?.feet || null;
+}
+
+function isSurfaceRefugeSiteSafe(bot, center) {
+    const footprint = [
+        new Vec3(0, 0, 0),
+        new Vec3(1, 0, 0), new Vec3(-1, 0, 0),
+        new Vec3(0, 0, 1), new Vec3(0, 0, -1)
+    ];
+    return footprint.every(offset => {
+        const feet = center.plus(offset);
+        const head = feet.offset(0, 1, 0);
+        const floor = feet.offset(0, -1, 0);
+        const support = feet.offset(0, -2, 0);
+        return isPassable(bot.blockAt(feet)) &&
+            isPassable(bot.blockAt(head)) &&
+            isSafeEmergencyFloor(bot.blockAt(floor), bot.blockAt(support));
+    });
 }
 
 async function buildSurfaceNightRefuge(bot, center, actionVersion) {
@@ -2600,6 +2675,7 @@ module.exports = {
     escapeWater,
     buildEmergencyShelter,
     isEmergencyShelter,
+    isSurfaceRefugeSiteSafe,
     isUnsafeForwardStep: isUnsafeRetreatTrajectory,
     canRetreatJump,
     shouldUseEmergencyShaft,
