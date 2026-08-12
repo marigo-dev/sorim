@@ -21,6 +21,7 @@ const ranching = require('./skills/ranching');
 const fishing = require('./skills/fishing');
 const forestry = require('./skills/forestry');
 const base = require('./skills/base');
+const combat = require('./skills/combat');
 
 const TOOL_DEFINITIONS = [
     {
@@ -112,6 +113,12 @@ const TOOL_DEFINITIONS = [
         description: 'Fight a hostile mob by entity id. Usually selected by the safety supervisor.',
         args: { entityId: 'number optional' },
         actions: ['fight_mob']
+    },
+    {
+        name: 'fight_player',
+        description: 'Fight a named online player after an explicit player command. Mode is duel or lethal.',
+        args: { username: 'string required', mode: 'string optional', criticalHealth: 'number optional' },
+        actions: ['fight_player']
     },
     {
         name: 'evade_hostile',
@@ -272,7 +279,7 @@ function toolsForLevel(level) {
     const allowed = new Set(level.allowedActions);
     return TOOL_DEFINITIONS.filter(tool =>
             tool.actions.some(action => allowed.has(action)) ||
-        ['wait_safe', 'return_base', 'recover_items', 'escape_pit', 'escape_water', 'fight_mob', 'evade_hostile', 'emergency_shelter', 'eat_food'].includes(tool.name)
+        ['wait_safe', 'return_base', 'recover_items', 'escape_pit', 'escape_water', 'fight_mob', 'fight_player', 'evade_hostile', 'emergency_shelter', 'eat_food'].includes(tool.name)
     );
 }
 
@@ -345,6 +352,7 @@ function actionToToolCall(action) {
         find_food: 'find_food',
         maintain_food_supply: 'maintain_food_supply',
         fight_mob: 'fight_mob',
+        fight_player: 'fight_player',
         evade_hostile: 'evade_hostile',
         emergency_shelter: 'emergency_shelter',
         escape_pit: 'escape_pit',
@@ -483,6 +491,13 @@ async function executeToolCall(bot, call) {
     if (call.tool === 'fight_mob') {
         await survival.fightMob(bot, args.entityId);
         return;
+    }
+
+    if (call.tool === 'fight_player') {
+        return combat.fightPlayer(bot, requireString(args.username, 'username'), {
+            mode: args.mode,
+            criticalHealth: Number(args.criticalHealth || 6)
+        });
     }
 
     if (call.tool === 'evade_hostile') {

@@ -24,6 +24,8 @@ const DirectiveManager = require('./agent/directiveManager');
 const ProfessionManager = require('./professions/professionManager');
 const { createRootTree } = require('./agent/behaviorTree/rootTree');
 const blockPolicy = require('./safety/blockPolicy');
+const { parseCombatIntent } = require('./agent/combatIntent');
+const dynamicSkillSandbox = require('./agent/dynamicSkillSandbox');
 
 const BOT_NAME = process.env.MC_USERNAME || 'marigo';
 const HOST = process.env.MC_HOST || 'localhost';
@@ -271,7 +273,7 @@ const safetyWatchdog = setInterval(() => {
         haltCurrentAction('drowning');
         return;
     }
-    if (['fight_mob', 'evade_hostile', 'escape_water'].includes(activeToolName)) return;
+    if (['fight_mob', 'fight_player', 'evade_hostile', 'escape_water'].includes(activeToolName)) return;
     // A completed refuge is safe. An unfinished refuge is still exposed and
     // must be interruptible when a hostile approaches during digging.
     if (survival.isEmergencyShelter(bot)) return;
@@ -554,7 +556,7 @@ function parseUserCommand(username, lowerMessage) {
     ])) {
         return {
             type: 'help',
-        reply: 'Komutlar: beni takip et, yanima gel, beni/burayi koru, dur, odun veya tas topla, yemek bul, meslek ver, otonom basla, durum.'
+        reply: 'Komutlar: beni takip et, yanima gel, beni/burayi koru, benimle savas, oyuncuyu oldur, dur, odun veya tas topla, yemek bul, otonom basla, durum.'
         };
     }
 
@@ -705,6 +707,19 @@ function parseUserCommand(username, lowerMessage) {
         };
     }
 
+    const combatIntent = parseCombatIntent(message, username, Object.keys(bot.players || {}));
+    if (combatIntent) {
+        return {
+            type: 'combat',
+            username,
+            targetPlayer: combatIntent.targetPlayer,
+            combatMode: combatIntent.combatMode,
+            reply: combatIntent.combatMode === 'lethal'
+                ? `${combatIntent.targetPlayer} hedefiyle lethal savasa giriyorum.`
+                : `${combatIntent.targetPlayer} ile guvenli bir duelloya basliyorum.`
+        };
+    }
+
     if (includesAny(message, [
         'takibi birak',
         'takibi bırak',
@@ -822,7 +837,6 @@ function looksLikeAdminCommand(lowerMessage) {
         'gamerule',
         'time',
         'weather',
-        'kill',
         'effect',
         'gamemode',
         'summon'
@@ -889,6 +903,28 @@ function applyUserCommand(command) {
             range: 5
         });
         haltCurrentAction('guard directive');
+        return;
+    }
+
+    if (command.type === 'combat') {
+        autonomousMode = false;
+        directiveManager.stop();
+        queuedUserCommand = null;
+        taskQueue.cancelAll('replaced by player combat command');
+        taskQueue.enqueue({
+            goal: `${command.combatMode} combat with ${command.targetPlayer}`,
+            requestedBy: command.username,
+            steps: [{
+                tool: 'fight_player',
+                args: {
+                    username: command.targetPlayer,
+                    mode: command.combatMode,
+                    criticalHealth: 6
+                },
+                reason: `Explicit ${command.combatMode} combat requested by ${command.username}`
+            }]
+        });
+        haltCurrentAction('player combat command');
         return;
     }
 
@@ -986,6 +1022,14 @@ function applyAiIntent(username, intent) {
             ? 'Tamam, bu noktada nobet tutacagim.'
             : 'Tamam, yaninda kalip seni koruyacagim.';
     }
+    if (intent.intent === 'combat') {
+        const targetPlayer = intent.targetPlayer || username;
+        const combatMode = intent.combatMode === 'lethal' ? 'lethal' : 'duel';
+        applyUserCommand({ type: 'combat', username, targetPlayer, combatMode });
+        return combatMode === 'lethal'
+            ? `${targetPlayer} hedefiyle lethal savasa giriyorum.`
+            : `${targetPlayer} ile guvenli bir duelloya basliyorum.`;
+    }
     if (intent.intent === 'stop') {
         applyUserCommand({ type: 'stop' });
         return 'Tamam, mevcut direktif ve gorevi durdurdum.';
@@ -1005,6 +1049,25 @@ function applyAiIntent(username, intent) {
         autonomousMode = false;
         directiveManager.stop();
         return `Tamam, ${steps.length} adimli gorevi baslatiyorum.`;
+    }
+    if (intent.intent === 'create_dynamic_skill') {
+        const compiled = dynamicSkillSandbox.compile(intent.dynamicSkillProfile, {
+            tools: toolRegistry.TOOL_DEFINITIONS,
+            normalizeToolCall: toolRegistry.normalizeToolCall,
+            validateToolCall: toolRegistry.validateToolCall
+        });
+        if (!compiled.ok) return `Bu yetenegi guvenli sekilde olusturamadim: ${compiled.error}`.slice(0, 220);
+        persistentMemory.saveDynamicSkill(compiled.profile);
+        taskQueue.cancelAll('replaced by dynamic skill');
+        taskQueue.enqueue({
+            goal: compiled.profile.purpose,
+            requestedBy: username,
+            steps: compiled.steps
+        });
+        autonomousMode = false;
+        directiveManager.stop();
+        haltCurrentAction('dynamic skill created');
+        return `${compiled.profile.displayName} yetenegini ogrendim; ${compiled.steps.length} adimla uyguluyorum.`;
     }
     return null;
 }

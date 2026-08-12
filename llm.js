@@ -73,13 +73,13 @@ async function interpretPlayerIntent({ username, message, observation, professio
     const prompt = buildIntentPrompt({ username, message, observation, profession, task, tools });
     try {
         if (LLM_PROVIDER === 'ollama') {
-            return normalizeIntent(await askOllamaJson(prompt, intentSchema(), 360), message, observation);
+            return normalizeIntent(await askOllamaJson(prompt, intentSchema(), 360), message, observation, username);
         }
         if (LLM_PROVIDER === 'deepseek') {
-            return normalizeIntent(await askDeepSeekJson(prompt, 360), message, observation);
+            return normalizeIntent(await askDeepSeekJson(prompt, 360), message, observation, username);
         }
         if (LLM_PROVIDER === 'openai' || LLM_PROVIDER === 'openai-compatible') {
-            return normalizeIntent(await askOpenAiJson(prompt, 360), message, observation);
+            return normalizeIntent(await askOpenAiJson(prompt, 360), message, observation, username);
         }
     } catch (error) {
         console.log(`[LLM] Could not interpret player intent: ${error.message}`);
@@ -403,12 +403,15 @@ function buildIntentPrompt({ username, message, observation, profession, task, t
         'Interpret a Minecraft player request for Marigo.',
         'Return JSON only. Never invent tools outside the supplied list.',
         'Use intent chat when the message is not an actionable request.',
-        'Valid intents: chat, follow, come, guard, stop, assign_profession, create_profession, stop_profession, create_goal.',
+        'Valid intents: chat, follow, come, guard, combat, stop, assign_profession, create_profession, stop_profession, create_goal, create_dynamic_skill.',
         'Use follow for a persistent follow-me request, come for a one-time come-here request, and guard for a persistent guard-me or guard-here request.',
+        'Use combat only for an explicit request to duel, attack, or kill a player. Set targetPlayer and combatMode to duel or lethal. Never infer lethal mode without kill, oldur, or to-the-death language.',
         'Use create_profession when the player invents a profession that is not already available.',
         'A custom profession must contain safe repeatable routines using only supplied tools. Never use coordinate movement, player following, creative showcases, or direct combat as profession routines.',
         'Supported routine conditions: always, inventory_below, inventory_at_least, observation_equals.',
         'For create_goal, produce 1-8 ordered tool steps.',
+        'Use create_dynamic_skill only when the request needs a reusable sequence that has no existing named skill. It may compose safe supplied tools but may never contain combat with players, following players, coordinate movement, colony operations, shell, files, network, or code.',
+        'A dynamic skill has id, displayName, purpose, optional literal parameters, and 1-12 steps. Each step has tool, args, reason, and optional repeat from 1 to 3.',
         'Use exact tool argument names and include every required argument. Do not invent arguments.',
         'For collecting wood use mine_block with target any_log and the requested count.',
         `Player: ${username}`,
@@ -466,9 +469,11 @@ function intentSchema() {
     return {
         type: 'object',
         properties: {
-            intent: { type: 'string', enum: ['chat', 'follow', 'come', 'guard', 'stop', 'assign_profession', 'create_profession', 'stop_profession', 'create_goal'] },
+            intent: { type: 'string', enum: ['chat', 'follow', 'come', 'guard', 'combat', 'stop', 'assign_profession', 'create_profession', 'stop_profession', 'create_goal', 'create_dynamic_skill'] },
             profession: { type: 'string' },
             target: { type: 'string', enum: ['player', 'position'] },
+            targetPlayer: { type: 'string' },
+            combatMode: { type: 'string', enum: ['duel', 'lethal'] },
             professionProfile: {
                 type: 'object',
                 properties: {
@@ -494,6 +499,29 @@ function intentSchema() {
                 },
                 required: ['id', 'displayName', 'purpose', 'routines']
             },
+            dynamicSkillProfile: {
+                type: 'object',
+                properties: {
+                    id: { type: 'string' },
+                    displayName: { type: 'string' },
+                    purpose: { type: 'string' },
+                    parameters: { type: 'object' },
+                    steps: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                tool: { type: 'string' },
+                                args: { type: 'object' },
+                                reason: { type: 'string' },
+                                repeat: { type: 'number' }
+                            },
+                            required: ['tool', 'args']
+                        }
+                    }
+                },
+                required: ['id', 'displayName', 'purpose', 'steps']
+            },
             goal: { type: 'string' },
             steps: {
                 type: 'array',
@@ -517,17 +545,24 @@ function looksActionable(message) {
     return [
         'topla', 'kes', 'yap', 'kur', 'git', 'gel', 'birak', 'gotur', 'koy',
         'takip', 'ol', 'calis', 'meslek', 'farmer', 'miner', 'builder', 'fisher',
-        'collect', 'build', 'follow', 'bring', 'store', 'profession', 'guard', 'protect', 'koru', 'nobet', 'dur', 'artik'
+        'collect', 'build', 'follow', 'bring', 'store', 'profession', 'guard', 'protect', 'koru', 'nobet', 'dur', 'artik',
+        'savas', 'saldir', 'oldur', 'fight', 'attack', 'kill'
     ].some(word => new RegExp(`(^|[^a-z0-9_])${word}([^a-z0-9_]|$)`, 'i').test(text));
 }
 
-function normalizeIntent(value, message, observation) {
+function normalizeIntent(value, message, observation, username = null) {
     if (!value || typeof value !== 'object') return null;
     const result = { ...value };
     const foldedMessage = foldTurkish(message);
     if (result.intent === 'guard') {
         result.target = result.target === 'position' || /burada|burayi|bu nokta|here|this place/.test(foldedMessage)
             ? 'position' : 'player';
+    }
+    if (result.intent === 'combat') {
+        result.combatMode = result.combatMode === 'lethal' || /\b(oldur|kill|olene kadar|to the death)\b/.test(foldedMessage)
+            ? 'lethal' : 'duel';
+        result.targetPlayer = String(result.targetPlayer || result.username || username || '').slice(0, 16);
+        if (!result.targetPlayer) return null;
     }
     if (result.intent === 'assign_profession' && !result.profession) {
         result.profession = result.professionName || result.job || '';
@@ -548,6 +583,22 @@ function normalizeIntent(value, message, observation) {
                 args: parseArguments(routine.args),
                 reason: String(routine.reason || `${id}: ${routine.tool || 'work'}`).slice(0, 180),
                 when: routine.when || routine.condition || { type: 'always' }
+            }))
+        };
+    }
+    if (result.intent === 'create_dynamic_skill') {
+        const source = result.dynamicSkillProfile && typeof result.dynamicSkillProfile === 'object'
+            ? result.dynamicSkillProfile : result;
+        result.dynamicSkillProfile = {
+            id: source.id || source.skillName || 'custom_skill',
+            displayName: source.displayName || source.name || source.skillName || 'Custom Skill',
+            purpose: source.purpose || source.description || String(message || 'Player-defined skill'),
+            parameters: parseArguments(source.parameters),
+            steps: (Array.isArray(source.steps) ? source.steps : []).slice(0, 12).map(step => ({
+                tool: step.tool,
+                args: parseArguments(step.args),
+                reason: String(step.reason || '').slice(0, 180),
+                repeat: Number(step.repeat || 1)
             }))
         };
     }

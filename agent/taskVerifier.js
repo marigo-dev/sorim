@@ -103,6 +103,16 @@ function verify(call, before, after, options = {}) {
             ? passed('Hostile entity was removed from the world', { entityId: args.entityId })
             : failed('Hostile entity is still alive', { entityId: args.entityId });
     }
+    if (tool === 'fight_player') {
+        const result = options.executionResult || {};
+        const mode = args.mode === 'lethal' ? 'lethal' : 'duel';
+        const accepted = mode === 'lethal'
+            ? ['target_defeated']
+            : ['target_defeated', 'duel_complete', 'stopped_critical', 'stopped_target_critical'];
+        return accepted.includes(result.status)
+            ? passed(`Player combat finished with ${result.status}`, result)
+            : failed(`Player combat did not reach a valid ${mode} outcome`, result);
+    }
     if (tool === 'secure_bed') {
         const bed = findNearbyBed(options.bot, 16);
         return bed

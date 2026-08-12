@@ -40,6 +40,7 @@ The AI does not directly control Mineflayer APIs. It chooses from explicit tools
 - `fish`
 - `replant_sapling`
 - `fight_mob`
+- `fight_player` (explicit duel or lethal command only)
 - `evade_hostile`
 - `emergency_shelter`
 - `return_base`
@@ -456,6 +457,8 @@ marigo beni takip et
 marigo yanima gel
 marigo beni koru
 marigo burayi koru
+marigo benimle savas
+marigo Steve'i oldur
 marigo dur
 marigo agac kes
 ```
@@ -474,6 +477,17 @@ marigo artik orman bekcisisin; guvenli agaclari kes, fidan dik ve 32 odunu depol
 Generated professions are schema-checked, persisted, and rejected if they request
 an unknown tool or invalid arguments. This composes existing body skills; it does
 not allow the model to generate or execute JavaScript at runtime.
+
+For a reusable request that has no named skill, the AI may create a declarative
+dynamic skill. The sandbox accepts at most 12 steps and three repetitions per
+step, validates every step against the normal tool registry, then stores the
+successful definition in agent memory. Player combat, player following, raw
+coordinate movement, colony operations, shell commands, filesystem access,
+network access, and runtime JavaScript are forbidden inside generated skills.
+
+Player combat is opt-in. A duel uses a bounded number of strikes and stops at the
+bot's critical-health threshold; lethal mode is selected only from explicit kill
+or to-the-death wording. `marigo dur` cancels either mode immediately.
 
 Status returns:
 

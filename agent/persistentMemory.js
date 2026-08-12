@@ -70,6 +70,21 @@ function saveCustomProfession(profile) {
     return clone(profile);
 }
 
+function getDynamicSkills() {
+    return clone(state.dynamicSkills);
+}
+
+function saveDynamicSkill(profile) {
+    if (!profile?.id) return null;
+    state.dynamicSkills[profile.id] = clone(profile);
+    addEpisode('skill_created', `Learned dynamic skill ${profile.id}.`, 0.85, {
+        displayName: profile.displayName || profile.id,
+        steps: profile.steps?.length || 0
+    });
+    scheduleSave();
+    return clone(profile);
+}
+
 function setProfession(id, assignedBy) {
     state.profession = {
         id,
@@ -259,6 +274,7 @@ function defaults() {
         profession: null,
         directive: null,
         customProfessions: {},
+        dynamicSkills: {},
         players: {},
         conversation: [],
         episodes: [],
@@ -277,6 +293,7 @@ function normalize(saved) {
         profession: saved?.profession?.id ? plainObject(saved.profession) : null,
         directive: saved?.directive?.type ? plainObject(saved.directive) : null,
         customProfessions: plainObject(saved?.customProfessions),
+        dynamicSkills: plainObject(saved?.dynamicSkills),
         players: plainObject(saved?.players),
         conversation: Array.isArray(saved?.conversation) ? saved.conversation.slice(-MAX_CONVERSATION) : [],
         episodes: Array.isArray(saved?.episodes) ? saved.episodes.slice(-MAX_EPISODES) : [],
@@ -341,6 +358,8 @@ module.exports = {
     setDirective,
     getCustomProfessions,
     saveCustomProfession,
+    getDynamicSkills,
+    saveDynamicSkill,
     setProfession,
     stopProfession,
     pauseProfession,
