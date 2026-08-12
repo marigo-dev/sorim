@@ -362,7 +362,7 @@ async function buildEmergencyShelterAttempt(bot) {
     let targetBottomY = surfaceExit.y - 3;
     console.log(`[SURVIVAL] building emergency night shelter ${bot.entity.position.floored().toString()}`);
 
-    if (surfaceRefugeMaterialCount(bot) >= 9 && preferredRecoveryBlock(bot)) {
+    if (surfaceRefugeMaterialCount(bot) >= 10 && preferredRecoveryBlock(bot)) {
         const refugeCenter = isSurfaceRefugeSiteSafe(bot, current)
             ? current
             : findNearbySurfaceRefugeCenter(bot, current);
@@ -577,8 +577,9 @@ async function buildSurfaceNightRefuge(bot, center, actionVersion) {
     ]) {
         walls.push(center.plus(offset), center.plus(offset).offset(0, 1, 0));
     }
+    const roofAnchor = center.offset(1, 2, 0);
     const roofPosition = center.offset(0, 2, 0);
-    for (const position of [...walls, roofPosition]) {
+    for (const position of [...walls, roofAnchor, roofPosition]) {
         actionControl.assertActive(bot, actionVersion);
         if (bot.blockAt(position)?.boundingBox === 'block') continue;
         const item = position.equals(roofPosition)
@@ -595,7 +596,7 @@ async function buildSurfaceNightRefuge(bot, center, actionVersion) {
 }
 
 async function prepareSurfaceRefugeMaterials(bot, center, actionVersion) {
-    if (surfaceRefugeMaterialCount(bot) >= 9 && preferredRecoveryBlock(bot)) return;
+    if (surfaceRefugeMaterialCount(bot) >= 10 && preferredRecoveryBlock(bot)) return;
     const sandId = bot.registry.blocksByName.sand?.id;
     if (!sandId) return;
 
