@@ -4,6 +4,19 @@ const storage = require('../skills/storage');
 const colonyMemory = require('../skills/colonyMemory');
 const { Vec3 } = require('vec3');
 
+const VERIFIED_TOOLS = new Set([
+    'explore', 'mine_block', 'craft_item', 'place_block', 'collect_stone',
+    'craft_stone_tools', 'build_shelter', 'ensure_base', 'eat_food', 'find_food',
+    'maintain_food_supply', 'care_for_animals', 'fish', 'replant_sapling',
+    'fight_mob', 'fight_player', 'evade_hostile', 'emergency_shelter', 'escape_pit',
+    'recover_items', 'escape_water', 'return_base', 'wait_safe',
+    'execute_dynamic_skill', 'sleep_bed', 'secure_bed', 'establish_wheat_farm',
+    'organize_storage', 'prepare_mining_kit', 'mine_iron', 'smelt_item',
+    'craft_iron_kit', 'craft_iron_armor', 'build_blueprint', 'build_showcase',
+    'ensure_shared_storage', 'deposit_shared_storage', 'withdraw_shared_storage',
+    'count_shared_storage', 'build_colony_marker', 'follow_player', 'move_near'
+]);
+
 class TaskVerificationError extends Error {
     constructor(message, details = {}) {
         super(message);
@@ -19,6 +32,14 @@ function capture(bot, observation = null) {
         inventory: { ...(observation?.inventory || countInventory(bot)) },
         position: observation?.position || vector(bot?.entity?.position),
         base: observation?.base || memory.getBase(),
+        health: Number(observation?.health ?? bot?.health ?? 0),
+        food: Number(observation?.food ?? bot?.food ?? 0),
+        oxygen: Number(bot?.oxygenLevel ?? 20),
+        isSleeping: Boolean(bot?.isSleeping),
+        isDay: Boolean(bot?.time?.isDay),
+        entities: captureEntities(bot),
+        players: capturePlayers(bot),
+        equipment: captureEquipment(bot),
         hasUsableChest: observation?.hasUsableChest ?? safe(() => storage.hasChestNearby(bot), false),
         sharedInventory: { ...(colonyMemory.load().sharedStorage?.inventory || {}) }
     };
@@ -28,6 +49,16 @@ function verify(call, before, after, options = {}) {
     const tool = call?.tool;
     const args = call?.args || {};
     if (!tool) return failed('Missing tool call');
+
+    if (tool === 'explore') {
+        const result = options.executionResult || {};
+        const moved = distanceBetween(before.position, after.position);
+        if (result.cancelled) return failed('Exploration was cancelled', { moved });
+        if (result.found?.position) return passed('Exploration found its requested target', { moved });
+        return (result.reached || result.recovered) && moved >= 1
+            ? passed(`Exploration advanced ${moved.toFixed(2)} blocks`, { moved })
+            : failed('Exploration produced no target or observed movement', { moved, result });
+    }
 
     if (tool === 'mine_block') {
         const names = inventoryNamesForBlock(args.target);
@@ -41,6 +72,13 @@ function verify(call, before, after, options = {}) {
         return gained >= Math.max(1, Number(args.count || 1))
             ? passed(`Crafted ${gained} ${args.item}`, { gained })
             : failed(`Expected ${args.item} inventory to increase`, { gained });
+    }
+    if (tool === 'place_block') {
+        const block = options.executionResult;
+        const visible = block?.position && options.bot?.blockAt(block.position)?.name === args.item;
+        return block?.name === args.item && visible
+            ? passed(`Placed and observed ${args.item}`, { position: vector(block.position) })
+            : failed(`Placed ${args.item} was not observed in the world`);
     }
     if (tool === 'collect_stone') {
         const gained = count(after.inventory, 'cobblestone') - count(before.inventory, 'cobblestone');
@@ -113,6 +151,48 @@ function verify(call, before, after, options = {}) {
             ? passed(`Player combat finished with ${result.status}`, result)
             : failed(`Player combat did not reach a valid ${mode} outcome`, result);
     }
+    if (tool === 'evade_hostile') {
+        const beforeTarget = before.entities?.[args.entityId];
+        const afterTarget = after.entities?.[args.entityId];
+        const beforeDistance = beforeTarget ? distanceBetween(before.position, beforeTarget.position) : Infinity;
+        const afterDistance = afterTarget ? distanceBetween(after.position, afterTarget.position) : Infinity;
+        return !afterTarget || afterDistance >= 12 || afterDistance >= beforeDistance + 3
+            ? passed(`Hostile separation changed ${formatDistance(beforeDistance)}->${formatDistance(afterDistance)}`, { beforeDistance, afterDistance })
+            : failed('Evade did not create safe separation', { beforeDistance, afterDistance });
+    }
+    if (tool === 'emergency_shelter') {
+        const sheltered = safe(() => require('../skills/survival').isEmergencyShelter(options.bot), false);
+        return sheltered ? passed('Emergency shelter geometry is sealed') : failed('Emergency shelter was not verified');
+    }
+    if (tool === 'escape_pit') {
+        const rise = Number(after.position?.y || 0) - Number(before.position?.y || 0);
+        const moved = distanceBetween(before.position, after.position);
+        const stillTrapped = safe(() => require('../skills/survival').isInPit(options.bot), true);
+        const surfaceExit = memory.getSurfaceExit();
+        const reachedExit = surfaceExit && Number(after.position?.y || 0) >= Number(surfaceExit.y) - 0.1;
+        return !stillTrapped || reachedExit
+            ? passed(`Pit exit verified after moving ${moved.toFixed(2)} blocks with ${rise.toFixed(2)} Y gain`, { rise, moved, reachedExit })
+            : failed('Bot moved but remains inside pit geometry', { rise, moved, stillTrapped });
+    }
+    if (tool === 'recover_items') {
+        const gained = inventoryTotal(after.inventory) - inventoryTotal(before.inventory);
+        return options.executionResult === true && gained > 0
+            ? passed(`Recovered ${gained} dropped items`, { gained })
+            : failed('Dropped-item recovery was not confirmed', { gained });
+    }
+    if (tool === 'escape_water') {
+        const needsAir = safe(() => require('../skills/survival').needsAir(options.bot), true);
+        return !needsAir && after.oxygen > 0
+            ? passed(`Reached breathable water state with oxygen ${after.oxygen}`, { oxygen: after.oxygen })
+            : failed('Bot still needs air after water escape', { oxygenBefore: before.oxygen, oxygenAfter: after.oxygen });
+    }
+    if (tool === 'wait_safe') {
+        const requested = Math.max(0, Number(args.ms || 1000));
+        const elapsed = after.timestamp - before.timestamp;
+        return options.executionResult?.status === 'waited' && elapsed >= Math.max(0, requested - 100)
+            ? passed(`Waited ${elapsed}ms`, { elapsed, requested })
+            : failed('Safe wait duration was not confirmed', { elapsed, requested });
+    }
     if (tool === 'execute_dynamic_skill') {
         const result = options.executionResult || {};
         const assertions = Array.isArray(result.assertions) ? result.assertions : [];
@@ -127,6 +207,11 @@ function verify(call, before, after, options = {}) {
             ? passed(`Bed exists in world at ${bed.position.toString()}`, { position: vector(bed.position) })
             : failed('No placed bed was found near the bot');
     }
+    if (tool === 'sleep_bed') {
+        return after.isDay && !after.isSleeping
+            ? passed('Sleep completed and world time is daytime')
+            : failed('Sleep did not advance the world to daytime', { isDay: after.isDay, isSleeping: after.isSleeping });
+    }
     if (tool === 'find_food') {
         const gained = totalByPredicate(after.inventory, isEdible) -
             totalByPredicate(before.inventory, isEdible);
@@ -137,6 +222,21 @@ function verify(call, before, after, options = {}) {
             return passed(`Food search moved ${moved.toFixed(2)} blocks`, { moved, result });
         }
         return failed('Food search produced no inventory or exploration progress', { gained, moved, result });
+    }
+    if (tool === 'maintain_food_supply') {
+        const foodBefore = totalByPredicate(before.inventory, isEdible);
+        const foodAfter = totalByPredicate(after.inventory, isEdible);
+        const result = options.executionResult || {};
+        if (foodAfter >= 16 || foodAfter > foodBefore) {
+            return passed(`Food reserve changed ${foodBefore}->${foodAfter}`, { result });
+        }
+        if (result.status === 'farm_expanded' && Number(result.planted || 0) > 0) {
+            return passed(`Food farm expanded by ${result.planted} crops`, result);
+        }
+        const growing = safe(() => require('../skills/homestead').growingCropCount(options.bot), 0);
+        return result.status === 'crops_growing' && growing > 0
+            ? passed(`Verified ${growing} growing food crops`, { growing })
+            : failed('Food maintenance changed neither reserve nor farm state', { result, foodBefore, foodAfter });
     }
     if (tool === 'fish') {
         const gained = totalByPredicate(after.inventory, isFish) - totalByPredicate(before.inventory, isFish);
@@ -180,10 +280,37 @@ function verify(call, before, after, options = {}) {
             ? passed('Mining kit has pickaxe, furnace, torches, and support blocks')
             : failed('Mining kit remains incomplete', { hasPickaxe, torches: count(inventory, 'torch'), support, furnaceReady });
     }
+    if (tool === 'craft_iron_kit') {
+        const missing = ['iron_pickaxe', 'iron_sword', 'iron_axe', 'shield']
+            .filter(name => count(after.inventory, name) < 1 && !after.equipment.includes(name));
+        return missing.length === 0 ? passed('Full iron tool kit exists') : failed(`Missing iron kit: ${missing.join(', ')}`);
+    }
+    if (tool === 'craft_iron_armor') {
+        const armor = ['iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots'];
+        const missing = armor.filter(name => count(after.inventory, name) < 1 && !after.equipment.includes(name));
+        return missing.length === 0 ? passed('Full iron armor exists or is equipped') : failed(`Missing iron armor: ${missing.join(', ')}`);
+    }
+    if (tool === 'build_blueprint') {
+        const result = options.executionResult || {};
+        return result.verified && String(result.name).toLowerCase() === String(args.name).toLowerCase() && result.matched === result.expected
+            ? passed(`Blueprint ${result.name} verified ${result.matched}/${result.expected}`, result)
+            : failed('Blueprint world blocks were not fully verified', result);
+    }
+    if (tool === 'build_showcase') {
+        const result = options.executionResult || {};
+        return result.verified && result.verifiedBlueprints === result.expectedBlueprints
+            ? passed(`Showcase verified ${result.verifiedBlueprints} blueprints`, result)
+            : failed('Showcase world blocks were not fully verified', result);
+    }
     if (tool === 'replant_sapling') {
         const spent = totalByPredicate(before.inventory, name => name.endsWith('_sapling')) -
             totalByPredicate(after.inventory, name => name.endsWith('_sapling'));
-        return spent > 0 ? passed('A sapling left inventory for planting', { spent }) : failed('No sapling was planted');
+        const block = options.executionResult;
+        const visible = block?.position && block.name?.endsWith('_sapling') &&
+            options.bot?.blockAt(block.position)?.name === block.name;
+        return spent > 0 && visible
+            ? passed('A sapling left inventory and exists in world state', { spent, position: vector(block.position) })
+            : failed('No planted sapling was verified in world state', { spent });
     }
     if (tool === 'deposit_shared_storage') {
         const moved = count(before.inventory, args.item) - count(after.inventory, args.item);
@@ -207,6 +334,12 @@ function verify(call, before, after, options = {}) {
             ? passed('Shared storage chest exists in the world', { position: vector(block.position) })
             : failed('Shared storage did not return a world chest block');
     }
+    if (tool === 'count_shared_storage') {
+        const result = options.executionResult || {};
+        return sameCounts(result, after.sharedInventory)
+            ? passed('Shared storage inventory count confirmed', { inventory: result })
+            : failed('Shared storage inventory count did not match memory', { expected: after.sharedInventory, result });
+    }
     if (tool === 'build_colony_marker') {
         const placed = Number(options.executionResult || 0);
         const project = colonyMemory.load().projects.find(entry => entry.id === 'survival_marker');
@@ -214,7 +347,20 @@ function verify(call, before, after, options = {}) {
             ? passed(`Colony marker placed ${placed} validated blocks`, { placed, projectStatus: project.status })
             : failed('Colony marker world state was not confirmed', { placed });
     }
-    return passed(`Tool ${tool} completed without an exception`, { fallback: true });
+    if (tool === 'follow_player') {
+        const result = options.executionResult || {};
+        const target = after.players?.[args.username];
+        const distance = target ? distanceBetween(after.position, target.position) : Number(result.distance ?? Infinity);
+        const accepted = Math.max(2, Number(args.range || 3)) + 1.5;
+        return ['near', 'tracking'].includes(result.status) && distance <= accepted
+            ? passed(`Following ${args.username} within ${distance.toFixed(2)} blocks`, { distance, accepted })
+            : failed(`Follow target was not reached within ${accepted} blocks`, { distance, result });
+    }
+    return failed(`Tool ${tool} has no task verification contract`);
+}
+
+function supports(tool) {
+    return VERIFIED_TOOLS.has(tool);
 }
 
 function inventoryNamesForBlock(target) {
@@ -244,12 +390,45 @@ function count(inventory, name) {
     return Number(inventory?.[name] || 0);
 }
 
+function sameCounts(left, right) {
+    const names = new Set([...Object.keys(left || {}), ...Object.keys(right || {})]);
+    return [...names].every(name => count(left, name) === count(right, name));
+}
+
 function countInventory(bot) {
     const result = {};
     for (const item of bot?.inventory?.items?.() || bot?.inventory?.slots?.filter(Boolean) || []) {
         result[item.name] = (result[item.name] || 0) + item.count;
     }
     return result;
+}
+
+function inventoryTotal(inventory) {
+    return Object.values(inventory || {}).reduce((sum, amount) => sum + Number(amount || 0), 0);
+}
+
+function captureEntities(bot) {
+    const result = {};
+    for (const entity of Object.values(bot?.entities || {})) {
+        if (!entity?.id || !entity.position || entity === bot.entity) continue;
+        result[entity.id] = {
+            name: entity.name || entity.username || entity.type,
+            position: vector(entity.position)
+        };
+    }
+    return result;
+}
+
+function capturePlayers(bot) {
+    const result = {};
+    for (const [username, entry] of Object.entries(bot?.players || {})) {
+        if (entry?.entity?.position) result[username] = { position: vector(entry.entity.position) };
+    }
+    return result;
+}
+
+function captureEquipment(bot) {
+    return (bot?.entity?.equipment || []).map(item => item?.name).filter(Boolean);
 }
 
 function vector(position) {
@@ -259,6 +438,10 @@ function vector(position) {
 function distanceBetween(left, right) {
     if (!left || !right) return Infinity;
     return Math.hypot(left.x - right.x, left.y - right.y, left.z - right.z);
+}
+
+function formatDistance(value) {
+    return Number.isFinite(value) ? value.toFixed(2) : 'unavailable';
 }
 
 function isFish(name) {
@@ -305,4 +488,4 @@ function safe(fn, fallback) {
     }
 }
 
-module.exports = { capture, verify, TaskVerificationError };
+module.exports = { capture, verify, supports, TaskVerificationError };

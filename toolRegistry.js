@@ -411,8 +411,9 @@ async function executeToolCall(bot, call) {
     const args = call?.args || {};
 
     if (!call || call.tool === 'wait_safe') {
-        await sleep(args.ms || 1000);
-        return;
+        const durationMs = Number(args.ms || 1000);
+        await sleep(durationMs);
+        return { status: 'waited', durationMs };
     }
 
     if (call.tool === 'execute_dynamic_skill') {
@@ -495,8 +496,7 @@ async function executeToolCall(bot, call) {
     }
 
     if (call.tool === 'replant_sapling') {
-        await forestry.replantSapling(bot);
-        return;
+        return forestry.replantSapling(bot);
     }
 
     if (call.tool === 'fight_mob') {
@@ -600,13 +600,11 @@ async function executeToolCall(bot, call) {
     }
 
     if (call.tool === 'build_blueprint') {
-        await build.buildBlueprint(bot, requireString(args.name, 'name'), optionalPosition(args));
-        return;
+        return build.buildBlueprint(bot, requireString(args.name, 'name'), optionalPosition(args));
     }
 
     if (call.tool === 'build_showcase') {
-        await build.buildShowcase(bot, optionalPosition(args));
-        return;
+        return build.buildShowcase(bot, optionalPosition(args));
     }
 
     if (call.tool === 'ensure_shared_storage') {

@@ -12,8 +12,11 @@ async function replantSapling(bot) {
     await bot.equip(sapling, 'hand');
     await bot.lookAt(ground.position.offset(0.5, 1, 0.5), true);
     await bot.placeBlock(ground, new Vec3(0, 1, 0));
-    console.log(`[FORESTRY] planted ${sapling.name} at ${ground.position.offset(0, 1, 0).toString()}`);
-    return true;
+    await movement.sleep(300);
+    const planted = bot.blockAt(ground.position.offset(0, 1, 0));
+    if (planted?.name !== sapling.name) throw new Error('Planted sapling was not visible in world state');
+    console.log(`[FORESTRY] planted ${sapling.name} at ${planted.position.toString()}`);
+    return planted;
 }
 
 function findPlantingGround(bot) {

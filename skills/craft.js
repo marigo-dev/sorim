@@ -108,7 +108,7 @@ async function placeBlock(bot, itemName) {
             if (direct?.name === itemName || nearby) {
                 console.log(`[PLACE] ${itemName} event timed out but block is visible; continuing.`);
                 memory.rememberPlacedBlock(itemName);
-                return;
+                return direct?.name === itemName ? direct : nearby;
             }
             lastError = error;
             console.log(`[PLACE] aday basarisiz: ${error.message}`);

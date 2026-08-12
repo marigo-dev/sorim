@@ -20,7 +20,17 @@ async function buildBlueprint(bot, name, origin = null) {
     await ensureCreative(bot);
     await prepareArea(bot, blueprint, start);
     await placeBlocks(bot, blueprint.blocks, start);
+    await sleep(300);
+    const verification = verifyBlueprint(bot, blueprint, start);
+    if (!verification.verified) {
+        const missing = verification.missing.slice(0, 5)
+            .map(entry => `${entry.block}@${entry.x},${entry.y},${entry.z}`).join(';');
+        throw new Error(
+            `Blueprint verification failed: ${verification.matched}/${verification.expected} blocks; missing=${missing}`
+        );
+    }
     console.log(`[BUILD] ${blueprint.name} complete blocks=${blueprint.blocks.length} origin=${start.toString()}`);
+    return { name: blueprint.name, origin: vector(start), ...verification };
 }
 
 async function buildShowcase(bot, origin = null) {
@@ -28,11 +38,41 @@ async function buildShowcase(bot, origin = null) {
     await ensureCreative(bot);
 
     const names = Object.keys(CATALOG);
+    const results = [];
     for (let i = 0; i < names.length; i++) {
         const x = start.x + (i % 4) * 18;
         const z = start.z + Math.floor(i / 4) * 18;
-        await buildBlueprint(bot, names[i], new Vec3(x, start.y, z));
+        results.push(await buildBlueprint(bot, names[i], new Vec3(x, start.y, z)));
     }
+    return {
+        verified: results.length === names.length && results.every(result => result.verified),
+        expectedBlueprints: names.length,
+        verifiedBlueprints: results.filter(result => result.verified).length,
+        results
+    };
+}
+
+function verifyBlueprint(bot, blueprint, origin) {
+    const missing = missingBlueprintBlocks(bot, blueprint.blocks, origin);
+    const matched = blueprint.blocks.length - missing.length;
+    return {
+        verified: missing.length === 0,
+        matched,
+        expected: blueprint.blocks.length,
+        missing
+    };
+}
+
+function missingBlueprintBlocks(bot, blocks, origin) {
+    return blocks.filter(expected => {
+        const position = origin.offset(expected.x, expected.y, expected.z);
+        const expectedName = String(expected.block).split('[', 1)[0];
+        return bot.blockAt(position)?.name !== expectedName;
+    });
+}
+
+function vector(position) {
+    return { x: position.x, y: position.y, z: position.z };
 }
 
 function getBlueprint(name) {
@@ -68,6 +108,17 @@ async function placeBlocks(bot, blocks, origin) {
         lastY = block.y;
         const position = origin.offset(block.x, block.y, block.z);
         await command(bot, `/setblock ${position.x} ${position.y} ${position.z} ${block.block}`);
+    }
+    // Attachment blocks can be evaluated before a support in a higher layer.
+    // Once the full structure exists, retry only blocks absent from world state.
+    for (let pass = 0; pass < 2; pass++) {
+        const missing = missingBlueprintBlocks(bot, blocks, origin);
+        if (missing.length === 0) break;
+        for (const expected of missing) {
+            const position = origin.offset(expected.x, expected.y, expected.z);
+            await command(bot, `/setblock ${position.x} ${position.y} ${position.z} ${expected.block}`);
+        }
+        await sleep(150);
     }
 }
 

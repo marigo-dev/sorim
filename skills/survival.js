@@ -2580,6 +2580,7 @@ module.exports = {
     shouldUseEmergencyShaft,
     shouldUseShallowBaseShaft,
     isMineRouteRelevant,
+    isInPit,
     escapePit,
     returnBase,
     waitSafe,

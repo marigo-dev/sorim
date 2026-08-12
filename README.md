@@ -522,6 +522,23 @@ npm run fixture:clarification
 The fixture verifies the clarification question, an unaddressed follow-up answer,
 target locking, and the final entity removal.
 
+Every tool exposed to the task planner has an explicit verification contract.
+Unknown tools fail closed; completing without an exception is never sufficient.
+Verification evidence includes inventory deltas, positions, player and hostile
+distance, oxygen, daylight, equipment, storage contents, placed blocks, farm
+state, and dynamic-skill world assertions as appropriate for each tool.
+
+The Paper 26.2 world-state verification fixture builds a catalog blueprint through
+the normal dispatcher, checks every expected block, and confirms that an unknown
+world mutation cannot pass task verification:
+
+```powershell
+$env:MC_HOST='127.0.0.1'
+$env:MC_PORT='25566'
+$env:MC_VERSION='26.2'
+npm run fixture:task-verification
+```
+
 Status returns:
 
 - current level

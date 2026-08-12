@@ -4,6 +4,8 @@ const TaskQueue = require('../agent/taskQueue');
 const taskVerifier = require('../agent/taskVerifier');
 const { PreconditionResolver, materialPotential } = require('../agent/preconditionResolver');
 const storage = require('../skills/storage');
+const { TOOL_DEFINITIONS } = require('../toolRegistry');
+const { Vec3 } = require('vec3');
 
 const before = {
     inventory: { oak_log: 1, dirt: 2 },
@@ -15,6 +17,79 @@ const afterMine = {
     ...before,
     inventory: { oak_log: 5, dirt: 2 }
 };
+
+const unsupported = TOOL_DEFINITIONS.map(tool => tool.name).filter(tool => !taskVerifier.supports(tool));
+assert.deepEqual(unsupported, [], `Tools without verification contracts: ${unsupported.join(', ')}`);
+assert.equal(taskVerifier.verify({ tool: 'invented_tool', args: {} }, before, before).ok, false);
+
+assert.equal(taskVerifier.verify(
+    { tool: 'explore', args: { target: 'wood' } },
+    before,
+    { ...before, position: { x: 22, y: 64, z: 20 } },
+    { executionResult: { recovered: true } }
+).ok, true);
+assert.equal(taskVerifier.verify(
+    { tool: 'explore', args: { target: 'wood' } },
+    before,
+    before,
+    { executionResult: { recovered: false } }
+).ok, false);
+
+const placedBlock = { name: 'crafting_table', position: { x: 21, y: 64, z: 20 } };
+assert.equal(taskVerifier.verify(
+    { tool: 'place_block', args: { item: 'crafting_table' } },
+    before,
+    before,
+    { executionResult: placedBlock, bot: { blockAt: () => placedBlock } }
+).ok, true);
+
+assert.equal(taskVerifier.verify(
+    { tool: 'wait_safe', args: { ms: 1000 } },
+    { ...before, timestamp: 1000 },
+    { ...before, timestamp: 2050 },
+    { executionResult: { status: 'waited', durationMs: 1000 } }
+).ok, true);
+
+const openExitBot = {
+    entity: { position: new Vec3(22, 65, 20) },
+    blockAt: () => ({ name: 'air', boundingBox: 'empty' })
+};
+assert.equal(taskVerifier.verify(
+    { tool: 'escape_pit', args: {} },
+    before,
+    { ...before, position: { x: 22, y: 65, z: 20 } },
+    { bot: openExitBot }
+).ok, true);
+const sealedPitBot = {
+    entity: { position: new Vec3(20, 64, 20) },
+    blockAt: () => ({ name: 'stone', boundingBox: 'block' })
+};
+assert.equal(taskVerifier.verify(
+    { tool: 'escape_pit', args: {} },
+    before,
+    { ...before, position: { x: 23, y: 64, z: 20 } },
+    { bot: sealedPitBot }
+).ok, false);
+
+assert.equal(taskVerifier.verify(
+    { tool: 'craft_iron_kit', args: {} },
+    before,
+    { ...before, inventory: { iron_pickaxe: 1, iron_sword: 1, iron_axe: 1, shield: 1 }, equipment: [] }
+).ok, true);
+
+assert.equal(taskVerifier.verify(
+    { tool: 'build_blueprint', args: { name: 'spruce_cottage' } },
+    before,
+    before,
+    { executionResult: { name: 'spruce_cottage', verified: true, matched: 80, expected: 80 } }
+).ok, true);
+
+assert.equal(taskVerifier.verify(
+    { tool: 'count_shared_storage', args: {} },
+    before,
+    { ...before, sharedInventory: { bread: 8, cobblestone: 32 } },
+    { executionResult: { bread: 8, cobblestone: 32 } }
+).ok, true);
 assert.equal(taskVerifier.verify(
     { tool: 'mine_block', args: { target: 'any_log' } },
     before,

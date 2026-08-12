@@ -170,12 +170,13 @@ async function maintainFoodSupply(bot, options = {}) {
     const homestead = require('./homestead');
     if (!options.alreadyOutside) await shelter.leaveBase(bot);
     await prepareCollectedFood(bot);
-    if (hasFoodStock(countInventory(bot), 16)) return;
+    if (hasFoodStock(countInventory(bot), 16)) {
+        return { status: 'stock_ready', foodCount: foodCount(countInventory(bot)) };
+    }
 
     const center = homestead.findFarmCenter(bot);
     if (!center) {
-        await findFood(bot, { skipFarm: true });
-        return;
+        return findFood(bot, { skipFarm: true });
     }
 
     let harvested = 0;
@@ -197,22 +198,24 @@ async function maintainFoodSupply(bot, options = {}) {
         await prepareCollectedFood(bot);
         console.log(`[FOOD] farm harvest batch=${harvested}`);
     }
-    if (hasFoodStock(countInventory(bot), 16)) return;
+    if (hasFoodStock(countInventory(bot), 16)) {
+        return { status: 'stock_ready', foodCount: foodCount(countInventory(bot)), harvested };
+    }
 
     const capacity = homestead.farmCapacity(bot, center);
     if (capacity < 48 && countItem(bot, 'wheat_seeds') > 0) {
         const expansion = await homestead.expandWheatFarm(bot, 48);
-        if (expansion.planted > 0) return;
+        if (expansion.planted > 0) return { status: 'farm_expanded', ...expansion };
     }
 
     if (homestead.growingCropCount(bot) > 0) {
         await shelter.returnToBase(bot);
         console.log('[FOOD] crops are growing; waiting safely at base instead of roaming.');
         await movement.sleep(5000);
-        return;
+        return { status: 'crops_growing', growing: homestead.growingCropCount(bot) };
     }
 
-    await findFood(bot, { skipFarm: true });
+    return findFood(bot, { skipFarm: true });
 }
 
 function foodScore(inventory) {
