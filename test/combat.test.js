@@ -27,6 +27,7 @@ assert.deepEqual(
     { intent: 'combat_mob', targetMob: null, combatMode: 'lethal' }
 );
 assert.equal(parseCombatIntent('Marigo eve don', 'owner', ['owner']), null);
+assert.equal(parseCombatIntent('Marigo onu oldur', 'owner', ['owner']), null);
 
 const originalSleep = movement.sleep;
 movement.sleep = async () => {};

@@ -12,16 +12,24 @@ yarn-error.log*
 # Local runtime state
 .env
 .env.*
+*.env
 !.env.example
 keys.json
 **/keys.json
 *credentials*.json
 *secrets*.json
+*token*.json
+*api-key*
+*apikey*
+*.key
+*.crt
+*.keystore
 *.pem
 *.p12
 *.pfx
 *.jks
 .npmrc
+config.local.*
 data/
 memory/
 artifacts/

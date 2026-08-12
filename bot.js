@@ -25,6 +25,7 @@ const ProfessionManager = require('./professions/professionManager');
 const { createRootTree } = require('./agent/behaviorTree/rootTree');
 const blockPolicy = require('./safety/blockPolicy');
 const { parseCombatIntent } = require('./agent/combatIntent');
+const { detectClarificationNeed, resolveClarificationMessage } = require('./agent/clarification');
 const dynamicSkillSandbox = require('./agent/dynamicSkillSandbox');
 
 const BOT_NAME = process.env.MC_USERNAME || 'marigo';
@@ -140,7 +141,8 @@ bot.on('chat', async (username, message) => {
     const lower = message.toLowerCase();
     const addressed = lower.includes(BOT_NAME.toLowerCase()) || lower.includes('marigo');
     const continuing = (conversationWindows.get(username) || 0) > Date.now();
-    if (!addressed && !continuing) return;
+    const pendingClarification = persistentMemory.getClarification(username);
+    if (!addressed && !continuing && !pendingClarification) return;
     if (looksLikeAdminCommand(lower)) return;
     conversationWindows.set(username, Date.now() + CHAT_CONTINUATION_MS);
 
@@ -157,9 +159,13 @@ bot.on('chat', async (username, message) => {
         return;
     }
 
-    const command = parseUserCommand(username, lower);
+    const commandMessage = pendingClarification
+        ? resolveClarificationMessage(pendingClarification, lower, BOT_NAME)
+        : lower;
+    const command = parseUserCommand(username, commandMessage);
     if (command) {
         applyUserCommand(command);
+        if (command.type !== 'clarify') persistentMemory.clearClarification(username);
         bot.chat(command.reply);
         persistentMemory.addConversation(username, 'assistant', command.reply);
         return;
@@ -174,17 +180,29 @@ bot.on('chat', async (username, message) => {
     try {
         const aiIntent = await interpretPlayerIntent({
             username,
-            message,
+            message: pendingClarification
+                ? `${pendingClarification.originalMessage}\nPlayer clarification: ${message}`
+                : message,
             observation,
             profession: professionManager.current(),
             task: taskQueue.summary(),
             dynamicSkills: persistentMemory.getDynamicSkills(),
+            pendingClarification,
             tools: toolRegistry.TOOL_DEFINITIONS
         });
-        const intentReply = applyAiIntent(username, aiIntent);
+        const intentReply = applyAiIntent(username, aiIntent, {
+            message,
+            pendingClarification
+        });
         if (intentReply) {
             bot.chat(intentReply);
             persistentMemory.addConversation(username, 'assistant', intentReply);
+            return;
+        }
+
+        if (pendingClarification) {
+            bot.chat(pendingClarification.question);
+            persistentMemory.addConversation(username, 'assistant', pendingClarification.question);
             return;
         }
 
@@ -740,6 +758,15 @@ function parseUserCommand(username, lowerMessage) {
                 reply: `${target.name} hedefini kilitledim; savasa giriyorum.`
             };
         }
+        const visiblePlayer = Object.entries(bot.players || {}).find(([name, entry]) =>
+            name.toLowerCase() === combatIntent.targetPlayer.toLowerCase() && entry?.entity
+        );
+        if (!visiblePlayer) {
+            return {
+                type: 'combat_unavailable',
+                reply: `${combatIntent.targetPlayer} oyuncusunu su anda goremiyorum.`
+            };
+        }
         return {
             type: 'combat',
             username,
@@ -750,6 +777,9 @@ function parseUserCommand(username, lowerMessage) {
                 : `${combatIntent.targetPlayer} ile guvenli bir duelloya basliyorum.`
         };
     }
+
+    const clarificationNeed = detectClarificationNeed(foldedMessage, username, message);
+    if (clarificationNeed) return clarificationNeed;
 
     if (includesAny(message, [
         'takibi birak',
@@ -898,6 +928,16 @@ function looksLikeAdminCommand(lowerMessage) {
 
 function applyUserCommand(command) {
     if (command.type === 'help' || command.type === 'combat_unavailable') return;
+
+    if (command.type === 'clarify') {
+        persistentMemory.setClarification(command.username, {
+            kind: command.kind,
+            originalMessage: command.originalMessage,
+            question: command.reply,
+            details: command.details || {}
+        });
+        return;
+    }
 
     if (command.type === 'auto_start') {
         autonomousMode = true;
@@ -1048,8 +1088,19 @@ function applyUserCommand(command) {
     }
 }
 
-function applyAiIntent(username, intent) {
+function applyAiIntent(username, intent, context = {}) {
     if (!intent || intent.intent === 'chat') return null;
+    if (intent.intent === 'clarify') {
+        const question = String(intent.question || 'Istedigin gorevi biraz daha net anlatir misin?').slice(0, 220);
+        persistentMemory.setClarification(username, {
+            kind: intent.clarificationKind || 'general',
+            originalMessage: context.pendingClarification?.originalMessage || context.message || '',
+            question,
+            details: intent.details || {}
+        });
+        return question;
+    }
+    persistentMemory.clearClarification(username);
     if (intent.intent === 'assign_profession') {
         const profile = professionManager.assign(intent.profession, username);
         if (!profile) return null;

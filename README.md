@@ -468,6 +468,12 @@ and reconnects until the player says `dur` or replaces them. `come` is a one-tim
 distance-verified movement task. Safety reactions such as eating, surfacing, and
 combat remain above all three behaviors.
 
+Ambiguous actionable requests are not guessed. Sorim asks one short clarification
+question, persists it for five minutes, and accepts the player's next answer without
+requiring the bot name again. For example, `marigo onu oldur` asks for a target;
+replying `zombi` resolves the original request. `dur`, `iptal`, or `cancel` abandons
+the pending request.
+
 DeepSeek can also compose a new profession from Sorim's registered tools:
 
 ```text
@@ -501,6 +507,20 @@ cooldowns, shield recovery, sprint pursuit, safe strafing, and terrain-checked
 retreats. Explicit commands such as `marigo zombiyi oldur` lock a visible mob by
 entity ID and verify that it leaves the world. `marigo dur` cancels combat
 immediately.
+
+The clarification-to-combat flow has a Paper 26.2 live fixture. Start the 26.2
+server and Sorim, grant `ClarifyTester` operator permission on the local test
+server, then run:
+
+```powershell
+$env:MC_HOST='127.0.0.1'
+$env:MC_PORT='25566'
+$env:MC_VERSION='26.2'
+npm run fixture:clarification
+```
+
+The fixture verifies the clarification question, an unaddressed follow-up answer,
+target locking, and the final entity removal.
 
 Status returns:
 

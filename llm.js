@@ -68,9 +68,9 @@ async function askForChatReply({ username, message, observation, level, professi
     }
 }
 
-async function interpretPlayerIntent({ username, message, observation, profession, task, dynamicSkills, tools }) {
-    if (!USE_LLM || LLM_PROVIDER === 'none' || !looksActionable(message)) return null;
-    const prompt = buildIntentPrompt({ username, message, observation, profession, task, dynamicSkills, tools });
+async function interpretPlayerIntent({ username, message, observation, profession, task, dynamicSkills, pendingClarification, tools }) {
+    if (!USE_LLM || LLM_PROVIDER === 'none' || (!pendingClarification && !looksActionable(message))) return null;
+    const prompt = buildIntentPrompt({ username, message, observation, profession, task, dynamicSkills, pendingClarification, tools });
     try {
         if (LLM_PROVIDER === 'ollama') {
             return normalizeIntent(await askOllamaJson(prompt, intentSchema(), 360), message, observation, username);
@@ -398,12 +398,14 @@ function asksForStatus(message) {
     return /\b(ne yapiyorsun|neyle ugrasiyorsun|durum|status|gorev|task|ilerleme|progress|envanter|inventory|koordinat|coordinate|canin|health|aclik|food|neredesin|where are you)\b/i.test(text);
 }
 
-function buildIntentPrompt({ username, message, observation, profession, task, dynamicSkills, tools }) {
+function buildIntentPrompt({ username, message, observation, profession, task, dynamicSkills, pendingClarification, tools }) {
     return [
         'Interpret a Minecraft player request for Marigo.',
         'Return JSON only. Never invent tools outside the supplied list.',
         'Use intent chat when the message is not an actionable request.',
-        'Valid intents: chat, follow, come, guard, combat, stop, assign_profession, create_profession, stop_profession, create_goal, create_dynamic_skill, run_dynamic_skill.',
+        'Valid intents: chat, clarify, follow, come, guard, combat, stop, assign_profession, create_profession, stop_profession, create_goal, create_dynamic_skill, run_dynamic_skill.',
+        'Use clarify when an actionable request lacks a required target, resource, amount, material, location, or has conflicting meanings. Ask one concise question; never guess a consequential value.',
+        'When Pending clarification is present, combine the original request and player answer. Return the resolved action when enough information exists; otherwise clarify again.',
         'Use follow for a persistent follow-me request, come for a one-time come-here request, and guard for a persistent guard-me or guard-here request.',
         'Use combat only for an explicit request to duel, attack, or kill a player. Set targetPlayer and combatMode to duel or lethal. Never infer lethal mode without kill, oldur, or to-the-death language.',
         'Use create_profession when the player invents a profession that is not already available.',
@@ -422,6 +424,7 @@ function buildIntentPrompt({ username, message, observation, profession, task, d
         `Message: ${message}`,
         `Current profession: ${profession?.id || 'none'}`,
         `Current task: ${task?.goal || 'none'}`,
+        `Pending clarification: ${JSON.stringify(pendingClarification || null)}`,
         `Learned dynamic skills: ${JSON.stringify(Object.values(dynamicSkills || {}).map(skill => ({ id: skill.id, purpose: skill.purpose, status: skill.status })))}`,
         `Health: ${observation.health}; food: ${observation.food}`,
         `Inventory: ${observation.inventoryText}`,
@@ -474,7 +477,9 @@ function intentSchema() {
     return {
         type: 'object',
         properties: {
-            intent: { type: 'string', enum: ['chat', 'follow', 'come', 'guard', 'combat', 'stop', 'assign_profession', 'create_profession', 'stop_profession', 'create_goal', 'create_dynamic_skill', 'run_dynamic_skill'] },
+            intent: { type: 'string', enum: ['chat', 'clarify', 'follow', 'come', 'guard', 'combat', 'stop', 'assign_profession', 'create_profession', 'stop_profession', 'create_goal', 'create_dynamic_skill', 'run_dynamic_skill'] },
+            question: { type: 'string' },
+            clarificationKind: { type: 'string' },
             profession: { type: 'string' },
             target: { type: 'string', enum: ['player', 'position'] },
             targetPlayer: { type: 'string' },
@@ -565,6 +570,13 @@ function normalizeIntent(value, message, observation, username = null) {
     if (!value || typeof value !== 'object') return null;
     const result = { ...value };
     const foldedMessage = foldTurkish(message);
+    if (result.intent === 'clarify') {
+        result.question = String(result.question || result.reply || 'Istedigin gorevi biraz daha net anlatir misin?')
+            .replace(/\s+/g, ' ').trim().slice(0, 220);
+        result.clarificationKind = String(result.clarificationKind || result.kind || 'general')
+            .toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 60) || 'general';
+        return result;
+    }
     if (result.intent === 'guard') {
         result.target = result.target === 'position' || /burada|burayi|bu nokta|here|this place/.test(foldedMessage)
             ? 'position' : 'player';

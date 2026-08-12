@@ -5,6 +5,7 @@ const SAVE_DELAY_MS = 500;
 const MAX_EPISODES = 160;
 const MAX_CONVERSATION = 24;
 const MAX_COMMITMENTS = 80;
+const CLARIFICATION_TTL_MS = 5 * 60 * 1000;
 
 let file = null;
 let timer = null;
@@ -184,6 +185,37 @@ function getConversation(username, limit = 8) {
         .map(entry => ({ ...entry }));
 }
 
+function setClarification(username, clarification) {
+    if (!username || !clarification?.question) return null;
+    state.pendingClarifications[username] = {
+        kind: String(clarification.kind || 'general').slice(0, 60),
+        originalMessage: String(clarification.originalMessage || '').slice(0, 500),
+        question: String(clarification.question).slice(0, 300),
+        details: plainObject(clarification.details),
+        createdAt: Date.now(),
+        expiresAt: Date.now() + CLARIFICATION_TTL_MS
+    };
+    scheduleSave();
+    return clone(state.pendingClarifications[username]);
+}
+
+function getClarification(username) {
+    const clarification = state.pendingClarifications[username] || null;
+    if (!clarification) return null;
+    if (Number(clarification.expiresAt || 0) <= Date.now()) {
+        delete state.pendingClarifications[username];
+        scheduleSave();
+        return null;
+    }
+    return clone(clarification);
+}
+
+function clearClarification(username) {
+    if (!state.pendingClarifications[username]) return;
+    delete state.pendingClarifications[username];
+    scheduleSave();
+}
+
 function addEpisode(type, summary, importance = 0.5, details = {}) {
     if (!summary) return;
     state.episodes.push({
@@ -315,6 +347,7 @@ function defaults() {
         conversation: [],
         episodes: [],
         conversationSummaries: {},
+        pendingClarifications: {},
         commitments: [],
         proactiveReports: {},
         taskQueue: [],
@@ -334,6 +367,7 @@ function normalize(saved) {
         conversation: Array.isArray(saved?.conversation) ? saved.conversation.slice(-MAX_CONVERSATION) : [],
         episodes: Array.isArray(saved?.episodes) ? saved.episodes.slice(-MAX_EPISODES) : [],
         conversationSummaries: plainObject(saved?.conversationSummaries),
+        pendingClarifications: plainObject(saved?.pendingClarifications),
         commitments: Array.isArray(saved?.commitments) ? saved.commitments.slice(-MAX_COMMITMENTS) : [],
         proactiveReports: plainObject(saved?.proactiveReports),
         taskQueue: Array.isArray(saved?.taskQueue) ? saved.taskQueue : [],
@@ -405,6 +439,9 @@ module.exports = {
     getPlayer,
     addConversation,
     getConversation,
+    setClarification,
+    getClarification,
+    clearClarification,
     addEpisode,
     getRelevantEpisodes,
     addCommitment,

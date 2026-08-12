@@ -102,4 +102,12 @@ const learnedSkill = normalizeIntent({
 }, 'Marigo marker yetenegini kullan', {});
 assert.equal(learnedSkill.skillId, 'markerunsafe');
 assert.equal(learnedSkill.skillParameters.material, 'dirt');
+
+const clarification = normalizeIntent({
+    intent: 'clarify',
+    question: '  Hangi agaci kesmemi istiyorsun?  ',
+    clarificationKind: 'Resource-Target!'
+}, 'Marigo onu kes', {});
+assert.equal(clarification.question, 'Hangi agaci kesmemi istiyorsun?');
+assert.equal(clarification.clarificationKind, 'resourcetarget');
 console.log('Conversational chat prompt passed.');

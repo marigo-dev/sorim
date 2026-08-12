@@ -67,13 +67,17 @@ function findMentionedPlayer(text, onlineUsernames, speaker) {
 }
 
 function extractNamedTarget(text) {
+    const ambiguous = new Set([
+        'onu', 'bunu', 'sunu', 'birini', 'hedefi', 'oyuncuyu',
+        'it', 'them', 'someone', 'somebody', 'target', 'player'
+    ]);
     const patterns = [
         /\b(?:oldur|kill|saldir|attack)\s+([a-z0-9_]{3,16})\b/,
         /\b([a-z0-9_]{3,16})(?:\s+oyuncusunu|\s+oyuncuya)?\s+(?:oldur|kill|saldir|attack)\b/
     ];
     for (const pattern of patterns) {
         const match = text.match(pattern);
-        if (match) return match[1];
+        if (match && !ambiguous.has(match[1])) return match[1];
     }
     return null;
 }

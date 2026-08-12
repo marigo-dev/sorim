@@ -75,6 +75,12 @@ for (const [role, text] of [
 assert.match(persistentMemory.getPlayer('tester').conversationSummary.summary, /sixteen bread/);
 assert.equal(persistentMemory.recordProactiveReport('farm_ready', 60000), true);
 assert.equal(persistentMemory.recordProactiveReport('farm_ready', 60000), false);
+persistentMemory.setClarification('tester', {
+    kind: 'resource_target',
+    originalMessage: 'Collect something.',
+    question: 'Which resource should I collect?'
+});
+assert.equal(persistentMemory.getClarification('tester').kind, 'resource_target');
 const professions = new ProfessionManager(persistentMemory);
 assert.equal(professions.assign('ciftci', 'tester').id, 'farmer');
 assert.equal(professions.current().assignedBy, 'tester');
@@ -125,6 +131,9 @@ Promise.resolve(safetyDecision).then(result => {
     persistentMemory.initialize('architecture-agent', { directory: agentDirectory });
     assert.equal(persistentMemory.getProfession().id, 'farmer');
     assert.equal(persistentMemory.getTaskQueue()[0].id, 'wood_order');
+    assert.equal(persistentMemory.getClarification('tester').question, 'Which resource should I collect?');
+    persistentMemory.clearClarification('tester');
+    assert.equal(persistentMemory.getClarification('tester'), null);
     console.log('Agent world-state, memory, profession, task, tree, and grief policies passed.');
 }).catch(error => {
     console.error(error);
