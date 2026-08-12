@@ -1,6 +1,8 @@
 const MAX_TEMPLATE_STEPS = 12;
 const MAX_EXPANDED_STEPS = 24;
 const MAX_REPEAT = 3;
+const minecraftRuntime = require('./minecraftSkillRuntime');
+const persistentMemory = require('./persistentMemory');
 
 const SAFE_TOOL_NAMES = new Set([
     'explore', 'mine_block', 'craft_item', 'place_block', 'collect_stone',
@@ -14,10 +16,13 @@ const SAFE_TOOL_NAMES = new Set([
 ]);
 
 function compile(profile, options = {}) {
-    const registry = requireRegistry(options);
     const source = profile && typeof profile === 'object' ? profile : {};
     const id = normalizeId(source.id || source.name);
     if (!id) return failure('Skill id is required.');
+
+    if (Array.isArray(source.program) && source.program.length > 0) return compileMinecraftProgram(source, id);
+
+    const registry = requireRegistry(options);
 
     const rawSteps = Array.isArray(source.steps) ? source.steps.slice(0, MAX_TEMPLATE_STEPS) : [];
     if (rawSteps.length === 0) return failure('A dynamic skill needs at least one step.');
@@ -49,6 +54,8 @@ function compile(profile, options = {}) {
             displayName: String(source.displayName || source.name || id).slice(0, 80),
             purpose: String(source.purpose || `Player-defined skill ${id}.`).slice(0, 240),
             parameters,
+            kind: 'tool_sequence',
+            status: 'testing',
             steps: rawSteps.map(step => ({
                 tool: String(step.tool),
                 args: sanitizeTemplate(step.args || {}),
@@ -61,12 +68,48 @@ function compile(profile, options = {}) {
     };
 }
 
+function compileMinecraftProgram(source, id) {
+    const validated = minecraftRuntime.validateProgram(source);
+    if (!validated.ok) return validated;
+    return {
+        ok: true,
+        profile: {
+            id,
+            displayName: String(source.displayName || source.name || id).slice(0, 80),
+            purpose: String(source.purpose || `Player-defined Minecraft program ${id}.`).slice(0, 240),
+            kind: 'minecraft_bytecode',
+            status: 'testing',
+            capabilities: validated.capabilities,
+            program: validated.program,
+            postconditions: validated.postconditions,
+            createdAt: Date.now()
+        },
+        steps: [{
+            tool: 'execute_dynamic_skill',
+            args: { skillId: id },
+            reason: `Run sandboxed Minecraft skill ${id}`,
+            maxAttempts: 1
+        }]
+    };
+}
+
 function instantiate(profile, parameterOverrides = {}, options = {}) {
+    if (profile?.kind === 'minecraft_bytecode') {
+        return compileMinecraftProgram(profile, normalizeId(profile.id));
+    }
     const merged = {
         ...profile,
         parameters: { ...sanitizeRecord(profile?.parameters), ...sanitizeRecord(parameterOverrides) }
     };
     return compile(merged, options);
+}
+
+async function execute(bot, skillId) {
+    const profile = persistentMemory.getDynamicSkill(skillId);
+    if (!profile) throw new Error(`Dynamic skill ${skillId} is not stored.`);
+    if (profile.status === 'disabled') throw new Error(`Dynamic skill ${skillId} is disabled: ${profile.disabledReason || 'previous failure'}`);
+    if (profile.kind !== 'minecraft_bytecode') throw new Error(`Dynamic skill ${skillId} is not executable bytecode.`);
+    return minecraftRuntime.execute(bot, profile);
 }
 
 function requireRegistry(options) {
@@ -123,5 +166,6 @@ function failure(error) {
 module.exports = {
     SAFE_TOOL_NAMES,
     compile,
-    instantiate
+    instantiate,
+    execute
 };

@@ -80,4 +80,26 @@ const dynamicSkill = normalizeIntent({
 assert.equal(dynamicSkill.dynamicSkillProfile.id, 'wood_delivery');
 assert.equal(dynamicSkill.dynamicSkillProfile.steps.length, 2);
 assert.equal(dynamicSkill.dynamicSkillProfile.steps[0].repeat, 2);
+
+const bytecodeSkill = normalizeIntent({
+    intent: 'create_dynamic_skill',
+    dynamicSkillProfile: {
+        id: 'marker',
+        displayName: 'Marker',
+        purpose: 'Place a marker.',
+        capabilities: { radius: 3, mutableBlocks: ['dirt'] },
+        program: [{ op: 'place', offset: { x: 1, y: 0, z: 0 }, item: 'dirt' }],
+        postconditions: [{ type: 'block_equals', offset: { x: 1, y: 0, z: 0 }, block: 'dirt' }]
+    }
+}, 'Marigo marker yetenegi ogren', {});
+assert.equal(bytecodeSkill.dynamicSkillProfile.program[0].op, 'place');
+assert.equal(bytecodeSkill.dynamicSkillProfile.postconditions[0].type, 'block_equals');
+
+const learnedSkill = normalizeIntent({
+    intent: 'run_dynamic_skill',
+    skillId: 'Marker-Unsafe!',
+    skillParameters: { material: 'dirt' }
+}, 'Marigo marker yetenegini kullan', {});
+assert.equal(learnedSkill.skillId, 'markerunsafe');
+assert.equal(learnedSkill.skillParameters.material, 'dirt');
 console.log('Conversational chat prompt passed.');

@@ -480,10 +480,18 @@ not allow the model to generate or execute JavaScript at runtime.
 
 For a reusable request that has no named skill, the AI may create a declarative
 dynamic skill. The sandbox accepts at most 12 steps and three repetitions per
-step, validates every step against the normal tool registry, then stores the
-successful definition in agent memory. Player combat, player following, raw
-coordinate movement, colony operations, shell commands, filesystem access,
-network access, and runtime JavaScript are forbidden inside generated skills.
+step and validates every step against the normal tool registry. If registered
+tools are insufficient, the model may instead emit bounded Minecraft bytecode:
+relative movement, looking, mining, placing, and waiting. Bytecode is limited to
+an eight-block radius, six vertical blocks, 32 operations, 16 mutations, and 60
+seconds, with an explicit mutable-block capability list and required world-state
+postconditions. Skills start in `testing`, become reusable only after task and
+world verification, and are disabled after a failed execution.
+
+Player combat, entity interaction, player following, absolute coordinates,
+colony operations, redstone and explosive placement, protected-area changes,
+shell commands, filesystem access, network access, process execution, and
+runtime JavaScript are forbidden inside generated skills.
 
 Player combat is opt-in. A duel uses a bounded number of strikes and stops at the
 bot's critical-health threshold; lethal mode is selected only from explicit kill

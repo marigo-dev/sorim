@@ -10,6 +10,7 @@ class TaskQueue {
             id: goal.id || `goal_${Date.now()}`,
             goal: goal.goal || goal.id || 'player_request',
             requestedBy: goal.requestedBy || null,
+            dynamicSkillId: goal.dynamicSkillId || null,
             status: 'running',
             createdAt: Date.now(),
             steps: goal.steps || []

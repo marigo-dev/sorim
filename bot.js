@@ -178,6 +178,7 @@ bot.on('chat', async (username, message) => {
             observation,
             profession: professionManager.current(),
             task: taskQueue.summary(),
+            dynamicSkills: persistentMemory.getDynamicSkills(),
             tools: toolRegistry.TOOL_DEFINITIONS
         });
         const intentReply = applyAiIntent(username, aiIntent);
@@ -413,6 +414,12 @@ async function loop() {
                 }
                 console.log(`[TASK_VERIFIED] tool=${decision.toolCall.tool} reason=${verification.reason}`);
                 const completion = taskQueue.completeCurrentStep(verification);
+                if (completion?.taskCompleted && completion.task.dynamicSkillId) {
+                    persistentMemory.markDynamicSkillResult(completion.task.dynamicSkillId, true, {
+                        taskId: completion.task.id,
+                        verification: verification.reason
+                    });
+                }
                 if (completion?.taskCompleted && completion.task.requestedBy &&
                     persistentMemory.recordProactiveReport(`task_complete:${completion.task.id}`)) {
                     bot.chat(`${completion.task.requestedBy}, ${completion.task.goal} gorevini tamamladim.`);
@@ -437,6 +444,12 @@ async function loop() {
             lastError = error.message;
             if (activeBehaviorSource === 'task') {
                 const failure = taskQueue.failCurrentStep(error);
+                if (failure?.taskFailed && failure.task.dynamicSkillId) {
+                    persistentMemory.markDynamicSkillResult(failure.task.dynamicSkillId, false, {
+                        taskId: failure.task.id,
+                        error: error.message
+                    });
+                }
                 if (failure?.taskFailed && failure.task.requestedBy &&
                     persistentMemory.recordProactiveReport(`task_failed:${failure.task.id}`)) {
                     bot.chat(`${failure.task.requestedBy}, gorev durdu: ${error.message}`.slice(0, 220));
@@ -1062,12 +1075,35 @@ function applyAiIntent(username, intent) {
         taskQueue.enqueue({
             goal: compiled.profile.purpose,
             requestedBy: username,
+            dynamicSkillId: compiled.profile.id,
             steps: compiled.steps
         });
         autonomousMode = false;
         directiveManager.stop();
         haltCurrentAction('dynamic skill created');
         return `${compiled.profile.displayName} yetenegini ogrendim; ${compiled.steps.length} adimla uyguluyorum.`;
+    }
+    if (intent.intent === 'run_dynamic_skill') {
+        const profile = persistentMemory.getDynamicSkill(intent.skillId);
+        if (!profile) return `${intent.skillId || 'Bu'} yetenegi hafizamda yok.`;
+        if (profile.status !== 'active') return `${profile.displayName} yetenegi su anda ${profile.status}; calistiramam.`;
+        const compiled = dynamicSkillSandbox.instantiate(profile, intent.skillParameters || {}, {
+            tools: toolRegistry.TOOL_DEFINITIONS,
+            normalizeToolCall: toolRegistry.normalizeToolCall,
+            validateToolCall: toolRegistry.validateToolCall
+        });
+        if (!compiled.ok) return `Yetenegi hazirlayamadim: ${compiled.error}`.slice(0, 220);
+        taskQueue.cancelAll('replaced by learned dynamic skill');
+        taskQueue.enqueue({
+            goal: profile.purpose,
+            requestedBy: username,
+            dynamicSkillId: profile.id,
+            steps: compiled.steps
+        });
+        autonomousMode = false;
+        directiveManager.stop();
+        haltCurrentAction('learned dynamic skill requested');
+        return `${profile.displayName} yetenegini yeniden uyguluyorum.`;
     }
     return null;
 }

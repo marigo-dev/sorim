@@ -113,6 +113,14 @@ function verify(call, before, after, options = {}) {
             ? passed(`Player combat finished with ${result.status}`, result)
             : failed(`Player combat did not reach a valid ${mode} outcome`, result);
     }
+    if (tool === 'execute_dynamic_skill') {
+        const result = options.executionResult || {};
+        const assertions = Array.isArray(result.assertions) ? result.assertions : [];
+        return result.status === 'verified' && result.skillId === args.skillId &&
+            assertions.length > 0 && assertions.every(assertion => assertion.ok)
+            ? passed(`Dynamic skill ${args.skillId} passed ${assertions.length} world assertions`, result)
+            : failed(`Dynamic skill ${args.skillId} did not produce verified world state`, result);
+    }
     if (tool === 'secure_bed') {
         const bed = findNearbyBed(options.bot, 16);
         return bed

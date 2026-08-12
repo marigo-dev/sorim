@@ -22,6 +22,7 @@ const fishing = require('./skills/fishing');
 const forestry = require('./skills/forestry');
 const base = require('./skills/base');
 const combat = require('./skills/combat');
+const dynamicSkillSandbox = require('./agent/dynamicSkillSandbox');
 
 const TOOL_DEFINITIONS = [
     {
@@ -163,6 +164,12 @@ const TOOL_DEFINITIONS = [
         actions: ['wait_safe', 'idle']
     },
     {
+        name: 'execute_dynamic_skill',
+        description: 'Run a previously stored and permission-checked Minecraft bytecode skill.',
+        args: { skillId: 'string required' },
+        actions: ['dynamic_skill']
+    },
+    {
         name: 'sleep_bed',
         description: 'Sleep in a nearby bed.',
         args: {},
@@ -279,7 +286,7 @@ function toolsForLevel(level) {
     const allowed = new Set(level.allowedActions);
     return TOOL_DEFINITIONS.filter(tool =>
             tool.actions.some(action => allowed.has(action)) ||
-        ['wait_safe', 'return_base', 'recover_items', 'escape_pit', 'escape_water', 'fight_mob', 'fight_player', 'evade_hostile', 'emergency_shelter', 'eat_food'].includes(tool.name)
+        ['wait_safe', 'execute_dynamic_skill', 'return_base', 'recover_items', 'escape_pit', 'escape_water', 'fight_mob', 'fight_player', 'evade_hostile', 'emergency_shelter', 'eat_food'].includes(tool.name)
     );
 }
 
@@ -406,6 +413,10 @@ async function executeToolCall(bot, call) {
     if (!call || call.tool === 'wait_safe') {
         await sleep(args.ms || 1000);
         return;
+    }
+
+    if (call.tool === 'execute_dynamic_skill') {
+        return dynamicSkillSandbox.execute(bot, requireString(args.skillId, 'skillId'));
     }
 
     if (call.tool === 'explore') {

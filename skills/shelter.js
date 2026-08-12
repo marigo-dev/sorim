@@ -766,7 +766,7 @@ async function placeBuildBlock(bot, position, preferredNames = []) {
 async function placeSpecific(bot, itemName, position) {
     const item = bot.inventory.items().find(entry => entry.name === itemName);
     if (!item) return;
-    await placeSpecificItem(bot, item, position);
+    return placeSpecificItem(bot, item, position);
 }
 
 async function placeSpecificItem(bot, item, position) {
@@ -852,5 +852,6 @@ module.exports = {
     needsOnlyUtilityRepair,
     ensureBaseEgress,
     leaveBase,
-    isInsideShelter
+    isInsideShelter,
+    placeSpecific
 };

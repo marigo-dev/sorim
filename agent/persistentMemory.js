@@ -76,13 +76,49 @@ function getDynamicSkills() {
 
 function saveDynamicSkill(profile) {
     if (!profile?.id) return null;
-    state.dynamicSkills[profile.id] = clone(profile);
+    const existing = state.dynamicSkills[profile.id] || {};
+    state.dynamicSkills[profile.id] = {
+        ...clone(profile),
+        status: profile.status || 'testing',
+        successes: Number(existing.successes || 0),
+        failures: Number(existing.failures || 0),
+        updatedAt: Date.now()
+    };
     addEpisode('skill_created', `Learned dynamic skill ${profile.id}.`, 0.85, {
         displayName: profile.displayName || profile.id,
         steps: profile.steps?.length || 0
     });
     scheduleSave();
-    return clone(profile);
+    return clone(state.dynamicSkills[profile.id]);
+}
+
+function getDynamicSkill(id) {
+    return clone(state.dynamicSkills[String(id || '')] || null);
+}
+
+function markDynamicSkillResult(id, succeeded, details = {}) {
+    const skill = state.dynamicSkills[String(id || '')];
+    if (!skill) return null;
+    if (succeeded) {
+        skill.status = 'active';
+        skill.successes = Number(skill.successes || 0) + 1;
+        skill.lastSucceededAt = Date.now();
+        delete skill.disabledReason;
+    } else {
+        skill.status = 'disabled';
+        skill.failures = Number(skill.failures || 0) + 1;
+        skill.lastFailedAt = Date.now();
+        skill.disabledReason = String(details.reason || details.error || 'runtime verification failed').slice(0, 300);
+    }
+    skill.updatedAt = Date.now();
+    addEpisode(
+        succeeded ? 'skill_verified' : 'skill_disabled',
+        succeeded ? `Verified dynamic skill ${id}.` : `Disabled dynamic skill ${id}: ${skill.disabledReason}`,
+        succeeded ? 0.9 : 0.8,
+        details
+    );
+    scheduleSave();
+    return clone(skill);
 }
 
 function setProfession(id, assignedBy) {
@@ -360,6 +396,8 @@ module.exports = {
     saveCustomProfession,
     getDynamicSkills,
     saveDynamicSkill,
+    getDynamicSkill,
+    markDynamicSkillResult,
     setProfession,
     stopProfession,
     pauseProfession,
