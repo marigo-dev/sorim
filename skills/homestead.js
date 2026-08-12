@@ -71,19 +71,32 @@ async function secureBed(bot) {
     console.log(`[HOMESTEAD] bed ready ${bed.name}`);
 }
 
-async function establishWheatFarm(bot) {
+async function establishWheatFarm(bot, options = {}) {
     const actionVersion = actionControl.snapshot(bot);
     if (hasFarm(bot)) return;
-    await shelter.leaveBase(bot);
+    if (!options.alreadyOutside) await shelter.leaveBase(bot);
     actionControl.assertActive(bot, actionVersion);
 
-    const site = findFarmSite(bot);
-    if (!site) throw new Error('No 3x3 dirt or grass farm site near base');
+    let site = options.site
+        ? new Vec3(options.site.x, options.site.y, options.site.z)
+        : findFarmSite(bot);
+    if (site && bot.entity.position.distanceTo(site) > 6) {
+        try {
+            await movement.moveNear(bot, site, 3, 12000);
+        } catch (error) {
+            console.log(`[HOMESTEAD] local farm site unreachable: ${error.message}`);
+            site = null;
+        }
+    }
+    if (!site) site = await findNaturalWaterFarmSite(bot, actionVersion);
+    if (!site) throw new Error('No naturally hydrated 3x3 farm site found near base');
+    actionControl.assertActive(bot, actionVersion);
+    console.log(`[HOMESTEAD] farm site selected ${site.toString()}`);
     await ensureSeeds(bot, 8);
     actionControl.assertActive(bot, actionVersion);
     await ensureHoe(bot);
     actionControl.assertActive(bot, actionVersion);
-    if (bot.blockAt(site.offset(0, -1, 0))?.name !== 'water') {
+    if (!hasHydrationWater(bot, site)) {
         await ensureWaterBucket(bot);
         actionControl.assertActive(bot, actionVersion);
     }
@@ -203,10 +216,7 @@ function findFarmCenter(bot) {
     const remembered = memory.getFarmCenter();
     if (remembered) {
         const center = new Vec3(remembered.x, remembered.y, remembered.z);
-        if (
-            bot.blockAt(center.offset(0, -1, 0))?.name === 'water' &&
-            farmCapacityAt(bot, center) >= 6
-        ) {
+        if (farmCapacityAt(bot, center) >= 6) {
             return center;
         }
     }
@@ -214,7 +224,7 @@ function findFarmCenter(bot) {
     const waterId = bot.registry.blocksByName.water?.id;
     if (!Number.isInteger(waterId)) return null;
     const candidate = bot.findBlocks({ matching: waterId, maxDistance: 32, count: 32 })
-        .map(position => position.offset(0, 1, 0))
+        .flatMap(position => farmCentersAroundWater(position))
         .map(center => ({ center, capacity: farmCapacityAt(bot, center) }))
         .filter(entry => entry.capacity >= 6)
         .sort((left, right) => right.capacity - left.capacity)[0]?.center || null;
@@ -338,6 +348,7 @@ async function ensureWaterBucket(bot) {
 }
 
 async function placeFarmWater(bot, center) {
+    if (hasHydrationWater(bot, center)) return;
     const waterPosition = center.offset(0, -1, 0);
     if (bot.blockAt(waterPosition)?.name === 'water') return;
     await movement.moveNear(bot, center, 1, 12000);
@@ -404,21 +415,80 @@ function findFarmSite(bot) {
     ];
     return offsets
         .map(([dx, dz]) => origin.offset(dx, 0, dz))
-        .find(center => {
-            const centerGround = bot.blockAt(center.offset(0, -1, 0));
-            const trenchFloor = bot.blockAt(center.offset(0, -2, 0));
-            if (
-                (!TILLABLE.has(centerGround?.name) && centerGround?.name !== 'water') ||
-                trenchFloor?.boundingBox !== 'block'
-            ) {
-                return false;
+        .find(center => hasHydrationWater(bot, center) && isPlantableFarmRing(bot, center)) || null;
+}
+
+async function findNaturalWaterFarmSite(bot, actionVersion) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+        for (const site of naturalFarmSites(bot).slice(0, 12)) {
+            try {
+                await movement.moveNear(bot, site, 3, 12000);
+                if (bot.entity.position.distanceTo(site) <= 6) return site;
+            } catch (error) {
+                console.log(`[HOMESTEAD] skipping unreachable farm site ${site.toString()}: ${error.message}`);
+                movement.stop(bot);
+                await movement.sleep(300);
             }
-            return farmRing(center).every(position => {
-                const ground = bot.blockAt(position.offset(0, -1, 0));
-                const above = bot.blockAt(position);
-                return TILLABLE.has(ground?.name) && isAir(above);
-            });
-        }) || null;
+            actionControl.assertActive(bot, actionVersion);
+        }
+        await movement.explore(bot, { target: 'water' });
+        actionControl.assertActive(bot, actionVersion);
+    }
+    return null;
+}
+
+function nearestNaturalFarmSite(bot) {
+    return naturalFarmSites(bot)[0] || null;
+}
+
+function naturalFarmSites(bot) {
+    const waterId = bot.registry.blocksByName.water?.id;
+    if (!Number.isInteger(waterId)) return [];
+    const seen = new Set();
+    return bot.findBlocks({ matching: waterId, maxDistance: 48, count: 64 })
+        .flatMap(position => farmCentersAroundWater(position))
+        .filter(center => {
+            const key = center.toString();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        })
+        .filter(center => isPlantableFarmRing(bot, center))
+        .sort((left, right) => left.distanceTo(bot.entity.position) - right.distanceTo(bot.entity.position));
+}
+
+function farmCentersAroundWater(waterPosition) {
+    const centers = [];
+    for (let dx = -4; dx <= 4; dx++) {
+        for (let dz = -4; dz <= 4; dz++) {
+            const distance = Math.max(Math.abs(dx), Math.abs(dz));
+            if (distance < 2 || distance > 4) continue;
+            centers.push(waterPosition.offset(dx, 1, dz));
+        }
+    }
+    return centers;
+}
+
+function isPlantableFarmRing(bot, center) {
+    const centerGround = bot.blockAt(center.offset(0, -1, 0));
+    if (!TILLABLE.has(centerGround?.name) || !isAir(bot.blockAt(center)) || !isAir(bot.blockAt(center.offset(0, 1, 0)))) {
+        return false;
+    }
+    const plantable = farmRing(center).filter(position => {
+        const ground = bot.blockAt(position.offset(0, -1, 0));
+        const above = bot.blockAt(position);
+        return TILLABLE.has(ground?.name) && isAir(above);
+    }).length;
+    return hasHydrationWater(bot, center) && plantable >= 6;
+}
+
+function hasHydrationWater(bot, center) {
+    for (let dx = -4; dx <= 4; dx++) {
+        for (let dz = -4; dz <= 4; dz++) {
+            if (bot.blockAt(center.offset(dx, -1, dz))?.name === 'water') return true;
+        }
+    }
+    return false;
 }
 
 function farmRing(center) {
@@ -673,5 +743,7 @@ module.exports = {
     farmCapacity,
     isBedTemporarilyUnavailable,
     findFarmCenter,
-    farmPlotPositions
+    farmPlotPositions,
+    hasHydrationWater,
+    nearestNaturalFarmSite
 };

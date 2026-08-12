@@ -300,6 +300,12 @@ function explorationTargetSensor(bot, target) {
             maxDistance: 16
         }) || null;
     }
+    if (target === 'water') {
+        return () => bot.findBlock?.({
+            matching: block => block?.name === 'water',
+            maxDistance: 48
+        }) || null;
+    }
     return null;
 }
 

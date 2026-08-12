@@ -54,6 +54,11 @@ class PreconditionResolver {
         if (step.tool === 'establish_wheat_farm' && !observation.base) {
             return [prerequisite('ensure_base', {}, step, 'A farm needs a protected base location')];
         }
+        if (step.tool === 'establish_wheat_farm' && !hasHoe(inventory) && count(inventory, 'cobblestone') < 2) {
+            return [prerequisite('collect_stone', {
+                count: 2 - count(inventory, 'cobblestone')
+            }, step, 'A starter farm needs a stone hoe')];
+        }
         return [];
     }
 }
@@ -146,6 +151,12 @@ function hasCraftingTable(observation) {
 function pickaxeCount(inventory) {
     return ['wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe', 'diamond_pickaxe', 'netherite_pickaxe']
         .reduce((sum, name) => sum + count(inventory, name), 0);
+}
+
+function hasHoe(inventory) {
+    return Object.entries(inventory || {}).some(([name, amount]) =>
+        name.endsWith('_hoe') && Number(amount) > 0
+    );
 }
 
 function totalBySuffix(inventory, suffix) {

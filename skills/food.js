@@ -168,9 +168,10 @@ async function findFood(bot, options = {}) {
 
 async function maintainFoodSupply(bot, options = {}) {
     const homestead = require('./homestead');
+    const minimum = Math.max(1, Math.min(64, Number(options.minimum || 16)));
     if (!options.alreadyOutside) await shelter.leaveBase(bot);
     await prepareCollectedFood(bot);
-    if (hasFoodStock(countInventory(bot), 16)) {
+    if (hasFoodStock(countInventory(bot), minimum)) {
         return { status: 'stock_ready', foodCount: foodCount(countInventory(bot)) };
     }
 
@@ -198,14 +199,19 @@ async function maintainFoodSupply(bot, options = {}) {
         await prepareCollectedFood(bot);
         console.log(`[FOOD] farm harvest batch=${harvested}`);
     }
-    if (hasFoodStock(countInventory(bot), 16)) {
+    if (hasFoodStock(countInventory(bot), minimum)) {
         return { status: 'stock_ready', foodCount: foodCount(countInventory(bot)), harvested };
     }
 
     const capacity = homestead.farmCapacity(bot, center);
-    if (capacity < 48 && countItem(bot, 'wheat_seeds') > 0) {
-        const expansion = await homestead.expandWheatFarm(bot, 48);
-        if (expansion.planted > 0) return { status: 'farm_expanded', ...expansion };
+    if (options.expandFarm !== false && capacity < 48 && countItem(bot, 'wheat_seeds') > 0) {
+        try {
+            const expansion = await homestead.expandWheatFarm(bot, 48);
+            if (expansion.planted > 0) return { status: 'farm_expanded', ...expansion };
+        } catch (error) {
+            console.log(`[FOOD] farm expansion delayed: ${error.message}`);
+            return { status: 'farm_expansion_delayed', error: error.message };
+        }
     }
 
     if (homestead.growingCropCount(bot) > 0) {

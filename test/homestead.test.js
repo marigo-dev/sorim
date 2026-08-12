@@ -23,4 +23,29 @@ assert.equal(
     true
 );
 
+const naturalCenter = new Vec3(10, 65, 10);
+const naturalWater = naturalCenter.offset(4, -1, 0);
+const naturalBot = {
+    blockAt(position) {
+        if (position.equals(naturalWater)) return { name: 'water', boundingBox: 'empty' };
+        if (position.y === naturalCenter.y - 1) return { name: 'grass_block', boundingBox: 'block' };
+        return { name: 'air', boundingBox: 'empty' };
+    }
+};
+assert.equal(
+    homestead.hasHydrationWater(naturalBot, naturalCenter),
+    true,
+    'Natural water within four blocks must hydrate a starter farm without a bucket'
+);
+assert.equal(
+    homestead.nearestNaturalFarmSite({
+        ...naturalBot,
+        registry: { blocksByName: { water: { id: 1 } } },
+        entity: { position: naturalCenter },
+        findBlocks() { return [naturalWater]; }
+    })?.equals(naturalCenter),
+    true,
+    'Natural farm selection must retain a solid, clear maintenance center'
+);
+
 console.log('Homestead hydrated farm geometry passed.');

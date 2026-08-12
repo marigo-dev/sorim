@@ -230,7 +230,13 @@ function verify(call, before, after, options = {}) {
     if (tool === 'maintain_food_supply') {
         const foodBefore = totalByPredicate(before.inventory, isEdible);
         const foodAfter = totalByPredicate(after.inventory, isEdible);
+        const minimum = args.minimum == null ? 0 : Math.max(1, Number(args.minimum || 1));
         const result = options.executionResult || {};
+        if (minimum > 0) {
+            return foodAfter >= minimum
+                ? passed(`Food reserve reached ${foodAfter}/${minimum}`, { result, foodAfter, minimum })
+                : failed(`Food reserve is only ${foodAfter}/${minimum}`, { result, foodBefore, foodAfter, minimum });
+        }
         if (foodAfter >= 16 || foodAfter > foodBefore) {
             return passed(`Food reserve changed ${foodBefore}->${foodAfter}`, { result });
         }

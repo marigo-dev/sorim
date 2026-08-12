@@ -14,6 +14,9 @@ yarn-error.log*
 .env.*
 *.env
 !.env.example
+**/.env
+**/.env.*
+!**/.env.example
 keys.json
 **/keys.json
 *credentials*.json
@@ -21,6 +24,9 @@ keys.json
 *token*.json
 *api-key*
 *apikey*
+*.local.json
+*.local.yaml
+*.local.yml
 *.key
 *.crt
 *.keystore
@@ -33,6 +39,9 @@ config.local.*
 data/
 memory/
 artifacts/
+reports/
+telemetry/
+observations/
 *.bak
 
 # Minecraft server/runtime files
@@ -64,6 +73,7 @@ mc-server/banned-ips.json
 mc-server/bot/node_modules/
 mc-server/bot/data/
 mc-server-26-2-test/
+mc-server-*/
 
 # OS/editor noise
 .DS_Store

@@ -119,6 +119,7 @@ const preBedInventory = {
 const bedLevel = bedTree.getLevel(observation(preBedInventory, {
     base: { x: 0, y: 70, z: 0 },
     hasUsableChest: true,
+    farmReady: true,
     hasBed: false
 }));
 assert.equal(bedLevel.id, 'L11_SECURE_BED');
@@ -127,6 +128,7 @@ assert.equal(
         observation(preBedInventory, {
             base: { x: 0, y: 70, z: 0 },
             hasUsableChest: true,
+            farmReady: true,
             hasBed: false
         }),
         bedLevel

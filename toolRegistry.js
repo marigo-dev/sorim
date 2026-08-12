@@ -483,8 +483,11 @@ async function executeToolCall(bot, call) {
     }
 
     if (call.tool === 'maintain_food_supply') {
-        await food.maintainFoodSupply(bot);
-        return;
+        return food.maintainFoodSupply(bot, {
+            minimum: Number(args.minimum || 16),
+            alreadyOutside: args.alreadyOutside === true,
+            expandFarm: args.expandFarm !== false
+        });
     }
 
     if (call.tool === 'care_for_animals') {
@@ -550,7 +553,10 @@ async function executeToolCall(bot, call) {
     }
 
     if (call.tool === 'establish_wheat_farm') {
-        return homestead.establishWheatFarm(bot);
+        return homestead.establishWheatFarm(bot, {
+            site: args.site,
+            alreadyOutside: args.alreadyOutside === true
+        });
     }
 
     if (call.tool === 'organize_storage') {

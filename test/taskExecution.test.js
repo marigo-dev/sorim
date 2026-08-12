@@ -201,6 +201,19 @@ assert.equal(taskVerifier.verify(
 ).ok, true);
 
 assert.equal(taskVerifier.verify(
+    { tool: 'maintain_food_supply', args: { minimum: 16 } },
+    { ...before, inventory: { bread: 8 } },
+    { ...before, inventory: { bread: 12 } },
+    { executionResult: { status: 'harvested' } }
+).ok, false, 'A minimum food task must not complete after a merely partial harvest');
+assert.equal(taskVerifier.verify(
+    { tool: 'maintain_food_supply', args: { minimum: 16 } },
+    { ...before, inventory: { bread: 12 } },
+    { ...before, inventory: { bread: 16 } },
+    { executionResult: { status: 'stock_ready' } }
+).ok, true);
+
+assert.equal(taskVerifier.verify(
     { tool: 'deposit_shared_storage', args: { item: 'cobblestone', count: 16 } },
     { ...before, inventory: { cobblestone: 20 }, sharedInventory: { cobblestone: 10 } },
     { ...before, inventory: { cobblestone: 4 }, sharedInventory: { cobblestone: 26 } },

@@ -101,6 +101,12 @@ const LEVELS = [
             observation.hasUsableChest === true || memory.hasPlacedBlock('chest')
     },
     {
+        id: 'L17_ESTABLISH_WHEAT_FARM',
+        goal: 'Establish a hydrated wheat farm near base, using natural water before iron if possible.',
+        allowedActions: ['establish_wheat_farm', 'collect_stone', 'craft', 'idle'],
+        complete: observation => observation.farmReady === true
+    },
+    {
         id: 'L11_SECURE_BED',
         goal: 'Collect three matching wool, craft a bed, and place it near the base.',
         allowedActions: ['secure_bed', 'mine', 'idle'],
@@ -143,12 +149,6 @@ const LEVELS = [
         goal: 'Craft iron pickaxe, sword, axe, and shield while preserving 8 iron ingots.',
         allowedActions: ['craft_iron_kit', 'craft', 'idle'],
         complete: observation => iron.hasIronCoreItems(observation.inventory)
-    },
-    {
-        id: 'L17_ESTABLISH_WHEAT_FARM',
-        goal: 'Use a bucket, water, hoe, and seeds to establish a hydrated wheat farm near base.',
-        allowedActions: ['establish_wheat_farm', 'mine_iron', 'smelt_item', 'craft', 'idle'],
-        complete: observation => observation.farmReady === true
     },
     {
         id: 'L18_COLLECT_ARMOR_IRON',
@@ -360,11 +360,12 @@ class SkillTree {
         }
 
         if (level.id === 'L12_PREPARE_MINING_KIT') {
-            if (!food.hasFoodStock(inventory, 16) &&
-                (!food.isTemporarilyUnavailable() || food.hasActionableConvertibleFood(inventory))) {
+            if (!food.hasFoodStock(inventory, 16)) {
                 return {
-                    action: 'find_food',
-                    reason: 'Level 12: collect food before mining'
+                    action: observation.farmReady ? 'maintain_food_supply' : 'find_food',
+                    reason: observation.farmReady
+                        ? 'Level 12: grow or harvest the base farm until sixteen food are ready'
+                        : 'Level 12: collect food before mining'
                 };
             }
             return {
@@ -697,7 +698,7 @@ function hasMiningKit(observation) {
     const hasTools = (inventory.stone_pickaxe || 0) > 0 &&
         ((inventory.stone_sword || 0) > 0 || (inventory.iron_sword || 0) > 0);
     const hasBlocks = ((inventory.cobblestone || 0) + (inventory.dirt || 0)) >= 16;
-    const hasFood = food.hasFoodStock(inventory, 16) || food.isTemporarilyUnavailable();
+    const hasFood = food.hasFoodStock(inventory, 16);
     return hasFurnace && hasFuel && (inventory.torch || 0) >= 16 && hasTools && hasBlocks && hasFood;
 }
 
