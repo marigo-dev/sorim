@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "fixture-step-obstacle",
+  "at": "2026-08-14T00:00:00.000Z",
+  "bot": "marigo",
+  "position": { "x": 0.5, "y": 64, "z": 0.5 },
+  "origin": { "x": 0, "y": 64, "z": 0 },
+  "velocity": { "x": 0, "y": 0, "z": 0 },
+  "yaw": -1.571,
+  "pitch": 0,
+  "onGround": true,
+  "controls": ["forward"],
+  "stationaryMs": 1800,
+  "displacement": 0.05,
+  "intent": {
+    "kind": "pathfinder",
+    "target": { "x": 3, "y": 64, "z": 0 },
+    "at": 0
+  },
+  "pathfinderGoal": { "type": "GoalNear", "x": 3, "y": 64, "z": 0, "range": 1 },
+  "blocks": [
+    { "offset": { "x": -1, "y": -1, "z": -1 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": -1, "y": -1, "z": 0 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": -1, "y": -1, "z": 1 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": 0, "y": -1, "z": -1 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": 0, "y": -1, "z": 0 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": 0, "y": -1, "z": 1 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": 1, "y": -1, "z": -1 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": 1, "y": -1, "z": 0 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": 1, "y": -1, "z": 1 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": 2, "y": -1, "z": -1 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": 2, "y": -1, "z": 0 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": 2, "y": -1, "z": 1 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": 3, "y": -1, "z": -1 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": 3, "y": -1, "z": 0 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": 3, "y": -1, "z": 1 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": 4, "y": -1, "z": -1 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": 4, "y": -1, "z": 0 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": 4, "y": -1, "z": 1 }, "name": "stone", "boundingBox": "block", "shapes": [] },
+    { "offset": { "x": 1, "y": 0, "z": 0 }, "name": "stone", "boundingBox": "block", "shapes": [] }
+  ]
+}

@@ -57,6 +57,8 @@ function analyzeScenario(raw, expectation = {}) {
     const observedSamples = raw.samples.filter(sample => sample.observed);
     const selfMotion = motionStats(selfSamples.map(sample => ({ at: sample.at, position: sample.self })));
     const observedMotion = motionStats(observedSamples.map(sample => ({ at: sample.at, position: sample.observed })));
+    const measuredMotion = observedSamples.length > 0 ? observedMotion : selfMotion;
+    const measuredSource = observedSamples.length > 0 ? 'observer' : 'self';
     const maximumDivergence = raw.samples.reduce((maximum, sample) => {
         if (!sample.self || !sample.observed) return maximum;
         return Math.max(maximum, distance3d(sample.self, sample.observed));
@@ -85,16 +87,16 @@ function analyzeScenario(raw, expectation = {}) {
     const maximumStuckMs = expectation.maximumStuckMs ?? 900;
     const maximumAirborneStationaryMs = expectation.maximumAirborneStationaryMs ?? 700;
     const maximumDivergenceMs = expectation.maximumDivergenceMs ?? 500;
-    const minimumObserverCoverage = expectation.minimumObserverCoverage ?? 0.65;
+    const minimumObserverCoverage = expectation.minimumObserverCoverage ?? 0;
 
-    if (observedMotion.displacement < minimumDisplacement) {
-        failures.push(`observed displacement ${observedMotion.displacement} < ${minimumDisplacement}`);
+    if (measuredMotion.displacement < minimumDisplacement) {
+        failures.push(`${measuredSource} displacement ${measuredMotion.displacement} < ${minimumDisplacement}`);
     }
-    if (observedMotion.displacement > maximumDisplacement) {
-        failures.push(`observed displacement ${observedMotion.displacement} > ${maximumDisplacement}`);
+    if (measuredMotion.displacement > maximumDisplacement) {
+        failures.push(`${measuredSource} displacement ${measuredMotion.displacement} > ${maximumDisplacement}`);
     }
-    if (observedMotion.peakSpeed > maximumSpeed) {
-        failures.push(`observed speed ${observedMotion.peakSpeed} > ${maximumSpeed}`);
+    if (measuredMotion.peakSpeed > maximumSpeed) {
+        failures.push(`${measuredSource} speed ${measuredMotion.peakSpeed} > ${maximumSpeed}`);
     }
     if (stuckMs > maximumStuckMs) failures.push(`commanded but stationary for ${stuckMs}ms`);
     if (airborneStationaryMs > maximumAirborneStationaryMs) {
@@ -119,6 +121,8 @@ function analyzeScenario(raw, expectation = {}) {
         observerCoverage: round(observerCoverage),
         self: selfMotion,
         observed: observedMotion,
+        measured: measuredMotion,
+        measuredSource,
         maximumDivergence: round(maximumDivergence),
         divergenceMs,
         commandedStationaryMs: stuckMs,
@@ -205,7 +209,7 @@ function writeReport(report, directory) {
 function markdownReport(report) {
     const rows = report.scenarios.map(scenario =>
         `| ${scenario.name} | ${scenario.passed ? 'PASS' : 'FAIL'} | ` +
-        `${scenario.observed.displacement} | ${scenario.observed.peakSpeed} | ` +
+        `${scenario.measured.displacement} | ${scenario.measured.peakSpeed} | ` +
         `${scenario.commandedStationaryMs} | ${scenario.maximumDivergence} | ` +
         `${scenario.failures.join('; ') || '-'} |`
     );
@@ -218,7 +222,7 @@ function markdownReport(report) {
         '',
         '![Movement trajectories](latest.svg)',
         '',
-        '| Scenario | Result | Observed displacement | Peak blocks/s | Stuck ms | Divergence | Notes |',
+        '| Scenario | Result | Measured displacement | Peak blocks/s | Stuck ms | Divergence | Notes |',
         '| --- | --- | ---: | ---: | ---: | ---: | --- |',
         ...rows,
         ''

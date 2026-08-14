@@ -21,6 +21,7 @@ const secretPatterns = [
     { name: 'private key', pattern: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g }
 ];
 const findings = [];
+let checkedFiles = 0;
 
 for (const relativePath of trackedFiles) {
     const normalized = relativePath.replaceAll('\\', '/');
@@ -30,6 +31,8 @@ for (const relativePath of trackedFiles) {
     }
 
     const absolutePath = path.join(root, relativePath);
+    if (!fs.existsSync(absolutePath)) continue;
+    checkedFiles++;
     const buffer = fs.readFileSync(absolutePath);
     if (buffer.includes(0)) continue;
     const content = buffer.toString('utf8');
@@ -48,4 +51,4 @@ if (findings.length > 0) {
     process.exit(1);
 }
 
-console.log(`[SECRET_CHECK] ${trackedFiles.length} tracked files are clean.`);
+console.log(`[SECRET_CHECK] ${checkedFiles} tracked files are clean.`);

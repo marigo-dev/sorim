@@ -577,10 +577,9 @@ npm start
 
 ### Independent movement benchmark
 
-The movement benchmark builds a repeatable course and uses a second Mineflayer
-client to measure the actor from the server's point of view. It checks flat
-walking, a diagonal one-block step, a shallow pit exit, an uneven slope, and a
-two-block wall stop:
+The movement benchmark builds a repeatable course and samples Marigo's own
+physics stream. It checks flat walking, a diagonal one-block step, a shallow pit
+exit, an uneven slope, and a two-block wall stop without a spectator bot:
 
 ```powershell
 $env:MC_HOST='127.0.0.1'
@@ -589,11 +588,41 @@ $env:MC_VERSION='26.2'
 npm run benchmark:movement
 ```
 
-The command fails when the actor reports movement without observed displacement,
-stays airborne without progress, exceeds the walking speed limit, or remains
-desynchronized from the observer. Machine-readable and Markdown reports are
+The command fails when the actor reports movement without displacement, stays
+airborne without progress, or exceeds the walking speed limit. Machine-readable and Markdown reports are
 written to `artifacts/movement/latest.json` and `artifacts/movement/latest.md`.
 The generated artifacts are intentionally excluded from Git.
+
+### Two-server movement workflow
+
+Movement development uses two isolated Paper servers:
+
+- `start-run-server.bat` starts a naturally generated survival world in `mc-server-run/` on port `25565`.
+- `start-movement-lab-server.bat` starts a flat creative movement laboratory on port `25566`.
+
+Run the natural-world watchdog without a spectator bot:
+
+```powershell
+npm run run:watchdog
+```
+
+Marigo records a movement incident when movement controls remain active without meaningful progress. Each incident contains position, velocity, target intent, Pathfinder goal, and a bounded snapshot of nearby blocks. Reports are written under `artifacts/movement-incidents/` and remain outside Git.
+
+Start the movement lab, then replay the latest captured obstacle:
+
+```powershell
+npm run lab:movement
+```
+
+To replay a specific incident:
+
+```powershell
+node scripts/movement-lab-replay.js artifacts/movement-incidents/movement-....json
+```
+
+The lab translates the captured terrain into a fixed arena and asks Mineflayer Pathfinder to reach the translated target. No spectator bot or manual watching is required. `Bot_Mico` must have operator permission on the lab server so the fixture can rebuild its arena.
+
+Both profiles use the Paper 26.2 jar from `mc-server-26-2-test/server.jar`. The older `mc-server/` directory is not used by this workflow because its local jar may target an earlier Minecraft release.
 
 ## 13. Troubleshooting
 

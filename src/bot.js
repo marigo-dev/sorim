@@ -28,6 +28,7 @@ const { parseCombatIntent } = require('./agent/combatIntent');
 const { detectClarificationNeed, resolveClarificationMessage } = require('./agent/clarification');
 const { parseResourceIntent } = require('./agent/resourceIntent');
 const dynamicSkillSandbox = require('./agent/dynamicSkillSandbox');
+const { MovementWatchdog } = require('./diagnostics/movementWatchdog');
 
 const BOT_NAME = process.env.MC_USERNAME || 'marigo';
 const HOST = process.env.MC_HOST || 'localhost';
@@ -73,6 +74,9 @@ const professionManager = new ProfessionManager(persistentMemory, {
 });
 const directiveManager = new DirectiveManager(persistentMemory);
 const behaviorTree = createRootTree({ taskQueue, professionManager });
+const movementWatchdog = new MovementWatchdog(bot, process.env.MOVEMENT_INCIDENT_DIR
+    ? { output: process.env.MOVEMENT_INCIDENT_DIR }
+    : {});
 let running = true;
 let busy = false;
 let chatBusy = false;
@@ -114,6 +118,7 @@ process.on('message', message => {
 bot.once('spawn', async () => {
     console.log(`[BOOT] ${BOT_NAME} spawned. AI body runtime started.`);
     movement.configure(bot);
+    if (process.env.MOVEMENT_WATCHDOG !== 'false') movementWatchdog.start();
     install26_2AttackShim(bot);
     await sleep(3000);
     loop().catch(error => {
@@ -1326,6 +1331,7 @@ function cancelActiveTool(reason) {
 function shutdown() {
     if (!running) return;
     running = false;
+    movementWatchdog.stop();
     console.log('[SHUTDOWN] Stopping bot.');
     haltCurrentAction('shutdown');
     try {

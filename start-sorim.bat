@@ -5,13 +5,8 @@ cd /d "%~dp0"
 title Sorim AI Bot Launcher
 
 if not defined SORIM_SERVER_DIR (
-    if exist "%CD%\mc-server-26-2-test\server.jar" (
-        set "SORIM_SERVER_DIR=%CD%\mc-server-26-2-test"
-        if not defined MC_PORT set "MC_PORT=25566"
-    ) else (
-        set "SORIM_SERVER_DIR=%CD%\mc-server"
-        if not defined MC_PORT set "MC_PORT=25565"
-    )
+    set "SORIM_SERVER_DIR=%CD%\mc-server-run"
+    if not defined MC_PORT set "MC_PORT=25565"
 )
 
 if not defined MC_HOST set "MC_HOST=127.0.0.1"
@@ -42,9 +37,9 @@ if /I "%SORIM_DRY_RUN%"=="true" (
     exit /b 0
 )
 
-if not exist "!SORIM_SERVER_DIR!\server.jar" (
+if not exist "!SORIM_SERVER_DIR!\server.jar" if not exist "%CD%\mc-server-26-2-test\server.jar" (
     echo [ERROR] server.jar was not found in !SORIM_SERVER_DIR!.
-    echo Put the Paper 26.2 server jar there as server.jar.
+    echo Put the Paper 26.2 server jar in mc-server-26-2-test as server.jar.
     pause
     exit /b 1
 )
@@ -52,7 +47,7 @@ if not exist "!SORIM_SERVER_DIR!\server.jar" (
 powershell -NoProfile -Command "if (Get-NetTCPConnection -State Listen -LocalPort $env:MC_PORT -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }" >nul 2>&1
 if errorlevel 1 (
     echo [SORIM] Starting Paper server...
-    start "Sorim Paper 26.2" /D "!SORIM_SERVER_DIR!" cmd /k baslat.cmd
+    start "Sorim Paper 26.2 Run" /D "%CD%" cmd /k start-run-server.bat
 ) else (
     echo [SORIM] Paper is already listening on port !MC_PORT!.
 )

@@ -10,7 +10,8 @@
     "fixture:profession": "node scripts/profession-fixture.js",
     "fixture:movement": "set PROFESSION_FIXTURE=movement&& node scripts/profession-fixture.js",
     "benchmark:movement": "node scripts/movement-benchmark.js",
-    "run:observed-survival": "node scripts/survival-run-observer.js",
+    "run:watchdog": "node scripts/survival-run-watchdog.js",
+    "lab:movement": "node scripts/movement-lab-replay.js",
     "fixture:knockback": "node scripts/knockback-fixture.js",
     "fixture:pvp-command": "node scripts/pvp-command-fixture.js",
     "fixture:pvp-tactics": "node scripts/pvp-tactics-fixture.js",
@@ -25,7 +26,7 @@
     "check": "node scripts/check-syntax.js",
     "test:protocol": "node test/protocol26Shim.test.js",
     "test:tree-travel": "node --check test/treeTravel.test.js && node test/treeTravel.test.js",
-    "test:core": "node test/skillTree.test.js && node test/memory.test.js && node test/agentArchitecture.test.js && node test/directivesAndProfessions.test.js && node test/dynamicSkillSandbox.test.js && node test/taskExecution.test.js && node test/resourceIntent.test.js && node test/leaseManager.test.js && node test/colonyArchitecture.test.js && node test/survival.test.js && node test/movement.test.js && node test/movementTelemetry.test.js && node test/tools.test.js && node test/miningKit.test.js && node test/entityActions.test.js && node test/combat.test.js && node test/clarification.test.js && node test/homestead.test.js && node test/ironProgression.test.js && node test/shelter.test.js && node test/chat.test.js",
+    "test:core": "node test/skillTree.test.js && node test/memory.test.js && node test/agentArchitecture.test.js && node test/directivesAndProfessions.test.js && node test/dynamicSkillSandbox.test.js && node test/taskExecution.test.js && node test/resourceIntent.test.js && node test/leaseManager.test.js && node test/colonyArchitecture.test.js && node test/survival.test.js && node test/movement.test.js && node test/movementTelemetry.test.js && node test/movementWatchdog.test.js && node test/tools.test.js && node test/miningKit.test.js && node test/entityActions.test.js && node test/combat.test.js && node test/clarification.test.js && node test/homestead.test.js && node test/ironProgression.test.js && node test/shelter.test.js && node test/chat.test.js",
     "test": "npm run security:secrets && npm run check && node --check scripts/iron-age-fixture.js && npm run test:tree-travel && npm run test:protocol && npm run test:core"
   },
   "keywords": [

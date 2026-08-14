@@ -4,6 +4,7 @@ const memory = require('./memory');
 
 const explorationSessions = new WeakMap();
 const navigationVersions = new WeakMap();
+const groundedSynchronizers = new WeakMap();
 
 function configure(bot) {
     const movements = new Movements(bot);
@@ -16,6 +17,12 @@ function configure(bot) {
     movements.liquidCost = 8;
     movements.entityCost = 4;
     bot.pathfinder.setMovements(movements);
+    if (!groundedSynchronizers.has(bot)) {
+        const synchronize = () => synchronizeGroundedState(bot);
+        groundedSynchronizers.set(bot, synchronize);
+        if (typeof bot.prependListener === 'function') bot.prependListener('physicsTick', synchronize);
+        else bot.on('physicsTick', synchronize);
+    }
 }
 
 function resyncCollision(bot) {
@@ -52,6 +59,7 @@ async function followPlayer(bot, username, options = {}) {
     }
 
     const navigationVersion = beginNavigation(bot);
+    markMovementIntent(bot, 'follow', player.position);
     const goal = new goals.GoalFollow(player, range);
     bot.pathfinder.setGoal(goal, true);
     const deadline = Date.now() + durationMs;
@@ -67,6 +75,7 @@ async function followPlayer(bot, username, options = {}) {
             ? bot.entity.position.distanceTo(finalTarget.position) : Infinity;
         return { status: 'tracking', username, distance: finalDistance };
     } finally {
+        clearMovementIntent(bot);
         stopNavigation(bot, navigationVersion);
     }
 }
@@ -86,6 +95,7 @@ async function moveNearXZ(bot, position, range = 2, timeoutMs = 10000) {
 }
 
 async function navigate(bot, goal, target, timeoutMs, timeoutMessage) {
+    markMovementIntent(bot, 'pathfinder', target);
     let lastError = null;
     const startedAt = Date.now();
     const actionVersion = Number(bot.sorimActionVersion || 0);
@@ -99,11 +109,13 @@ async function navigate(bot, goal, target, timeoutMs, timeoutMessage) {
         );
         const version = beginNavigation(bot);
         try {
-            await withTimeout(
+            await withNavigationWatchdog(
+                bot,
                 bot.pathfinder.goto(goal),
                 attemptBudget,
                 timeoutMessage
             );
+            clearMovementIntent(bot);
             return;
         } catch (error) {
             lastError = error;
@@ -123,13 +135,17 @@ async function navigate(bot, goal, target, timeoutMs, timeoutMessage) {
                     Math.min(6500, remaining),
                     actionVersion
                 );
-                if (locallyReached) return;
+                if (locallyReached) {
+                    clearMovementIntent(bot);
+                    return;
+                }
                 if (horizontalDistance(bot.entity.position, target) < 2.5) continue;
             }
             break;
         }
     }
     stop(bot);
+    clearMovementIntent(bot);
     throw lastError || new Error(timeoutMessage);
 }
 
@@ -427,6 +443,7 @@ async function walkToward(bot, position, options = {}) {
     const deadline = Date.now() + durationMs;
     let stopReason = 'duration';
     stop(bot);
+    markMovementIntent(bot, 'manual-walk', position);
     try {
         if (bodyIntersectsSolid(bot)) {
             stopReason = 'body-contact';
@@ -489,6 +506,7 @@ async function walkToward(bot, position, options = {}) {
             }
         }
     } finally {
+        clearMovementIntent(bot);
         stop(bot);
     }
     if (!bot.entity.onGround) await waitForStableGround(bot, 700);
@@ -1098,6 +1116,18 @@ function stop(bot) {
     bot.clearControlStates?.();
 }
 
+function markMovementIntent(bot, kind, target) {
+    bot.sorimMovementIntent = {
+        kind,
+        target: target ? { x: target.x, y: target.y, z: target.z } : null,
+        at: Date.now()
+    };
+}
+
+function clearMovementIntent(bot) {
+    bot.sorimMovementIntent = null;
+}
+
 function withTimeout(promise, timeoutMs, message) {
     let timer = null;
     const timeout = new Promise((_, reject) => {
@@ -1105,6 +1135,43 @@ function withTimeout(promise, timeoutMs, message) {
     });
     return Promise.race([promise, timeout])
         .finally(() => clearTimeout(timer));
+}
+
+function withNavigationWatchdog(bot, promise, timeoutMs, message, stallMs = 550) {
+    let timeout = null;
+    let monitor = null;
+    let anchor = bot.entity.position.clone();
+    let lastProgressAt = Date.now();
+    const deadline = new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+        monitor = setInterval(() => {
+            if (!bot.entity?.position) {
+                reject(new Error('Pathfinder lost the controlled entity'));
+                return;
+            }
+            const commanded = ['forward', 'back', 'left', 'right', 'jump']
+                .some(control => bot.controlState?.[control]);
+            if (!commanded) {
+                anchor = bot.entity.position.clone();
+                lastProgressAt = Date.now();
+                return;
+            }
+            if (horizontalDistance(anchor, bot.entity.position) >= 0.15) {
+                anchor = bot.entity.position.clone();
+                lastProgressAt = Date.now();
+                return;
+            }
+            if (Date.now() - lastProgressAt < stallMs) return;
+            const error = new Error('Pathfinder commanded movement without progress');
+            error.code = 'PATHFINDER_STALLED';
+            reject(error);
+        }, 100);
+    });
+    return Promise.race([promise, deadline])
+        .finally(() => {
+            clearTimeout(timeout);
+            clearInterval(monitor);
+        });
 }
 
 function sleep(ms) {
