@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 
-const LeaseManager = require('../agent/leaseManager');
+const LeaseManager = require('../src/agent/leaseManager');
 
 let now = 1000;
 let state = { leases: {} };

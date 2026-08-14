@@ -3,9 +3,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { Vec3 } = require('vec3');
-const memory = require('../skills/memory');
-const survival = require('../skills/survival');
-const food = require('../skills/food');
+const memory = require('../src/skills/memory');
+const survival = require('../src/skills/survival');
+const food = require('../src/skills/food');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'marigo-survival-'));
 

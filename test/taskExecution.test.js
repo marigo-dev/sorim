@@ -1,11 +1,11 @@
 const assert = require('node:assert/strict');
 
-const TaskQueue = require('../agent/taskQueue');
-const taskVerifier = require('../agent/taskVerifier');
-const { PreconditionResolver, materialPotential } = require('../agent/preconditionResolver');
-const storage = require('../skills/storage');
-const shelter = require('../skills/shelter');
-const { TOOL_DEFINITIONS } = require('../toolRegistry');
+const TaskQueue = require('../src/agent/taskQueue');
+const taskVerifier = require('../src/agent/taskVerifier');
+const { PreconditionResolver, materialPotential } = require('../src/agent/preconditionResolver');
+const storage = require('../src/skills/storage');
+const shelter = require('../src/skills/shelter');
+const { TOOL_DEFINITIONS } = require('../src/toolRegistry');
 const { Vec3 } = require('vec3');
 
 const before = {

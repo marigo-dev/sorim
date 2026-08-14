@@ -94,7 +94,7 @@ if /I "!LLM_PROVIDER!"=="ollama" (
 echo [SORIM] Starting AI bot. Autonomous planning waits for an in-game command.
 echo [SORIM] Say: marigo otonom basla
 echo [SORIM] Stop the bot with Ctrl+C. The Paper window stays open.
-node bot.js
+node src\bot.js
 
 echo [SORIM] Bot stopped with exit code !ERRORLEVEL!.
 pause

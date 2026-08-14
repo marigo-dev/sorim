@@ -1,10 +1,10 @@
 const assert = require('node:assert/strict');
 const { Vec3 } = require('vec3');
-const { parseCombatIntent } = require('../agent/combatIntent');
-const combat = require('../skills/combat');
-const movement = require('../skills/movement');
-const taskVerifier = require('../agent/taskVerifier');
-const actionControl = require('../skills/actionControl');
+const { parseCombatIntent } = require('../src/agent/combatIntent');
+const combat = require('../src/skills/combat');
+const movement = require('../src/skills/movement');
+const taskVerifier = require('../src/agent/taskVerifier');
+const actionControl = require('../src/skills/actionControl');
 
 assert.deepEqual(
     parseCombatIntent('Marigo benimle savas', 'waterghost8', ['waterghost8']),

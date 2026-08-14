@@ -15,18 +15,18 @@ Minecraft -> sensors -> normalized world state -> blackboard -> behavior tree
 
 Main parts:
 
-- `bot.js`: connects to Minecraft, observes the world, runs the agent loop, and executes tool calls.
-- `colony.js`: runs two cooperating agents with shared tasks and storage.
+- `src/bot.js`: connects to Minecraft, observes the world, runs the agent loop, and executes tool calls.
+- `src/colony.js`: runs two cooperating agents with shared tasks and storage.
 - `docs/COLONY_ROADMAP.md`: defines the planned single-brain, multi-agent colony, identity, personality, election, succession, and memorial systems.
-- `llm.js`: talks to Ollama or an OpenAI-compatible API and asks the AI brain for the next tool call.
-- `perception/`: maintains a normalized world state and bounded event stream from health, inventory, blocks, entities, chat, damage, and sound packets.
-- `agent/`: contains the blackboard, persistent social/task memory, task queue, and behavior tree runtime.
-- `professions/`: defines persistent farmer, rancher, miner, lumberjack, fisher, builder, guard, and quartermaster profiles.
-- `safety/`: protects remembered builds from harvesting and scores terrain before construction.
-- `protocol26Shim.js`: native Minecraft 26.2 protocol compatibility layer.
-- `toolRegistry.js`: defines the body tools the AI is allowed to use and maps tool calls to Mineflayer skills.
-- `skillTree.js`: provides curriculum context and safe fallback decisions when AI output is invalid or unavailable.
-- `skills/`: low-level body abilities such as mining, crafting, movement, food, survival, shelter, and storage.
+- `src/llm.js`: talks to Ollama or an OpenAI-compatible API and asks the AI brain for the next tool call.
+- `src/perception/`: maintains a normalized world state and bounded event stream from health, inventory, blocks, entities, chat, damage, and sound packets.
+- `src/agent/`: contains the blackboard, persistent social/task memory, task queue, and behavior tree runtime.
+- `src/professions/`: defines persistent farmer, rancher, miner, lumberjack, fisher, builder, guard, and quartermaster profiles.
+- `src/safety/`: protects remembered builds from harvesting and scores terrain before construction.
+- `src/protocol26Shim.js`: native Minecraft 26.2 protocol compatibility layer.
+- `src/toolRegistry.js`: defines the body tools the AI is allowed to use and maps tool calls to Mineflayer skills.
+- `src/skillTree.js`: provides curriculum context and safe fallback decisions when AI output is invalid or unavailable.
+- `src/skills/`: low-level body abilities such as mining, crafting, movement, food, survival, shelter, and storage.
 
 The AI does not directly control Mineflayer APIs. It chooses from explicit tools such as:
 

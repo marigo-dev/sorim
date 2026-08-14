@@ -4,7 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'marigo-memory-'));
-const modulePath = require.resolve('../skills/memory');
+const modulePath = require.resolve('../src/skills/memory');
 
 try {
     let memory = require(modulePath);

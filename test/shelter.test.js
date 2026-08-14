@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { Vec3 } = require('vec3');
-const shelter = require('../skills/shelter');
-const siteSelector = require('../safety/siteSelector');
+const shelter = require('../src/skills/shelter');
+const siteSelector = require('../src/safety/siteSelector');
 
 const base = new Vec3(0, 64, 0);
 const shell = new Set();

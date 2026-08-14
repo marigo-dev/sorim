@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const entityActions = require('../skills/entityActions');
+const entityActions = require('../src/skills/entityActions');
 
 const packets = [];
 let swings = 0;

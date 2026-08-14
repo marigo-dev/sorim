@@ -27,7 +27,7 @@ function initialize(botName = 'marigo', options = {}) {
     progression = {};
     exploredCells = {};
 
-    const directory = options.directory || path.join(__dirname, '..', 'data', 'memory');
+    const directory = options.directory || path.join(__dirname, '..', '..', 'data', 'memory');
     const safeName = String(botName).replace(/[^a-zA-Z0-9_-]/g, '_') || 'marigo';
     memoryFile = path.join(directory, `${safeName}.json`);
 

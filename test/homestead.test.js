@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { Vec3 } = require('vec3');
-const homestead = require('../skills/homestead');
+const homestead = require('../src/skills/homestead');
 
 const center = new Vec3(-20, 70, 14);
 const positions = homestead.farmPlotPositions(center);

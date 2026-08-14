@@ -1,7 +1,7 @@
 process.env.MC_VERSION = process.env.MC_VERSION || '26.2';
 
-require('../logger').installConsoleFilter();
-const { install26_2PacketFallbacks, install26_2VelocityShim } = require('../protocol26Shim');
+require('../src/logger').installConsoleFilter();
+const { install26_2PacketFallbacks, install26_2VelocityShim } = require('../src/protocol26Shim');
 
 const mineflayer = require('mineflayer');
 const { pathfinder } = require('mineflayer-pathfinder');
@@ -10,11 +10,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const movement = require('../skills/movement');
-const memory = require('../skills/memory');
-const toolRegistry = require('../toolRegistry');
-const taskVerifier = require('../agent/taskVerifier');
-const ProfessionManager = require('../professions/professionManager');
+const movement = require('../src/skills/movement');
+const memory = require('../src/skills/memory');
+const toolRegistry = require('../src/toolRegistry');
+const taskVerifier = require('../src/agent/taskVerifier');
+const ProfessionManager = require('../src/professions/professionManager');
 
 const FIXTURE = String(process.env.PROFESSION_FIXTURE || 'farmer').toLowerCase();
 const FIXTURE_MEMORY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'sorim-profession-fixture-'));

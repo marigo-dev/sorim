@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const MEMORY_DIR = path.join(__dirname, '..', 'memory');
+const MEMORY_DIR = path.join(__dirname, '..', '..', 'memory');
 const MEMORY_FILE = path.join(MEMORY_DIR, 'colony.json');
 
 function load() {

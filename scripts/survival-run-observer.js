@@ -1,10 +1,10 @@
 process.env.MC_VERSION = process.env.MC_VERSION || '26.2';
 
-require('../logger').installConsoleFilter();
+require('../src/logger').installConsoleFilter();
 const {
     install26_2PacketFallbacks,
     install26_2VelocityShim
-} = require('../protocol26Shim');
+} = require('../src/protocol26Shim');
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -71,7 +71,7 @@ const report = {
 async function main() {
     fs.mkdirSync(OUTPUT, { recursive: true });
     observer = await createObserver();
-    child = fork(path.join(__dirname, '..', 'bot.js'), [], {
+    child = fork(path.join(__dirname, '..', 'src', 'bot.js'), [], {
         cwd: path.join(__dirname, '..'),
         env: {
             ...process.env,

@@ -1,22 +1,22 @@
 process.env.MC_VERSION = process.env.MC_VERSION || '26.2';
 
-require('../logger').installConsoleFilter();
+require('../src/logger').installConsoleFilter();
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { install26_2PacketFallbacks, install26_2VelocityShim } = require('../protocol26Shim');
+const { install26_2PacketFallbacks, install26_2VelocityShim } = require('../src/protocol26Shim');
 const mineflayer = require('mineflayer');
 const { pathfinder } = require('mineflayer-pathfinder');
-const TaskQueue = require('../agent/taskQueue');
-const { PreconditionResolver } = require('../agent/preconditionResolver');
-const taskVerifier = require('../agent/taskVerifier');
-const toolRegistry = require('../toolRegistry');
-const { buildWorldState, toObservation } = require('../perception/stateBuilder');
-const movement = require('../skills/movement');
-const memory = require('../skills/memory');
-const persistentMemory = require('../agent/persistentMemory');
-const storage = require('../skills/storage');
-const shelter = require('../skills/shelter');
+const TaskQueue = require('../src/agent/taskQueue');
+const { PreconditionResolver } = require('../src/agent/preconditionResolver');
+const taskVerifier = require('../src/agent/taskVerifier');
+const toolRegistry = require('../src/toolRegistry');
+const { buildWorldState, toObservation } = require('../src/perception/stateBuilder');
+const movement = require('../src/skills/movement');
+const memory = require('../src/skills/memory');
+const persistentMemory = require('../src/agent/persistentMemory');
+const storage = require('../src/skills/storage');
+const shelter = require('../src/skills/shelter');
 
 const HOST = process.env.MC_HOST || '127.0.0.1';
 const PORT = Number(process.env.MC_PORT || 25566);

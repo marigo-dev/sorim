@@ -11,7 +11,7 @@ const {
     createMineflayerTimePluginShim,
     install26_2PacketFallbacks,
     install26_2VelocityShim
-} = require('../protocol26Shim');
+} = require('../src/protocol26Shim');
 const minecraftData = require('minecraft-data');
 const minecraftProtocol = require('minecraft-protocol');
 

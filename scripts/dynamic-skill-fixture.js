@@ -1,14 +1,14 @@
 process.env.MC_VERSION = process.env.MC_VERSION || '26.2';
 
-require('../logger').installConsoleFilter();
-const { install26_2PacketFallbacks, install26_2VelocityShim } = require('../protocol26Shim');
+require('../src/logger').installConsoleFilter();
+const { install26_2PacketFallbacks, install26_2VelocityShim } = require('../src/protocol26Shim');
 const mineflayer = require('mineflayer');
 const { pathfinder } = require('mineflayer-pathfinder');
-const movement = require('../skills/movement');
-const persistentMemory = require('../agent/persistentMemory');
-const sandbox = require('../agent/dynamicSkillSandbox');
-const toolRegistry = require('../toolRegistry');
-const taskVerifier = require('../agent/taskVerifier');
+const movement = require('../src/skills/movement');
+const persistentMemory = require('../src/agent/persistentMemory');
+const sandbox = require('../src/agent/dynamicSkillSandbox');
+const toolRegistry = require('../src/toolRegistry');
+const taskVerifier = require('../src/agent/taskVerifier');
 
 const HOST = process.env.MC_HOST || '127.0.0.1';
 const PORT = Number(process.env.MC_PORT || 25566);

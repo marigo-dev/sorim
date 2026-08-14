@@ -4,12 +4,12 @@ const os = require('node:os');
 const path = require('node:path');
 const { Vec3 } = require('vec3');
 
-const sandbox = require('../agent/dynamicSkillSandbox');
-const memory = require('../agent/persistentMemory');
-const toolRegistry = require('../toolRegistry');
-const runtime = require('../agent/minecraftSkillRuntime');
-const shelter = require('../skills/shelter');
-const taskVerifier = require('../agent/taskVerifier');
+const sandbox = require('../src/agent/dynamicSkillSandbox');
+const memory = require('../src/agent/persistentMemory');
+const toolRegistry = require('../src/toolRegistry');
+const runtime = require('../src/agent/minecraftSkillRuntime');
+const shelter = require('../src/skills/shelter');
+const taskVerifier = require('../src/agent/taskVerifier');
 
 const registry = {
     tools: toolRegistry.TOOL_DEFINITIONS,

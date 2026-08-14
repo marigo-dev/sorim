@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
-const SkillTree = require('../skillTree');
-const toolRegistry = require('../toolRegistry');
-const actionControl = require('../skills/actionControl');
+const SkillTree = require('../src/skillTree');
+const toolRegistry = require('../src/toolRegistry');
+const actionControl = require('../src/skills/actionControl');
 
 function observation(inventory, overrides = {}) {
     return {

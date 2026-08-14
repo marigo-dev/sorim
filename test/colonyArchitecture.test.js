@@ -1,10 +1,10 @@
 const assert = require('node:assert/strict');
 
-const ColonyBlackboard = require('../agent/colonyBlackboard');
-const ColonyScheduler = require('../agent/colonyScheduler');
-const ColonyBrain = require('../agent/colonyBrain');
-const CharacterRegistry = require('../characters/characterRegistry');
-const { createColonyBodyTree } = require('../agent/behaviorTree/colonyBodyTree');
+const ColonyBlackboard = require('../src/agent/colonyBlackboard');
+const ColonyScheduler = require('../src/agent/colonyScheduler');
+const ColonyBrain = require('../src/agent/colonyBrain');
+const CharacterRegistry = require('../src/characters/characterRegistry');
+const { createColonyBodyTree } = require('../src/agent/behaviorTree/colonyBodyTree');
 
 let now = 1000;
 let state = { leases: {}, workOrders: [], characters: {} };

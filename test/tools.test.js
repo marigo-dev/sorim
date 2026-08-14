@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
-const tools = require('../skills/tools');
-const stone = require('../skills/stone');
+const tools = require('../src/skills/tools');
+const stone = require('../src/skills/stone');
 
 assert.equal(
     tools.needsSurfaceReturn({ y: 67.9 }, { x: 0, y: 70, z: 0 }),

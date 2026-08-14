@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { buildChatPrompt, normalizeIntent } = require('../llm');
+const { buildChatPrompt, normalizeIntent } = require('../src/llm');
 
 const prompt = buildChatPrompt({
     username: 'player',

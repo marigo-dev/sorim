@@ -4,16 +4,16 @@ const os = require('node:os');
 const path = require('node:path');
 const { Vec3 } = require('vec3');
 
-const EventStream = require('../perception/eventStream');
-const stateBuilder = require('../perception/stateBuilder');
-const Blackboard = require('../agent/blackboard');
-const persistentMemory = require('../agent/persistentMemory');
-const TaskQueue = require('../agent/taskQueue');
-const ProfessionManager = require('../professions/professionManager');
-const blockPolicy = require('../safety/blockPolicy');
-const baseSkill = require('../skills/base');
-const worldMemory = require('../skills/memory');
-const { createRootTree } = require('../agent/behaviorTree/rootTree');
+const EventStream = require('../src/perception/eventStream');
+const stateBuilder = require('../src/perception/stateBuilder');
+const Blackboard = require('../src/agent/blackboard');
+const persistentMemory = require('../src/agent/persistentMemory');
+const TaskQueue = require('../src/agent/taskQueue');
+const ProfessionManager = require('../src/professions/professionManager');
+const blockPolicy = require('../src/safety/blockPolicy');
+const baseSkill = require('../src/skills/base');
+const worldMemory = require('../src/skills/memory');
+const { createRootTree } = require('../src/agent/behaviorTree/rootTree');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sorim-agent-'));
 const worldDirectory = path.join(directory, 'world');

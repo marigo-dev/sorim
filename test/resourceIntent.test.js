@@ -1,9 +1,9 @@
 const assert = require('node:assert/strict');
-const { parseResourceIntent } = require('../agent/resourceIntent');
-const { PreconditionResolver } = require('../agent/preconditionResolver');
-const taskVerifier = require('../agent/taskVerifier');
-const toolRegistry = require('../toolRegistry');
-const mine = require('../skills/mine');
+const { parseResourceIntent } = require('../src/agent/resourceIntent');
+const { PreconditionResolver } = require('../src/agent/preconditionResolver');
+const taskVerifier = require('../src/agent/taskVerifier');
+const toolRegistry = require('../src/toolRegistry');
+const mine = require('../src/skills/mine');
 
 assert.deepEqual(parseResourceIntent('Marigo 16 odun topla'), {
     resource: 'wood', tool: 'mine_block', target: 'any_log', count: 16

@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
-const SkillTree = require('../skillTree');
-const iron = require('../skills/iron');
+const SkillTree = require('../src/skillTree');
+const iron = require('../src/skills/iron');
 
 function observation(inventory, overrides = {}) {
     return {

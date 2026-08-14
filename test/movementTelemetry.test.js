@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { analyzeScenario, motionStats } = require('../diagnostics/movementTelemetry');
+const { analyzeScenario, motionStats } = require('../src/diagnostics/movementTelemetry');
 
 const moving = [
     { at: 0, position: { x: 0, y: 64, z: 0 } },

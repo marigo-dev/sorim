@@ -1,6 +1,6 @@
 const assert = require('assert');
-const mining = require('../skills/mining');
-const { assessMiningKit } = require('../agent/progressionContracts');
+const mining = require('../src/skills/mining');
+const { assessMiningKit } = require('../src/agent/progressionContracts');
 
 assert.strictEqual(
     mining.needsPreparationSurfaceReturn({ y: 67.9 }, { x: 0, y: 70, z: 0 }),

@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { Vec3 } = require('vec3');
-const mine = require('../skills/mine');
+const mine = require('../src/skills/mine');
 
 function block(name, position, boundingBox = 'block') {
     return { name, position, boundingBox };

@@ -1,10 +1,10 @@
 process.env.MC_VERSION = process.env.MC_VERSION || '26.2';
 
-require('../logger').installConsoleFilter();
-const { install26_2PacketFallbacks, install26_2VelocityShim } = require('../protocol26Shim');
+require('../src/logger').installConsoleFilter();
+const { install26_2PacketFallbacks, install26_2VelocityShim } = require('../src/protocol26Shim');
 const mineflayer = require('mineflayer');
 const { pathfinder } = require('mineflayer-pathfinder');
-const movement = require('../skills/movement');
+const movement = require('../src/skills/movement');
 
 const HOST = process.env.MC_HOST || '127.0.0.1';
 const PORT = Number(process.env.MC_PORT || 25566);

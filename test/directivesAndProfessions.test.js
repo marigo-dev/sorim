@@ -4,9 +4,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { Vec3 } = require('vec3');
 
-const persistentMemory = require('../agent/persistentMemory');
-const DirectiveManager = require('../agent/directiveManager');
-const ProfessionManager = require('../professions/professionManager');
+const persistentMemory = require('../src/agent/persistentMemory');
+const DirectiveManager = require('../src/agent/directiveManager');
+const ProfessionManager = require('../src/professions/professionManager');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sorim-directives-'));
 persistentMemory.initialize('mico', { directory });

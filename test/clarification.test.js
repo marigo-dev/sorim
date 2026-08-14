@@ -1,9 +1,9 @@
 const assert = require('node:assert/strict');
-const { parseCombatIntent } = require('../agent/combatIntent');
+const { parseCombatIntent } = require('../src/agent/combatIntent');
 const {
     detectClarificationNeed,
     resolveClarificationMessage
-} = require('../agent/clarification');
+} = require('../src/agent/clarification');
 
 const combat = detectClarificationNeed('marigo onu oldur', 'Steve');
 assert.equal(combat.type, 'clarify');

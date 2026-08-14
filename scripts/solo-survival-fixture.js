@@ -1,6 +1,6 @@
 process.env.MC_VERSION = process.env.MC_VERSION || '26.2';
 
-const { install26_2PacketFallbacks, install26_2VelocityShim } = require('../protocol26Shim');
+const { install26_2PacketFallbacks, install26_2VelocityShim } = require('../src/protocol26Shim');
 
 const { spawn } = require('node:child_process');
 const mineflayer = require('mineflayer');
@@ -136,7 +136,7 @@ function treeCommands(x, z, wood) {
 }
 
 function startSoloBot() {
-    const processHandle = spawn(process.execPath, ['bot.js'], {
+    const processHandle = spawn(process.execPath, ['src/bot.js'], {
         cwd: process.cwd(),
         env: {
             ...process.env,

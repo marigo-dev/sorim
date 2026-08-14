@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { Vec3 } = require('vec3');
-const movement = require('../skills/movement');
+const movement = require('../src/skills/movement');
 
 async function main() {
     assert.deepEqual(

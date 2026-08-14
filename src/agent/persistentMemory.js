@@ -14,7 +14,7 @@ let state = defaults();
 function initialize(botName = 'marigo', options = {}) {
     flushTimer();
     const safeName = String(botName).replace(/[^a-zA-Z0-9_-]/g, '_') || 'marigo';
-    const directory = options.directory || path.join(__dirname, '..', 'data', 'agent-memory');
+    const directory = options.directory || path.join(__dirname, '..', '..', 'data', 'agent-memory');
     file = path.join(directory, `${safeName}.json`);
     state = defaults();
     if (!fs.existsSync(file)) return;
