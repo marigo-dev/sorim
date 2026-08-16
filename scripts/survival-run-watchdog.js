@@ -47,6 +47,7 @@ function main() {
             MC_VERSION: VERSION,
             MC_USERNAME: TARGET,
             AUTONOMOUS_ON_START: process.env.AUTONOMOUS_ON_START || 'true',
+            RESET_DIRECTIVE_ON_START: process.env.RESET_DIRECTIVE_ON_START || 'true',
             MOVEMENT_WATCHDOG: 'true',
             MOVEMENT_INCIDENT_DIR: INCIDENT_DIR,
             LOG_LEVEL: process.env.LOG_LEVEL || 'info'
@@ -65,7 +66,15 @@ function main() {
 
 function onMessage(message) {
     if (message?.type === 'sorimMovementIncident') {
-        recordIncident('movement_stall', 'Marigo was commanded to move but made no progress', message.incident);
+        const incident = message.incident || {};
+        recordIncident('movement_stall', 'Marigo was commanded to move but made no progress', {
+            id: incident.id,
+            position: incident.position,
+            controls: incident.controls,
+            stationaryMs: incident.stationaryMs,
+            intent: incident.intent,
+            pathfinderGoal: incident.pathfinderGoal
+        });
         return;
     }
     if (message?.type !== 'sorimTelemetry' || !message.sample) return;

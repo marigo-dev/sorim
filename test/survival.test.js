@@ -41,6 +41,19 @@ try {
         ).action,
         'emergency_shelter'
     );
+    const suffocating = makeBot(6000);
+    suffocating.blockAt = position => position.y === 64
+        ? { name: 'sand', position, boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] }
+        : { name: 'air', boundingBox: 'empty', shapes: [] };
+    assert.equal(
+        survival.chooseImmediateAction(
+            suffocating,
+            observation(20),
+            { id: 'L7_BUILD_SAFE_SHELTER' }
+        ).action,
+        'escape_collision',
+        'A solid block intersecting the body must preempt every progression action'
+    );
     firstNight.entities.skeleton = {
         id: 6,
         name: 'skeleton',
@@ -67,6 +80,22 @@ try {
         survival.isUnsafeForwardStep(edge),
         true,
         'Blind retreat must stop before a three-block drop'
+    );
+    const unsupported = makeBot(6000);
+    unsupported.entity.onGround = true;
+    unsupported.entity.velocity = new Vec3(0, 0, 0);
+    unsupported.blockAt = position => position.y >= 64
+        ? { name: 'air', boundingBox: 'empty', shapes: [] }
+        : { name: 'air', boundingBox: 'empty', shapes: [] };
+    assert.equal(survival.lacksStableFloor(unsupported), true);
+    assert.equal(
+        survival.chooseImmediateAction(
+            unsupported,
+            { ...observation(17), health: 5 },
+            { id: 'L7_BUILD_SAFE_SHELTER' }
+        ).action,
+        'escape_pit',
+        'unstable footing must be repaired before a critical food search'
     );
     const flatRetreat = makeBot(6000);
     flatRetreat.entity.yaw = 0;
@@ -114,6 +143,21 @@ try {
         ).action,
         'escape_water'
     );
+    submerged.entities.zombie = {
+        id: 17,
+        name: 'zombie',
+        type: 'mob',
+        position: new Vec3(2, 64, 0)
+    };
+    assert.equal(
+        survival.chooseImmediateAction(
+            submerged,
+            observation(20),
+            { id: 'L1_COLLECT_WOOD' }
+        ).action,
+        'fight_mob',
+        'a healthy bot must fight a melee attacker before continuing water recovery'
+    );
     const wading = makeBot(6000);
     wading.entity.isInWater = true;
     wading.oxygenLevel = undefined;
@@ -125,6 +169,43 @@ try {
         survival.shouldInterruptForWater(wading, 'mine_block'),
         true,
         'surface resource work must yield immediately after entering shallow water'
+    );
+    const shoreline = makeBot(6000);
+    shoreline.entity.position = new Vec3(0.5, 62, 0.7);
+    shoreline.entity.isInWater = true;
+    shoreline.blockAt = position => {
+        if (position.x === 0 && position.y === 62 && position.z === 1) {
+            return { name: 'grass_block', boundingBox: 'block' };
+        }
+        if (position.x === 0 && [63, 64].includes(position.y) && position.z === 1) {
+            return { name: 'air', boundingBox: 'empty' };
+        }
+        return { name: 'water', boundingBox: 'empty' };
+    };
+    assert.deepEqual(
+        survival.findNearestDryStand(shoreline, 8),
+        new Vec3(0, 63, 1),
+        'water recovery must prefer an adjacent one-block shore instead of carving a distant bank'
+    );
+    shoreline.blockAt = position => {
+        if (position.x === 0 && position.y === 61 && position.z === 2) {
+            return { name: 'dirt', boundingBox: 'block' };
+        }
+        if (position.x === 0 && [62, 63].includes(position.y) && position.z === 2) {
+            return { name: 'air', boundingBox: 'empty' };
+        }
+        if (
+            [61, 62].includes(position.y) &&
+            Math.abs(position.x) + Math.abs(position.z - 2) === 1
+        ) {
+            return { name: 'dirt', boundingBox: 'block' };
+        }
+        return { name: 'water', boundingBox: 'empty' };
+    };
+    assert.equal(
+        survival.findNearestDryStand(shoreline, 8),
+        null,
+        'a dry cell hidden behind a bank is not a reachable shoreline exit'
     );
     memory.setSurfaceExit({ x: 0, y: 64, z: 0 });
     const earlyMorningPit = makeBot(6000);
@@ -289,6 +370,17 @@ try {
         'evade_hostile',
         'a nearby base must not override immediate creeper blast avoidance'
     );
+    const armedCreeperFighter = makeBot(6000);
+    armedCreeperFighter.inventory.items = () => [{ name: 'stone_sword', count: 1 }];
+    assert.equal(
+        survival.chooseThreatAction(
+            armedCreeperFighter,
+            { id: 13, name: 'creeper', distance: 5, entity: {} },
+            20
+        ).action,
+        'fight_mob',
+        'a healthy armed bot should remove a creeper with hit-and-retreat combat'
+    );
 
     const exposedNearBase = makeBot(14000);
     exposedNearBase.entity.position = new Vec3(8, 64, 0);
@@ -324,8 +416,17 @@ try {
             { id: 11, name: 'skeleton', distance: 10, entity: {} },
             15
         ).action,
-        'emergency_shelter',
-        'an unarmored wounded bot with blocks must take cover from ranged fire'
+        'evade_hostile',
+        'a wounded bot should leave daytime ranged fire instead of rebuilding its refuge'
+    );
+    assert.equal(
+        survival.chooseThreatAction(
+            exposedWithBlocks,
+            { id: 11, name: 'skeleton', distance: 10, entity: {} },
+            20
+        ).action,
+        'evade_hostile',
+        'a stone sword alone must not make an unarmored bot chase a distant skeleton'
     );
 
     const cliffRetreat = makeBot(6000);
@@ -460,6 +561,28 @@ try {
     assert.equal(food.hasActionableConvertibleFood({ beef: 5, oak_log: 1 }), false);
     assert.equal(food.hasActionableConvertibleFood({ beef: 5, cobblestone: 8, oak_log: 1 }), true);
     assert.equal(food.hasActionableConvertibleFood({ wheat: 3 }), true);
+
+    const woundedDay = makeBot(6000);
+    assert.equal(
+        survival.chooseImmediateAction(
+            woundedDay,
+            { health: 8, food: 17, inventory: {} },
+            { id: 'L7_BUILD_SAFE_SHELTER' }
+        ).action,
+        'find_food',
+        'critical health must trigger food recovery even before normal hunger thresholds'
+    );
+    memory.setLastDeath({ x: 20, y: 64, z: 0 });
+    assert.equal(
+        survival.chooseImmediateAction(
+            woundedDay,
+            { health: 8, food: 17, inventory: {} },
+            { id: 'L1_COLLECT_WOOD' }
+        ).action,
+        'recover_items',
+        'daytime death recovery must preempt repeated food searches when the route is clear'
+    );
+    memory.clearLastDeath();
 
     memory.setBase({ x: 0, y: 100, z: 0 });
     const underground = makeBot(6000);

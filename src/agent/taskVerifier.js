@@ -9,7 +9,7 @@ const VERIFIED_TOOLS = new Set([
     'explore', 'mine_block', 'craft_item', 'place_block', 'collect_stone',
     'craft_stone_tools', 'build_shelter', 'ensure_base', 'eat_food', 'find_food',
     'maintain_food_supply', 'care_for_animals', 'fish', 'replant_sapling',
-    'fight_mob', 'fight_player', 'evade_hostile', 'emergency_shelter', 'escape_pit',
+    'fight_mob', 'fight_player', 'evade_hostile', 'emergency_shelter', 'escape_pit', 'escape_collision',
     'recover_items', 'escape_water', 'return_base', 'wait_safe',
     'execute_dynamic_skill', 'sleep_bed', 'secure_bed', 'establish_wheat_farm',
     'organize_storage', 'prepare_mining_kit', 'mine_iron', 'smelt_item',
@@ -178,6 +178,15 @@ function verify(call, before, after, options = {}) {
         return !stillTrapped || reachedExit
             ? passed(`Pit exit verified after moving ${moved.toFixed(2)} blocks with ${rise.toFixed(2)} Y gain`, { rise, moved, reachedExit })
             : failed('Bot moved but remains inside pit geometry', { rise, moved, stillTrapped });
+    }
+    if (tool === 'escape_collision') {
+        const intersects = safe(
+            () => require('../skills/movement').bodyIntersectsSolid(options.bot),
+            true
+        );
+        return !intersects
+            ? passed('Solid body collision was cleared')
+            : failed('Bot body still intersects solid collision geometry');
     }
     if (tool === 'recover_items') {
         const gained = inventoryTotal(after.inventory) - inventoryTotal(before.inventory);

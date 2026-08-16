@@ -14,8 +14,15 @@ function configure(bot) {
     movements.allowParkour = false;
     movements.allowSprinting = false;
     movements.maxDropDown = 1;
-    movements.liquidCost = 8;
+    movements.infiniteLiquidDropdownDistance = false;
+    movements.liquidCost = 10000;
     movements.entityCost = 4;
+    movements.exclusionAreasStep.push(block =>
+        ['water', 'bubble_column', 'lava'].includes(block?.name) ? Number.POSITIVE_INFINITY : 0
+    );
+    movements.exclusionAreasStep.push(block =>
+        block?.name?.endsWith('_leaves') ? 100 : 0
+    );
     bot.pathfinder.setMovements(movements);
     if (!groundedSynchronizers.has(bot)) {
         const synchronize = () => synchronizeGroundedState(bot);
@@ -28,9 +35,7 @@ function configure(bot) {
 function resyncCollision(bot) {
     if (!bot.entity?.position || typeof bot.blockAt !== 'function') return false;
     const feet = bot.entity.position.floored();
-    const current = bot.blockAt(feet);
-    const currentHead = bot.blockAt(feet.offset(0, 1, 0));
-    if (current?.boundingBox === 'block' || currentHead?.boundingBox === 'block') {
+    if (bodyIntersectsSolid(bot)) {
         stop(bot);
         console.log(`[MOVE] body collision detected at ${feet.toString()}; controls released for physical recovery`);
         return true;
@@ -92,6 +97,48 @@ async function moveNearXZ(bot, position, range = 2, timeoutMs = 10000) {
     if (Math.hypot(dx, dz) <= range) return;
     const goal = new goals.GoalNearXZ(position.x, position.z, range);
     await navigate(bot, goal, position, timeoutMs, 'Timed out walking toward horizontal target');
+}
+
+async function moveOutOfWater(bot, position, timeoutMs = 7000) {
+    const goal = new goals.GoalBlock(position.x, position.y, position.z);
+    const version = beginNavigation(bot);
+    markMovementIntent(bot, 'water-exit', position);
+    try {
+        await withNavigationWatchdog(
+            bot,
+            bot.pathfinder.goto(goal),
+            timeoutMs,
+            'Timed out swimming to dry ground',
+            2600
+        );
+        return true;
+    } finally {
+        clearMovementIntent(bot);
+        stopNavigation(bot, version);
+    }
+}
+
+async function centerInCurrentCell(bot, timeoutMs = 900) {
+    const cell = bot.entity.position.floored();
+    const target = cell.offset(0.5, 0, 0.5);
+    const deadline = Date.now() + timeoutMs;
+    bot.clearControlStates();
+    markMovementIntent(bot, 'center-cell', target);
+    try {
+        while (Date.now() < deadline) {
+            const dx = target.x - bot.entity.position.x;
+            const dz = target.z - bot.entity.position.z;
+            const distance = Math.hypot(dx, dz);
+            if (distance <= 0.14) return true;
+            await bot.look(Math.atan2(-dx, -dz), 0, true);
+            bot.setControlState('forward', true);
+            await sleep(50);
+        }
+    } finally {
+        bot.clearControlStates();
+        clearMovementIntent(bot);
+    }
+    return horizontalDistance(bot.entity.position, target) <= 0.22;
 }
 
 async function navigate(bot, goal, target, timeoutMs, timeoutMessage) {
@@ -208,6 +255,12 @@ async function explore(bot, action = {}) {
         console.log(`[MOVE] Exploration target already visible: ${target}.`);
         return { found: initiallyVisible, reached: false, initiallyVisible: true };
     }
+    if (typeof bot.blockAt === 'function') {
+        await descendFromCanopy(bot, 28, isActive);
+        if (isActive && !isActive()) {
+            return { found: null, reached: false, recovered: false, cancelled: true };
+        }
+    }
     const origin = bot.entity.position.clone();
     const position = selectExplorationWaypoint(bot, target);
 
@@ -220,7 +273,14 @@ async function explore(bot, action = {}) {
         const goal = target === 'wood' || target === 'food'
             ? new goals.GoalXZ(position.x, position.z)
             : new goals.GoalNear(position.x, position.y, position.z, 3);
-        const navigation = bot.pathfinder.goto(goal)
+        markMovementIntent(bot, 'explore', position);
+        const navigation = withNavigationWatchdog(
+            bot,
+            bot.pathfinder.goto(goal),
+            target === 'wood' ? 20000 : 18000,
+            'Exploration path stalled',
+            900
+        )
             .then(() => ({ type: 'reached' }));
         const candidates = [navigation];
         if (stopWhen) {
@@ -268,7 +328,7 @@ async function explore(bot, action = {}) {
         }
         if (target === 'wood' || target === 'food') {
             const before = bot.entity.position.clone();
-            await moveTowardSafely(bot, position, 16, isActive, abortWhen);
+            const localProgress = await moveTowardSafely(bot, position, 16, isActive, abortWhen);
             if (isActive && !isActive()) {
                 return { found: null, reached: false, recovered: false, cancelled: true, error };
             }
@@ -278,9 +338,13 @@ async function explore(bot, action = {}) {
                 console.log(`[MOVE] Local traversal found ${target}.`);
                 return { found, reached: false, recovered: true };
             }
-            const moved = bot.entity.position.distanceTo(before);
+            let moved = bot.entity.position.distanceTo(before);
+            if (!localProgress && moved < 1) {
+                const escaped = await escapeLocalDeadEnd(bot, isActive, abortWhen);
+                if (escaped) moved = bot.entity.position.distanceTo(before);
+            }
             if (moved >= 1) {
-                noteExplorationProgress(bot, target, true);
+                completeExplorationWaypoint(bot, target);
                 console.log(`[MOVE] Local traversal advanced ${moved.toFixed(1)} blocks.`);
                 return { found: null, reached: false, recovered: true, error };
             }
@@ -288,14 +352,18 @@ async function explore(bot, action = {}) {
         }
         return { found: null, reached: false, recovered: false, error };
     } finally {
-        clearInterval(scanTimer);
+        clearMovementIntent(bot);
+        if (scanTimer) clearInterval(scanTimer);
     }
 }
 
 function explorationTargetSensor(bot, target) {
     if (target === 'wood') {
         return () => bot.findBlock?.({
-            matching: block => Boolean(block?.name?.endsWith('_log')),
+            matching: block => Boolean(
+                block?.name?.endsWith('_log') &&
+                !hasWaterBarrier(bot, block.position)
+            ),
             maxDistance: 72
         }) || null;
     }
@@ -303,11 +371,25 @@ function explorationTargetSensor(bot, target) {
         const foodMobs = new Set(['cow', 'pig', 'sheep', 'chicken', 'rabbit']);
         return () => Object.values(bot.entities || {})
             .filter(entity => foodMobs.has(String(entity.name || '').toLowerCase()))
-            .filter(entity => entity.position?.distanceTo(bot.entity.position) <= 24)
+            .filter(entity => entity.position?.distanceTo(bot.entity.position) <= 48)
+            .filter(entity => !hasWaterBarrier(bot, entity.position))
             .sort((left, right) =>
                 left.position.distanceTo(bot.entity.position) -
                 right.position.distanceTo(bot.entity.position)
-            )[0] || null;
+            )[0] || bot.findBlock?.({
+                matching: block => Boolean(
+                    block &&
+                    !hasWaterBarrier(bot, block.position) &&
+                    (
+                        block.name === 'melon' ||
+                        (
+                            block.name === 'sweet_berry_bush' &&
+                            Number(block.getProperties?.().age || 0) >= 2
+                        )
+                    )
+                ),
+                maxDistance: 32
+            }) || null;
     }
     if (target === 'stone') {
         return () => bot.findBlock?.({
@@ -322,6 +404,24 @@ function explorationTargetSensor(bot, target) {
         }) || null;
     }
     return null;
+}
+
+function hasWaterBarrier(bot, target) {
+    if (!bot.entity?.position || !target || typeof bot.blockAt !== 'function') return false;
+    const origin = bot.entity.position;
+    const distance = horizontalDistance(origin, target);
+    const samples = Math.max(1, Math.ceil(distance));
+    for (let index = 1; index <= samples; index++) {
+        const ratio = index / samples;
+        const x = Math.floor(origin.x + (target.x - origin.x) * ratio);
+        const z = Math.floor(origin.z + (target.z - origin.z) * ratio);
+        const expectedY = Math.round(origin.y + (target.y - origin.y) * ratio);
+        for (const yOffset of [0, -1]) {
+            const block = bot.blockAt(new Vec3(x, expectedY + yOffset, z));
+            if (['water', 'bubble_column', 'lava'].includes(block?.name)) return true;
+        }
+    }
+    return false;
 }
 
 function selectExplorationWaypoint(bot, target) {
@@ -349,6 +449,7 @@ function selectExplorationWaypoint(bot, target) {
             session.anchor.z + grid.z * spacing
         );
         if (visited.some(cell => horizontalDistance(cell, candidate) < spacing * 0.6)) continue;
+        if ((target === 'wood' || target === 'food') && hasWaterBarrier(bot, candidate)) continue;
         session.active = candidate;
         session.failures = 0;
         return candidate.clone();
@@ -381,6 +482,7 @@ function noteExplorationProgress(bot, target, progressed) {
 function explorationSpacing(target) {
     if (target === 'stone') return 16;
     if (target === 'food') return 20;
+    if (target === 'wood') return 72;
     return 24;
 }
 
@@ -483,6 +585,10 @@ async function walkToward(bot, position, options = {}) {
                 stopReason = 'unsafe-drop';
                 break;
             }
+            if (isLiquidAhead(bot, position)) {
+                stopReason = 'unsafe-liquid';
+                break;
+            }
             if (obstacle === 'wall') {
                 stopReason = `wall:${contact.position?.toString() || 'unknown'}:${contact.blockName || 'unknown'}`;
                 break;
@@ -516,6 +622,18 @@ async function walkToward(bot, position, options = {}) {
         `from=${origin.toString()} to=${bot.entity.position.toString()}`
     );
     return moved >= 0.6;
+}
+
+function isLiquidAhead(bot, target) {
+    const direction = horizontalUnitToward(bot, target);
+    if (!direction) return false;
+    const x = Math.floor(bot.entity.position.x + direction.x * 0.7);
+    const z = Math.floor(bot.entity.position.z + direction.z * 0.7);
+    const y = bot.entity.position.floored().y;
+    return [0, -1].some(yOffset => {
+        const block = bot.blockAt(new Vec3(x, y + yOffset, z));
+        return ['water', 'bubble_column', 'lava'].includes(block?.name);
+    });
 }
 
 async function waitForStableGround(bot, timeoutMs) {
@@ -621,6 +739,14 @@ async function waitForStepLanding(bot, expectedY, timeoutMs) {
 
 function synchronizeGroundedState(bot) {
     const position = bot.entity.position;
+    const feet = bot.blockAt(position.floored());
+    if (
+        bot.entity.isInWater ||
+        ['water', 'bubble_column', 'lava'].includes(feet?.name)
+    ) {
+        bot.entity.onGround = false;
+        return;
+    }
     const floor = bot.blockAt(position.floored().offset(0, -1, 0));
     const verticalVelocity = Math.abs(bot.entity.velocity?.y || 0);
     const closeToBlockTop = Math.abs(position.y - Math.round(position.y)) <= 0.08;
@@ -750,6 +876,77 @@ async function sidestepAroundLocalObstacle(bot, target, blockedStep) {
         }
     }
     return bot.entity.position.distanceTo(before) >= 0.55;
+}
+
+async function escapeLocalDeadEnd(bot, isActive = null, abortWhen = null) {
+    const origin = bot.entity.position.clone();
+    for (const candidate of localEscapeCandidates(bot)) {
+        if ((isActive && !isActive()) || abortWhen?.()) {
+            stop(bot);
+            return false;
+        }
+        const attemptOrigin = bot.entity.position.clone();
+        const moved = candidate.y > attemptOrigin.floored().y
+            ? await stepUpToward(bot, candidate)
+            : await walkToward(bot, candidate, { durationMs: 1000 });
+        if (moved && bot.entity.position.distanceTo(attemptOrigin) >= 0.55) {
+            console.log(`[MOVE] escaped local dead end via ${candidate.toString()}`);
+            return bot.entity.position.distanceTo(origin) >= 0.55;
+        }
+    }
+    const carved = await carveSoftEscapeStep(bot, isActive, abortWhen);
+    if (carved) {
+        const moved = await walkToward(bot, carved, { durationMs: 1200 });
+        if (moved && bot.entity.position.distanceTo(origin) >= 0.55) {
+            console.log(`[MOVE] escaped local dead end through soft terrain ${carved.toString()}`);
+            return true;
+        }
+    }
+    return false;
+}
+
+async function carveSoftEscapeStep(bot, isActive = null, abortWhen = null) {
+    const origin = bot.entity.position.floored();
+    const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    const softTerrain = new Set([
+        'dirt', 'grass_block', 'coarse_dirt', 'rooted_dirt', 'podzol',
+        'sand', 'red_sand', 'gravel', 'clay', 'snow', 'snow_block'
+    ]);
+    for (const [dx, dz] of directions) {
+        if ((isActive && !isActive()) || abortWhen?.()) return null;
+        const target = origin.offset(dx, 0, dz);
+        const opened = await clearStepToward(
+            bot,
+            target,
+            1,
+            block => softTerrain.has(block.name)
+        );
+        if (opened) return opened;
+    }
+    return null;
+}
+
+function localEscapeCandidates(bot) {
+    const origin = bot.entity.position.floored();
+    return localWalkableSteps(bot, origin)
+        .filter(position => position.y >= origin.y - 1 && position.y <= origin.y + 1)
+        .sort((left, right) =>
+            localClearanceScore(bot, right) - localClearanceScore(bot, left) ||
+            Math.abs(left.y - origin.y) - Math.abs(right.y - origin.y)
+        );
+}
+
+function localClearanceScore(bot, position) {
+    const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    return directions.reduce((score, [dx, dz]) => {
+        const feet = position.offset(dx, 0, dz);
+        return score + (
+            isPassable(bot.blockAt(feet)) &&
+            isPassable(bot.blockAt(feet.offset(0, 1, 0)))
+                ? 1
+                : 0
+        );
+    }, 0);
 }
 
 function localDetourCandidates(bot, target, blockedStep = null) {
@@ -1059,12 +1256,52 @@ function isUnsafeFrontDrop(bot, target = null) {
 }
 
 function bodyIntersectsSolid(bot) {
+    return bodyCollisionBlocks(bot).length > 0;
+}
+
+function bodyCollisionBlocks(bot) {
+    if (!bot.entity?.position || typeof bot.blockAt !== 'function') return [];
     const position = bot.entity.position;
     const y = position.floored().y;
-    return collisionCells(position.x, position.z).some(([x, z]) =>
-        !isPassable(bot.blockAt(new Vec3(x, y, z))) ||
-        !isPassable(bot.blockAt(new Vec3(x, y + 1, z)))
-    );
+    const blocks = [];
+    const seen = new Set();
+    for (const [x, z] of collisionCells(position.x, position.z)) {
+        for (const blockY of [y + 1, y]) {
+            const blockPosition = new Vec3(x, blockY, z);
+            const block = bot.blockAt(blockPosition);
+            if (!blockIntersectsBody(block, position, blockPosition)) continue;
+            const key = `${x},${blockY},${z}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            blocks.push(block);
+        }
+    }
+    return blocks;
+}
+
+function blockIntersectsBody(block, bodyPosition, fallbackPosition) {
+    if (!block || block.boundingBox !== 'block' || !Array.isArray(block.shapes)) return false;
+    const position = block.position || fallbackPosition;
+    const body = {
+        minX: bodyPosition.x - 0.3,
+        maxX: bodyPosition.x + 0.3,
+        minY: bodyPosition.y + 0.001,
+        maxY: bodyPosition.y + 1.799,
+        minZ: bodyPosition.z - 0.3,
+        maxZ: bodyPosition.z + 0.3
+    };
+    return block.shapes.some(shape => {
+        if (!Array.isArray(shape) || shape.length < 6) return false;
+        const minX = position.x + Number(shape[0]);
+        const minY = position.y + Number(shape[1]);
+        const minZ = position.z + Number(shape[2]);
+        const maxX = position.x + Number(shape[3]);
+        const maxY = position.y + Number(shape[4]);
+        const maxZ = position.z + Number(shape[5]);
+        return maxX > body.minX && minX < body.maxX &&
+            maxY > body.minY && minY < body.maxY &&
+            maxZ > body.minZ && minZ < body.maxZ;
+    });
 }
 
 function hasGroundSupport(bot) {
@@ -1137,7 +1374,7 @@ function withTimeout(promise, timeoutMs, message) {
         .finally(() => clearTimeout(timer));
 }
 
-function withNavigationWatchdog(bot, promise, timeoutMs, message, stallMs = 550) {
+function withNavigationWatchdog(bot, promise, timeoutMs, message, stallMs = 1800) {
     let timeout = null;
     let monitor = null;
     let anchor = bot.entity.position.clone();
@@ -1181,10 +1418,14 @@ function sleep(ms) {
 module.exports = {
     configure,
     resyncCollision,
+    bodyIntersectsSolid,
+    bodyCollisionBlocks,
     moveNear,
     followPlayer,
     moveBlock,
     moveNearXZ,
+    moveOutOfWater,
+    centerInCurrentCell,
     explore,
     manualNudge,
     moveTowardDirectly,
@@ -1192,14 +1433,17 @@ module.exports = {
     stepUpToward,
     frontObstacle,
     moveTowardSafely,
+    escapeLocalDeadEnd,
     clearStepToward,
     clearNearbyFoliage,
     descendFromCanopy,
     selectExplorationWaypoint,
     completeExplorationWaypoint,
     noteExplorationProgress,
+    hasWaterBarrier,
     squareSpiralCell,
     localDetourCandidates,
+    localEscapeCandidates,
     stop,
     sleep,
     withTimeout

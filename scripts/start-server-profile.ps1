@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('run', 'movement-lab')]
-    [string]$Profile
+    [string]$Profile,
+    [string]$LevelName = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,6 +29,12 @@ if (Get-NetTCPConnection -State Listen -LocalPort $settings.Port -ErrorAction Si
 }
 
 Copy-Item -LiteralPath $config -Destination (Join-Path $server 'server.properties') -Force
+$serverProperties = Join-Path $server 'server.properties'
+if ($LevelName) {
+    $properties = Get-Content -LiteralPath $serverProperties
+    $properties = $properties -replace '^level-name=.*$', "level-name=$LevelName"
+    Set-Content -LiteralPath $serverProperties -Value $properties -Encoding ascii
+}
 Set-Content -LiteralPath (Join-Path $server 'eula.txt') -Value 'eula=true' -Encoding ascii
 
 Write-Host "[SORIM] Starting $Profile server on port $($settings.Port)"

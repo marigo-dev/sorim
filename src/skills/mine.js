@@ -46,6 +46,12 @@ async function mineBlock(bot, action) {
                     abortWhen: () => protectedMineOpeningReason(bot)
                 });
                 actionControl.assertActive(bot, actionVersion);
+                await movement.descendFromCanopy(
+                    bot,
+                    28,
+                    () => actionControl.snapshot(bot) === actionVersion
+                );
+                actionControl.assertActive(bot, actionVersion);
                 visibleLog = exploration?.found || findNearestVisibleLog(bot, targetName);
             }
             if (!visibleLog) {
@@ -634,7 +640,7 @@ function findBestBlock(bot, targetName) {
 }
 
 function findBestLog(bot) {
-    return bot.findBlocks({
+    const candidates = bot.findBlocks({
         matching: block => LOGS.has(block?.name),
         maxDistance: 56,
         count: 128
@@ -647,12 +653,14 @@ function findBestLog(bot) {
         .filter(block => !isFailedTree(lowestLogInTrunk(bot, block).position))
         .filter(block => bot.canDigBlock(block))
         .filter(block => isReachable(bot, block))
-        .sort((a, b) => scoreBlock(bot, a) - scoreBlock(bot, b))[0] || null;
+        .sort((a, b) => scoreBlock(bot, a) - scoreBlock(bot, b));
+    return candidates.find(block => !movement.hasWaterBarrier(bot, block.position)) ||
+        candidates[0] || null;
 }
 
 function findNearestVisibleLog(bot, targetName = 'any_log') {
     const names = targetName === 'any_log' ? LOGS : new Set([targetName]);
-    return bot.findBlocks({
+    const candidates = bot.findBlocks({
         matching: block => names.has(block?.name),
         maxDistance: 72,
         count: 128
@@ -670,7 +678,9 @@ function findNearestVisibleLog(bot, targetName = 'any_log') {
             list.findIndex(other => other.position.equals(block.position)) === index
         )
         .filter(block => hasOpenFace(bot, block.position))
-        .sort((a, b) => scoreBlock(bot, a) - scoreBlock(bot, b))[0] || null;
+        .sort((a, b) => scoreBlock(bot, a) - scoreBlock(bot, b));
+    return candidates.find(block => !movement.hasWaterBarrier(bot, block.position)) ||
+        candidates[0] || null;
 }
 
 function markFailedTree(position) {
@@ -1131,6 +1141,13 @@ function treeTravelRisk(bot, block) {
     const horizontal = horizontalDistance(origin, root.position);
     const descent = origin.y - root.position.y;
     const ascent = root.position.y - origin.y;
+    if (
+        horizontal <= 12 &&
+        Math.abs(root.position.y - origin.y) <= 5 &&
+        !movement.hasWaterBarrier(bot, root.position)
+    ) {
+        return horizontal + Math.abs(descent) * 2;
+    }
     const allowedDescent = Math.min(8, 4 + horizontal / 12);
     if (descent > allowedDescent || (ascent > 10 && horizontal > 16)) return Infinity;
 

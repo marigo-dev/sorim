@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const SkillTree = require('../src/skillTree');
 const toolRegistry = require('../src/toolRegistry');
 const actionControl = require('../src/skills/actionControl');
+const memory = require('../src/skills/memory');
 
 function observation(inventory, overrides = {}) {
     return {
@@ -99,6 +100,27 @@ assert.equal(
     ).action,
     'build_shelter'
 );
+
+memory.setConstructionBase({ x: 4, y: 70, z: 4 });
+memory.setProgress('shelterShellScore', 71);
+const utilityRepairTree = new SkillTree();
+const utilityRepairLevel = utilityRepairTree.getLevel(observation(stoneToolInventory));
+assert.equal(
+    utilityRepairTree.getForcedAction(
+        observation({
+            ...stoneToolInventory,
+            acacia_log: 1,
+            acacia_planks: 7,
+            acacia_door: 1
+        }, {
+            hasPlacedCraftingTable: true
+        }),
+        utilityRepairLevel
+    ).action,
+    'craft',
+    'utility repair must resolve a one-plank chest deficit before retrying the build'
+);
+memory.clearConstructionBase();
 
 const stillCollectingStone = new SkillTree();
 assert.equal(

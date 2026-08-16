@@ -49,6 +49,11 @@ const completeKit = {
     nearbyBlocks: []
 };
 assert.strictEqual(assessMiningKit(completeKit).ready, true);
+assert.strictEqual(assessMiningKit({
+    ...completeKit,
+    inventory: { ...completeKit.inventory, bread: 0 },
+    foodUnavailable: true
+}).ready, true);
 assert.strictEqual(
     assessMiningKit({
         ...completeKit,

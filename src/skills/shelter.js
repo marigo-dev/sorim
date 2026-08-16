@@ -41,7 +41,9 @@ async function buildSafeShelter(bot) {
         const remembered = memory.getConstructionBase();
         if (remembered) {
             activeShelterBase = new Vec3(remembered.x, remembered.y, remembered.z);
-            activeShelterShellReady = scoreShelterShell(bot, activeShelterBase) >= SHELL_TARGET;
+            const resumedShellScore = scoreShelterShell(bot, activeShelterBase);
+            activeShelterShellReady = resumedShellScore >= SHELL_TARGET;
+            memory.setProgress('shelterShellScore', resumedShellScore);
             console.log(
                 `[SHELTER] resumed construction base=${activeShelterBase.toString()} ` +
                 `shellReady=${activeShelterShellReady}`
@@ -106,6 +108,29 @@ async function buildSafeShelter(bot) {
     memory.setConstructionBase(base);
 
     console.log(`[SHELTER] building first shelter base=${base.toString()}`);
+    if (bot.entity.position.distanceTo(base.offset(0.5, 0, 0.5)) > 5) {
+        console.log('[SHELTER] returning to the construction center before repair');
+        try {
+            await movement.escapeLocalDeadEnd(bot, () => actionControl.snapshot(bot) === actionVersion);
+            await movement.moveNear(bot, base, 3, 30000);
+        } catch (error) {
+            movement.stop(bot);
+            for (let attempt = 0; attempt < 3; attempt++) {
+                await movement.escapeLocalDeadEnd(bot, () => actionControl.snapshot(bot) === actionVersion);
+                await movement.moveTowardSafely(bot, base, 24);
+                if (bot.entity.position.distanceTo(base.offset(0.5, 0, 0.5)) <= 5) break;
+                try {
+                    await movement.moveNearXZ(bot, base, 4, 15000);
+                } catch {
+                    movement.stop(bot);
+                }
+            }
+            if (bot.entity.position.distanceTo(base.offset(0.5, 0, 0.5)) > 5) {
+                throw new Error(`Could not return to shelter construction: ${error.message}`);
+            }
+        }
+        actionControl.assertActive(bot, actionVersion);
+    }
     let placed = 0;
 
     for (let y = 0; y <= HOUSE_ROOF_Y; y++) {
@@ -119,14 +144,19 @@ async function buildSafeShelter(bot) {
                 const position = base.offset(dx, y, dz);
                 if (isDoorSpace(dx, y, dz)) continue;
                 const preferred = y === 0 || (roof && edge) ? STONE_BLOCKS : WOOD_BLOCKS;
-                if (await placeBuildBlock(bot, position, preferred)) placed++;
+                if (await placeBuildBlock(bot, position, preferred, base)) placed++;
             }
         }
     }
 
     const shellScore = scoreShelterShell(bot, base);
+    memory.setProgress('shelterShellScore', shellScore);
     console.log(`[SHELTER] placed=${placed} shell=${shellScore}`);
     if (shellScore < SHELL_TARGET) {
+        const missing = missingShelterShellPositions(bot, base);
+        console.log(
+            `[SHELTER] missing shell=${missing.map(position => position.toString()).join(' ')}`
+        );
         throw new Error(`5x5 shelter shell incomplete: ${shellScore}/71`);
     }
     activeShelterShellReady = true;
@@ -193,11 +223,12 @@ function isBuildingNear(bot, range = 5) {
 function needsOnlyUtilityRepair() {
     return Boolean(
         (activeShelterBase && activeShelterShellReady) ||
-        memory.getConstructionBase()
+        memory.getProgress('shelterShellScore') >= SHELL_TARGET
     );
 }
 
-async function returnToBase(bot) {
+async function returnToBase(bot, actionVersion = actionControl.snapshot(bot)) {
+    actionControl.assertActive(bot, actionVersion);
     const base = memory.getBase();
     if (!base) return false;
     const target = calibrateRememberedBase(bot, new Vec3(base.x, base.y, base.z));
@@ -206,12 +237,15 @@ async function returnToBase(bot) {
         return true;
     }
     await descendFromShelterWall(bot, target);
+    actionControl.assertActive(bot, actionVersion);
     if (needsPitRecoveryBeforeReturn(bot, target)) {
         await require('./survival').escapePit(bot);
+        actionControl.assertActive(bot, actionVersion);
     }
     const initialApproach = findBaseApproach(bot, target);
     if (horizontalDistance(bot.entity.position, initialApproach.offset(0.5, 0, 0.5)) <= 3.5) {
-        await enterShelter(bot, target);
+        await enterShelter(bot, target, actionVersion);
+        actionControl.assertActive(bot, actionVersion);
         if (isInsideShelter(bot.entity.position, target)) {
             baseEntryFailures = 0;
             await secureBaseEntrance(bot, target);
@@ -224,11 +258,14 @@ async function returnToBase(bot) {
     if (horizontalDistance(bot.entity.position, approachCenter) > 1.5) {
         try {
             await movement.moveNear(bot, approach, 1, 25000);
+            actionControl.assertActive(bot, actionVersion);
         } catch (error) {
+            actionControl.assertActive(bot, actionVersion);
             console.log(`[SHELTER] base path fallback: ${error.message}`);
             for (let attempt = 0; attempt < 10 && bot.entity.position.distanceTo(target) > 5; attempt++) {
                 const before = horizontalDistance(bot.entity.position, approachCenter);
                 await movement.moveTowardSafely(bot, approach, 16);
+                actionControl.assertActive(bot, actionVersion);
                 const after = horizontalDistance(bot.entity.position, approachCenter);
                 if (after >= before - 0.5) {
                     await movement.clearNearbyFoliage(bot, approach, 2);
@@ -242,10 +279,14 @@ async function returnToBase(bot) {
             }
             if (bot.entity.position.distanceTo(target) > 5) {
                 await walkTowardBase(bot, approach, target);
+                actionControl.assertActive(bot, actionVersion);
             }
         }
     }
-    if (bot.entity.position.distanceTo(target) <= 7) await enterShelter(bot, target);
+    if (bot.entity.position.distanceTo(target) <= 7) {
+        await enterShelter(bot, target, actionVersion);
+        actionControl.assertActive(bot, actionVersion);
+    }
     const entered = isInsideShelter(bot.entity.position, target);
     if (entered) {
         baseEntryFailures = 0;
@@ -346,13 +387,16 @@ async function secureBaseEntrance(bot, base) {
     }
 }
 
-async function enterShelter(bot, base) {
+async function enterShelter(bot, base, actionVersion = actionControl.snapshot(bot)) {
+    actionControl.assertActive(bot, actionVersion);
     await ensureEntranceFloor(bot, base);
     await ensureBaseEgress(bot);
+    actionControl.assertActive(bot, actionVersion);
     const outside = base.offset(0, 0, -3);
     const staging = base.offset(0.5, 0, -3.5);
     await movement.walkToward(bot, staging, { durationMs: 1800 });
     await climbDoorApproach(bot, outside, base.y);
+    actionControl.assertActive(bot, actionVersion);
     const releasedCorner = await releaseDoorCorner(bot, base);
     const side = Math.sign(bot.entity.position.x - (base.x + 0.5));
     const insideTargets = releasedCorner.length > 0 && side !== 0
@@ -360,6 +404,7 @@ async function enterShelter(bot, base) {
         : [base.offset(0, 0, -1), base];
     for (const inside of insideTargets) {
         await movement.walkToward(bot, inside, { durationMs: 2200 });
+        actionControl.assertActive(bot, actionVersion);
         if (isInsideShelter(bot.entity.position, base)) {
             const repairPositions = side !== 0
                 ? doorCornerPositions(base, side)
@@ -368,6 +413,24 @@ async function enterShelter(bot, base) {
             return true;
         }
     }
+    const center = base.offset(0.5, 0, 0.5);
+    const deadline = Date.now() + 3000;
+    try {
+        await bot.lookAt(center.offset(0, 1, 0), true);
+        bot.setControlState('forward', true);
+        while (Date.now() < deadline && !isInsideShelter(bot.entity.position, base)) {
+            syncGroundedPhysics(bot);
+            const feet = bot.entity.position.floored();
+            const ahead = movement.frontObstacle(bot, center);
+            bot.setControlState('jump', ahead === 'step' || bot.entity.position.y < base.y - 0.1);
+            await movement.sleep(75);
+            actionControl.assertActive(bot, actionVersion);
+            if (bot.entity.position.floored().equals(feet) && Date.now() + 150 >= deadline) break;
+        }
+    } finally {
+        movement.stop(bot);
+    }
+    if (isInsideShelter(bot.entity.position, base)) return true;
     return false;
 }
 
@@ -474,7 +537,7 @@ async function walkTowardBase(bot, target, base = target) {
 }
 
 async function ensureBaseEgress(bot) {
-    const remembered = memory.getBase();
+    const remembered = memory.getBase() || memory.getConstructionBase();
     if (!remembered || !bot.entity) return;
     const base = new Vec3(remembered.x, remembered.y, remembered.z);
     if (bot.entity.position.distanceTo(base) > 5) return;
@@ -488,6 +551,16 @@ async function ensureBaseEgress(bot) {
                 await movement.sleep(200);
             } catch (error) {
                 console.log(`[SHELTER] door open delayed: ${error.message}`);
+            }
+            const refreshed = bot.blockAt(doorway);
+            if (refreshed?.name?.endsWith('_door') && refreshed.getProperties?.().open === false) {
+                if (bot.canDigBlock(refreshed)) {
+                    console.log('[SHELTER] jammed door removed to preserve base access');
+                    await bot.dig(refreshed);
+                    await movement.sleep(250);
+                } else {
+                    console.log('[SHELTER] jammed door cannot be removed');
+                }
             }
         }
         return;
@@ -508,19 +581,21 @@ async function ensureBaseEgress(bot) {
 }
 
 async function leaveBase(bot) {
-    const remembered = memory.getBase();
+    const remembered = memory.getBase() || memory.getConstructionBase();
     if (!remembered || !bot.entity) return;
     const base = new Vec3(remembered.x, remembered.y, remembered.z);
-    if (!isInsideShelter(bot.entity.position, base)) return;
+    if (bot.entity.position.distanceTo(base) <= 5) {
+        await ensureBaseEgress(bot);
+    }
+    if (isClearOfShelter(bot.entity.position, base)) return;
 
     movement.stop(bot);
-    await ensureBaseEgress(bot);
     await ensureEntranceFloor(bot, base);
     await walkToDoorway(bot, base);
     const doorwayExit = base.offset(0, 0, -3);
     await jumpToward(bot, doorwayExit);
     await movement.sleep(300);
-    if (!isInsideShelter(bot.entity.position, base)) {
+    if (isClearOfShelter(bot.entity.position, base)) {
         await ensureEntranceFloor(bot, base);
         console.log(`[SHELTER] exited base through doorway ${doorwayExit.toString()}`);
         return;
@@ -538,7 +613,7 @@ async function leaveBase(bot) {
             await jumpToward(bot, target);
         }
         await movement.sleep(300);
-        if (!isInsideShelter(bot.entity.position, base)) {
+        if (isClearOfShelter(bot.entity.position, base)) {
             await ensureEntranceFloor(bot, base);
             console.log(`[SHELTER] exited base toward ${target.toString()}`);
             return;
@@ -558,7 +633,7 @@ async function leaveBase(bot) {
 }
 
 async function carveExitTrench(bot, base) {
-    for (let step = 0; step < 4 && isInsideShelter(bot.entity.position, base); step++) {
+    for (let step = 0; step < 4 && !isClearOfShelter(bot.entity.position, base); step++) {
         const feet = bot.entity.position.floored();
         const front = feet.offset(0, 0, -1);
         for (const position of [front, front.offset(0, 1, 0)]) {
@@ -579,7 +654,7 @@ async function carveExitTrench(bot, base) {
             movement.stop(bot);
         }
     }
-    return !isInsideShelter(bot.entity.position, base);
+    return isClearOfShelter(bot.entity.position, base);
 }
 
 async function walkToDoorway(bot, base) {
@@ -661,6 +736,12 @@ function isInsideShelter(position, base) {
         Math.abs(position.z - (base.z + 0.5)) <= 1.65 &&
         position.y >= base.y - 0.2 &&
         position.y <= base.y + 0.45;
+}
+
+function isClearOfShelter(position, base) {
+    const relativeX = Math.abs(position.x - (base.x + 0.5));
+    const relativeZ = Math.abs(position.z - (base.z + 0.5));
+    return Math.max(relativeX, relativeZ) >= 2.75;
 }
 
 async function jumpToward(bot, target) {
@@ -768,7 +849,7 @@ function isSupportedStand(bot, position) {
     return isAir(feet) && isAir(head) && floor?.boundingBox === 'block';
 }
 
-async function placeBuildBlock(bot, position, preferredNames = []) {
+async function placeBuildBlock(bot, position, preferredNames = [], base = null) {
     const current = bot.blockAt(position);
     if (!current || !isAir(current)) return false;
 
@@ -777,7 +858,41 @@ async function placeBuildBlock(bot, position, preferredNames = []) {
         .find(Boolean);
     if (!item) throw new Error('Ev yapmak icin blok yok');
 
-    return placeSpecificItem(bot, item, position);
+    if (await placeSpecificItem(bot, item, position)) return true;
+    if (!base) return false;
+    const reachedWorkPosition = await moveToShellWorkPosition(bot, position, base);
+    if (!reachedWorkPosition) return false;
+    const refreshedItem = bot.inventory.items().find(entry => entry.name === item.name);
+    if (!refreshedItem) return false;
+    return placeSpecificItem(bot, refreshedItem, position);
+}
+
+async function moveToShellWorkPosition(bot, target, base) {
+    const candidates = [];
+    for (let offset = -2; offset <= 2; offset++) {
+        candidates.push(
+            base.offset(-3, 0, offset),
+            base.offset(3, 0, offset),
+            base.offset(offset, 0, -3),
+            base.offset(offset, 0, 3)
+        );
+    }
+    const viable = candidates
+        .filter(position => isSupportedStand(bot, position))
+        .filter(position => position.offset(0.5, 1.2, 0.5).distanceTo(target.offset(0.5, 0.5, 0.5)) <= 4.35)
+        .sort((left, right) =>
+            bot.entity.position.distanceTo(left.offset(0.5, 0, 0.5)) -
+            bot.entity.position.distanceTo(right.offset(0.5, 0, 0.5))
+        );
+    for (const position of viable.slice(0, 5)) {
+        try {
+            await movement.moveNear(bot, position, 0.8, 8000);
+            if (bot.entity.position.distanceTo(position.offset(0.5, 0, 0.5)) <= 1.5) return true;
+        } catch {
+            movement.stop(bot);
+        }
+    }
+    return false;
 }
 
 async function placeSpecific(bot, itemName, position) {
@@ -797,8 +912,7 @@ async function placeSpecificItem(bot, item, position) {
         }
         await bot.equip(item, 'hand');
         await bot.lookAt(position.offset(0.5, 0.5, 0.5), true);
-        await bot.placeBlock(reference.block, reference.face);
-        await movement.sleep(600);
+        await craft.placeAtTolerant(bot, item, reference, position);
         const placed = bot.blockAt(position);
         return Boolean(placed && !isAir(placed));
     } catch (error) {
@@ -825,6 +939,22 @@ function scoreShelterShell(bot, base) {
         }
     }
     return score;
+}
+
+function missingShelterShellPositions(bot, base) {
+    const missing = [];
+    for (let y = 0; y <= HOUSE_ROOF_Y; y++) {
+        for (let dx = -HOUSE_RADIUS; dx <= HOUSE_RADIUS; dx++) {
+            for (let dz = -HOUSE_RADIUS; dz <= HOUSE_RADIUS; dz++) {
+                const edge = Math.abs(dx) === HOUSE_RADIUS || Math.abs(dz) === HOUSE_RADIUS;
+                const roof = y === HOUSE_ROOF_Y;
+                if ((!edge && !roof) || isDoorSpace(dx, y, dz)) continue;
+                const position = base.offset(dx, y, dz);
+                if (isAir(bot.blockAt(position))) missing.push(position);
+            }
+        }
+    }
+    return missing;
 }
 
 function findReference(bot, position) {
@@ -857,7 +987,7 @@ function isAir(block) {
 }
 
 function needsPitRecoveryBeforeReturn(bot, target) {
-    if (bot.entity.position.y >= target.y - 1) return false;
+    if (bot.entity.position.y >= target.y - 0.45) return false;
     return require('./survival').isInPit(bot);
 }
 

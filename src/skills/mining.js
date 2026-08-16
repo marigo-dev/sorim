@@ -83,7 +83,10 @@ async function ensureMiningWeapon(bot) {
 async function ensureFoodReserve(bot, minimum) {
     if (food.hasFoodStock(countInventory(bot), minimum)) return;
     const result = await food.maintainFoodSupply(bot, { minimum });
-    if (!food.hasFoodStock(countInventory(bot), minimum)) {
+    if (
+        !food.hasFoodStock(countInventory(bot), minimum) &&
+        !food.isTemporarilyUnavailable()
+    ) {
         throw new Error(`Mining food reserve incomplete after ${result?.status || 'food search'}`);
     }
 }
@@ -91,10 +94,8 @@ async function ensureFoodReserve(bot, minimum) {
 async function ensureMiningPickaxes(bot) {
     const pickaxes = inventoryItems(bot).filter(item => item.name.endsWith('_pickaxe'));
     const serviceable = pickaxes.filter(item => remainingDurability(bot, item) >= 32);
-    if (serviceable.length >= 2 || (
-        serviceable.some(item => item.name === 'stone_pickaxe') &&
-        pickaxes.some(item => item !== serviceable[0] && remainingDurability(bot, item) >= 16)
-    )) return;
+    if (serviceable.some(item => ['stone_pickaxe', 'iron_pickaxe', 'diamond_pickaxe', 'netherite_pickaxe']
+        .includes(item.name))) return;
 
     await ensurePickaxeMaterials(bot);
     const itemName = countItem(bot, 'cobblestone') >= 3 ? 'stone_pickaxe' : 'wooden_pickaxe';
@@ -294,7 +295,7 @@ async function ensureCharcoal(bot, amount = 1) {
     }
     await recoverPreparationSurface(bot);
     if (memory.hasBase() && !await shelter.returnToBase(bot)) {
-        throw new Error('Charcoal eritmek icin base furnace alanina donulemedi');
+        console.log('[MINING] base furnace is unreachable; using a local temporary furnace.');
     }
     let remaining = amount;
     for (const logName of LOG_ITEMS) {
@@ -303,7 +304,7 @@ async function ensureCharcoal(bot, amount = 1) {
         if (available <= 0) continue;
         const batch = Math.min(remaining, available);
         for (let index = 0; index < batch; index++) {
-            await smelting.smeltItem(bot, logName, 'charcoal', 1);
+            await smelting.smeltItem(bot, logName, 'charcoal', 1, { preferLocal: true });
         }
         remaining -= batch;
     }
@@ -795,7 +796,8 @@ function observationForKit(bot) {
     return {
         inventory: countInventory(bot),
         nearbyBlocks: furnace ? [{ name: 'furnace', distance: furnace.position.distanceTo(bot.entity.position) }] : [],
-        hasPlacedFurnace: memory.hasPlacedBlock('furnace')
+        hasPlacedFurnace: memory.hasPlacedBlock('furnace'),
+        foodUnavailable: food.isTemporarilyUnavailable()
     };
 }
 
@@ -807,7 +809,7 @@ function missingKitParts(assessment) {
     if (!assessment.weaponReady) missing.push('sword');
     if (assessment.torches < 16) missing.push(`torches ${assessment.torches}/16`);
     if (assessment.support < 16) missing.push(`support ${assessment.support}/16`);
-    if (assessment.foodCount < 16) missing.push(`food ${assessment.foodCount}/16`);
+    if (!assessment.foodReady) missing.push(`food ${assessment.foodCount}/16`);
     return missing;
 }
 

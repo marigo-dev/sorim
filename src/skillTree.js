@@ -102,12 +102,6 @@ const LEVELS = [
             observation.hasUsableChest === true || memory.hasPlacedBlock('chest')
     },
     {
-        id: 'L17_ESTABLISH_WHEAT_FARM',
-        goal: 'Establish a hydrated wheat farm near base, using natural water before iron if possible.',
-        allowedActions: ['establish_wheat_farm', 'collect_stone', 'craft', 'idle'],
-        complete: observation => observation.farmReady === true
-    },
-    {
         id: 'L11_SECURE_BED',
         goal: 'Collect three matching wool, craft a bed, and place it near the base.',
         allowedActions: ['secure_bed', 'mine', 'idle'],
@@ -150,6 +144,12 @@ const LEVELS = [
         goal: 'Craft iron pickaxe, sword, axe, and shield while preserving 8 iron ingots.',
         allowedActions: ['craft_iron_kit', 'craft', 'idle'],
         complete: observation => iron.hasIronCoreItems(observation.inventory)
+    },
+    {
+        id: 'L17_ESTABLISH_WHEAT_FARM',
+        goal: 'Establish a hydrated wheat farm near base after an iron bucket is available.',
+        allowedActions: ['establish_wheat_farm', 'collect_stone', 'craft', 'idle'],
+        complete: observation => observation.farmReady === true
     },
     {
         id: 'L18_COLLECT_ARMOR_IRON',
@@ -290,6 +290,25 @@ class SkillTree {
 
         if (level.id === 'L7_BUILD_SAFE_SHELTER') {
             if (shelter.needsOnlyUtilityRepair()) {
+                const planks = totalPlanks(inventory);
+                const utilityPlanks = shelterUtilityPlankTarget(observation, inventory);
+                if (planks < utilityPlanks) {
+                    const logName = LOG_ITEMS.find(name => (inventory[name] || 0) > 0);
+                    if (logName) {
+                        const deficit = Math.max(utilityPlanks - planks, 4);
+                        return {
+                            action: 'craft',
+                            item: plankForLog(logName),
+                            count: Math.min(deficit, (inventory[logName] || 0) * 4),
+                            reason: 'Level 7: craft missing planks for shelter utilities'
+                        };
+                    }
+                    return {
+                        action: 'mine',
+                        target: 'any_log',
+                        reason: 'Level 7: collect wood for the missing shelter utilities'
+                    };
+                }
                 return {
                     action: 'build_shelter',
                     reason: 'Level 7: repair the existing shelter utility and door'
@@ -361,7 +380,7 @@ class SkillTree {
         }
 
         if (level.id === 'L12_PREPARE_MINING_KIT') {
-            if (!food.hasFoodStock(inventory, 16)) {
+            if (!food.hasFoodStock(inventory, 16) && !food.isTemporarilyUnavailable()) {
                 return {
                     action: observation.farmReady ? 'maintain_food_supply' : 'find_food',
                     reason: observation.farmReady
@@ -685,11 +704,27 @@ function foodScore(inventory) {
     return food.foodScore(inventory);
 }
 
+function shelterUtilityPlankTarget(observation, inventory) {
+    const nearbyBlocks = observation.nearbyBlocks || [];
+    const hasNearby = name => nearbyBlocks.some(block => block.name === name);
+    const tableReady = observation.hasPlacedCraftingTable === true ||
+        memory.hasPlacedBlock('crafting_table') || hasNearby('crafting_table');
+    const chestReady = observation.hasUsableChest === true ||
+        memory.hasPlacedBlock('chest') || hasNearby('chest');
+    const doorReady = Object.entries(inventory).some(([name, count]) =>
+        name.endsWith('_door') && count > 0
+    ) || nearbyBlocks.some(block => block.name?.endsWith('_door'));
+    return (tableReady ? 0 : 4) + (chestReady ? 0 : 8) + (doorReady ? 0 : 6);
+}
+
 function hasMiningKit(observation) {
     const inventory = observation.inventory;
     if (iron.hasIronCoreKit(inventory)) return true;
     if (rawIronPotential(inventory) > 0) return true;
-    return assessMiningKit(observation).ready;
+    return assessMiningKit({
+        ...observation,
+        foodUnavailable: food.isTemporarilyUnavailable()
+    }).ready;
 }
 
 function rawIronPotential(inventory) {

@@ -16,16 +16,22 @@ const FOOD_VALUES = {
     cooked_chicken: 6,
     cooked_cod: 5,
     cooked_salmon: 6,
+    cooked_rabbit: 5,
     beef: 3,
     porkchop: 3,
     mutton: 2,
     chicken: 2,
     cod: 2,
     salmon: 2,
+    rabbit: 3,
     apple: 4,
     carrot: 3,
     potato: 1,
     baked_potato: 5,
+    melon_slice: 2,
+    sweet_berries: 2,
+    glow_berries: 2,
+    rotten_flesh: 4,
     wheat: 0
 };
 
@@ -33,7 +39,8 @@ const FOOD_MOBS = new Set([
     'cow',
     'pig',
     'sheep',
-    'chicken'
+    'chicken',
+    'rabbit'
 ]);
 
 const RAW_TO_COOKED = {
@@ -43,6 +50,7 @@ const RAW_TO_COOKED = {
     chicken: 'cooked_chicken',
     cod: 'cooked_cod',
     salmon: 'cooked_salmon',
+    rabbit: 'cooked_rabbit',
     potato: 'baked_potato'
 };
 
@@ -66,6 +74,10 @@ async function eatBestFood(bot) {
 }
 
 async function findFood(bot, options = {}) {
+    console.log(
+        `[FOOD] search start health=${bot.health.toFixed(1)} ` +
+        `unavailable=${isTemporarilyUnavailable()}`
+    );
     const actionVersion = actionControl.snapshot(bot);
     const surfaceExit = memory.getSurfaceExit();
     if (surfaceExit && bot.entity.position.y < surfaceExit.y - 0.1) {
@@ -74,6 +86,7 @@ async function findFood(bot, options = {}) {
         actionControl.assertActive(bot, actionVersion);
     }
     await shelter.leaveBase(bot);
+    console.log('[FOOD] outside shelter; scanning inventory and nearby sources');
     actionControl.assertActive(bot, actionVersion);
     await prepareCollectedFood(bot);
     actionControl.assertActive(bot, actionVersion);
@@ -89,8 +102,15 @@ async function findFood(bot, options = {}) {
         }
     }
     if (isTemporarilyUnavailable() && !hasActionableConvertibleFood(preparedInventory)) {
-        console.log('[FOOD] no nearby food source; temporarily moving to the next goal.');
-        return { status: 'unavailable' };
+        if (bot.health <= 10) {
+            foodUnavailableUntil = 0;
+            memory.setProgress('foodUnavailableUntil', 0);
+            movement.noteExplorationProgress(bot, 'food', false);
+            console.log('[FOOD] critical health overrides cooldown; scanning a new frontier.');
+        } else {
+            console.log('[FOOD] no nearby food source; temporarily moving to the next goal.');
+            return { status: 'unavailable' };
+        }
     }
 
     const crop = nearestMatureCrop(bot);
@@ -113,6 +133,36 @@ async function findFood(bot, options = {}) {
     }
 
     const animal = nearestFoodMob(bot);
+    const wildFood = nearestWildFood(bot);
+    if (!animal && wildFood) {
+        const before = foodScore(countInventory(bot));
+        console.log(`[FOOD] gathering wild ${wildFood.name} ${wildFood.position.toString()}`);
+        try {
+            await movement.moveNear(bot, wildFood.position, 2, 8000);
+        } catch (error) {
+            actionControl.assertActive(bot, actionVersion);
+            console.log(`[FOOD] wild food path blocked; trying local traversal: ${error.message}`);
+            await movement.clearNearbyFoliage(bot, wildFood.position, 2);
+            await movement.moveTowardSafely(bot, wildFood.position, 24);
+            if (bot.entity.position.distanceTo(wildFood.position) > 4) {
+                movement.noteExplorationProgress(bot, 'food', false);
+                const unavailable = await markFailedSearch(bot);
+                return { status: unavailable ? 'unavailable' : 'failed', target: wildFood.name };
+            }
+        }
+        actionControl.assertActive(bot, actionVersion);
+        if (wildFood.name === 'melon') {
+            await require('./mine').clearBlock(bot, wildFood);
+        } else {
+            await bot.lookAt(wildFood.position.offset(0.5, 0.5, 0.5), true);
+            await bot.activateBlock(wildFood);
+        }
+        await collectNearbyDrops(bot);
+        if (foodScore(countInventory(bot)) > before) {
+            failedSearches = 0;
+            return { status: 'wild_food' };
+        }
+    }
     if (!animal) {
         return searchForFood(bot, actionVersion);
     }
@@ -125,6 +175,12 @@ async function findFood(bot, options = {}) {
     } catch (error) {
         actionControl.assertActive(bot, actionVersion);
         console.log(`[FOOD] could not reach target: ${error.message}`);
+    }
+    actionControl.assertActive(bot, actionVersion);
+    if (animal.isValid === false) {
+        return searchForFood(bot, actionVersion);
+    }
+    if (animal.position.distanceTo(bot.entity.position) > 4) {
         for (let attempt = 0; attempt < 3 && animal.isValid !== false; attempt++) {
             const beforeMove = animal.position.distanceTo(bot.entity.position);
             await movement.moveTowardSafely(bot, animal.position, 18);
@@ -273,11 +329,32 @@ function bestFoodItem(bot) {
 function nearestFoodMob(bot) {
     return Object.values(bot.entities || {})
         .filter(entity => FOOD_MOBS.has(entity.name))
-        .filter(entity => entity.position && entity.position.distanceTo(bot.entity.position) <= 24)
+        .filter(entity => entity.isValid !== false)
+        .filter(entity => entity.position && entity.position.distanceTo(bot.entity.position) <= 48)
+        .filter(entity => !movement.hasWaterBarrier(bot, entity.position))
         .sort((a, b) =>
             a.position.distanceTo(bot.entity.position) -
             b.position.distanceTo(bot.entity.position)
         )[0] || null;
+}
+
+function nearestWildFood(bot) {
+    const names = new Set(['melon', 'sweet_berry_bush', 'cave_vines', 'cave_vines_plant']);
+    const block = bot.findBlock({
+        matching: candidate => names.has(candidate?.name),
+        maxDistance: 32,
+        useExtraInfo: candidate => {
+            if (movement.hasWaterBarrier(bot, candidate.position)) return false;
+            if (candidate.name === 'sweet_berry_bush') {
+                return Number(candidate.getProperties?.().age || 0) >= 2;
+            }
+            if (candidate.name.startsWith('cave_vines')) {
+                return Boolean(candidate.getProperties?.().berries);
+            }
+            return candidate.name === 'melon';
+        }
+    });
+    return block || null;
 }
 
 function nearestMatureCrop(bot) {
@@ -291,7 +368,7 @@ function nearestMatureCrop(bot) {
         .filter(block => {
             const rule = CROP_RULES[block?.name];
             const age = Number(block?.getProperties?.().age);
-            return rule && age >= rule.age;
+            return rule && age >= rule.age && !movement.hasWaterBarrier(bot, block.position);
         })
         .sort((left, right) =>
             left.position.distanceTo(bot.entity.position) -
@@ -508,7 +585,9 @@ async function searchForFood(bot, actionVersion = actionControl.snapshot(bot)) {
         return {
             status: 'found',
             moved: bot.entity.position.distanceTo(before),
-            found: true
+            found: true,
+            target: exploration.found.name || exploration.found.displayName ||
+                exploration.found.position?.toString?.() || 'unknown'
         };
     }
     const unavailable = await markFailedSearch(bot);
@@ -523,13 +602,32 @@ async function markFailedSearch(bot) {
     failedSearches++;
     console.log(`[FOOD] failed searches=${failedSearches}`);
     if (failedSearches >= 3) {
-        foodUnavailableUntil = Date.now() + 5 * 60 * 1000;
+        const cooldownMs = bot.health <= 10 ? 20 * 1000 : 5 * 60 * 1000;
+        foodUnavailableUntil = Date.now() + cooldownMs;
         memory.setProgress('foodUnavailableUntil', foodUnavailableUntil);
         failedSearches = 0;
-        console.log('[FOOD] no mob/crop found; delaying for 5 minutes.');
+        console.log(`[FOOD] no mob/crop found; delaying for ${cooldownMs / 1000} seconds.`);
     }
     await movement.sleep(500);
     return isTemporarilyUnavailable();
+}
+
+function shortenUnavailableCooldown(maxRemainingMs = 15000) {
+    const current = Math.max(
+        foodUnavailableUntil,
+        Number(memory.getProgress('foodUnavailableUntil') || 0)
+    );
+    const shortened = Math.min(current, Date.now() + maxRemainingMs);
+    if (shortened >= current) return;
+    foodUnavailableUntil = shortened;
+    memory.setProgress('foodUnavailableUntil', shortened);
+}
+
+function markWaterRouteBlocked(bot) {
+    foodUnavailableUntil = Date.now() + 20 * 1000;
+    memory.setProgress('foodUnavailableUntil', foodUnavailableUntil);
+    movement.noteExplorationProgress(bot, 'food', false);
+    console.log('[FOOD] water route rejected; advancing the food search frontier');
 }
 
 function countInventory(bot) {
@@ -572,5 +670,7 @@ module.exports = {
     hasConvertibleFood,
     hasActionableConvertibleFood,
     isTemporarilyUnavailable,
+    shortenUnavailableCooldown,
+    markWaterRouteBlocked,
     prepareCollectedFood
 };

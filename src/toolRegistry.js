@@ -140,6 +140,12 @@ const TOOL_DEFINITIONS = [
         actions: ['escape_pit']
     },
     {
+        name: 'escape_collision',
+        description: 'Immediately clear solid blocks intersecting the bot body to prevent suffocation.',
+        args: {},
+        actions: ['escape_collision']
+    },
+    {
         name: 'recover_items',
         description: 'Return to the last death position and collect dropped inventory before despawn.',
         args: {},
@@ -286,7 +292,7 @@ function toolsForLevel(level) {
     const allowed = new Set(level.allowedActions);
     return TOOL_DEFINITIONS.filter(tool =>
             tool.actions.some(action => allowed.has(action)) ||
-        ['wait_safe', 'execute_dynamic_skill', 'return_base', 'recover_items', 'escape_pit', 'escape_water', 'fight_mob', 'fight_player', 'evade_hostile', 'emergency_shelter', 'eat_food'].includes(tool.name)
+        ['wait_safe', 'execute_dynamic_skill', 'return_base', 'recover_items', 'escape_pit', 'escape_collision', 'escape_water', 'fight_mob', 'fight_player', 'evade_hostile', 'emergency_shelter', 'eat_food'].includes(tool.name)
     );
 }
 
@@ -363,6 +369,7 @@ function actionToToolCall(action) {
         evade_hostile: 'evade_hostile',
         emergency_shelter: 'emergency_shelter',
         escape_pit: 'escape_pit',
+        escape_collision: 'escape_collision',
         recover_items: 'recover_items',
         escape_water: 'escape_water',
         return_base: 'return_base',
@@ -527,6 +534,10 @@ async function executeToolCall(bot, call) {
     if (call.tool === 'escape_pit') {
         await survival.escapePit(bot);
         return;
+    }
+
+    if (call.tool === 'escape_collision') {
+        return survival.escapeSolidCollision(bot);
     }
 
     if (call.tool === 'recover_items') {

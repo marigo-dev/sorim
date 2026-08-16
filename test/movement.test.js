@@ -47,6 +47,22 @@ async function main() {
         true,
         'a blocked forward step must expose a lateral walkable detour'
     );
+    const slopeBot = {
+        entity: { position: new Vec3(0, 64, 0) },
+        blockAt(position) {
+            if (position.y === 63) return { name: 'stone', boundingBox: 'block' };
+            if (position.y >= 64 && position.x < 1) {
+                return { name: 'dirt', boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+            }
+            return { name: 'air', boundingBox: 'empty' };
+        }
+    };
+    const slopeEscapes = movement.localEscapeCandidates(slopeBot);
+    assert.ok(slopeEscapes.length > 0, 'a steep face must expose an open escape cell');
+    assert.ok(
+        slopeEscapes.every(position => position.x >= 1),
+        'dead-end recovery must choose the open side instead of pressing into the slope'
+    );
     const marker = { name: 'oak_log', position: new Vec3(12, 64, 4) };
     let scans = 0;
     let stopped = false;
@@ -123,8 +139,8 @@ async function main() {
             velocity: new Vec3(0, -0.1, 0)
         },
         blockAt: position => {
-            if (position.y === 64) return { name: 'grass_block', boundingBox: 'block' };
-            if (position.y === 63) return { name: 'stone', boundingBox: 'block' };
+            if (position.y === 64) return { name: 'grass_block', position, boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
+            if (position.y === 63) return { name: 'stone', position, boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
             return { name: 'air', boundingBox: 'empty' };
         }
     };
@@ -139,7 +155,7 @@ async function main() {
             velocity: new Vec3(0, 0, 0)
         },
         blockAt: position => {
-            if (position.y === 65) return { name: 'grass_block', boundingBox: 'block' };
+            if (position.y === 65) return { name: 'grass_block', position, boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] };
             return { name: 'air', boundingBox: 'empty' };
         }
     };

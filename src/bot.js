@@ -8,6 +8,7 @@ const { askForToolCall, askForChatReply, interpretPlayerIntent } = require('./ll
 const SkillTree = require('./skillTree');
 const movement = require('./skills/movement');
 const survival = require('./skills/survival');
+const food = require('./skills/food');
 const storage = require('./skills/storage');
 const shelter = require('./skills/shelter');
 const memory = require('./skills/memory');
@@ -46,6 +47,10 @@ memory.initialize(BOT_NAME, process.env.WORLD_MEMORY_DIR
 persistentMemory.initialize(BOT_NAME, process.env.AGENT_MEMORY_DIR
     ? { directory: process.env.AGENT_MEMORY_DIR }
     : {});
+if (process.env.RESET_DIRECTIVE_ON_START === 'true' && persistentMemory.getDirective()) {
+    persistentMemory.setDirective(null);
+    console.log('[CONTROL] cleared persisted player directive for autonomous run');
+}
 
 const bot = mineflayer.createBot({
     host: HOST,
@@ -290,8 +295,14 @@ bot.on('sorimVelocity', event => {
 });
 bot.on('death', () => {
     console.log('[DEATH] Bot died; cancelling the active action before respawn.');
-    if (lastKnownInventoryCount > 0 || !memory.getLastDeath()) {
+    bot.sorimDeathEpoch = Number(bot.sorimDeathEpoch || 0) + 1;
+    const existingDeath = memory.getLastDeath();
+    const existingRecoveryActive = existingDeath &&
+        Date.now() - existingDeath.at < 4.5 * 60 * 1000;
+    if (lastKnownInventoryCount >= 5 || (lastKnownInventoryCount > 0 && !existingRecoveryActive)) {
         memory.setLastDeath(lastPhysicsPosition || bot.entity?.position, Date.now());
+    } else if (!existingRecoveryActive) {
+        memory.clearLastDeath();
     }
     pendingSafetyCall = null;
     memory.clearSurfaceExit();
@@ -310,6 +321,7 @@ const safetyWatchdog = setInterval(() => {
     if (survival.shouldInterruptForWater(bot, activeToolName)) {
         const danger = survival.needsAir(bot) ? 'drowning' : 'entered-water';
         console.log(`[SAFETY_INTERRUPT] cancelling=${activeToolName || 'unknown'} danger=${danger}`);
+        if (activeToolName === 'find_food') food.markWaterRouteBlocked(bot);
         pendingSafetyCall = toolRegistry.normalizeToolCall({
             action: 'escape_water',
             reason: danger === 'drowning'
@@ -319,14 +331,57 @@ const safetyWatchdog = setInterval(() => {
         haltCurrentAction(danger);
         return;
     }
-    if (['fight_mob', 'fight_player', 'evade_hostile', 'escape_water'].includes(activeToolName)) return;
+    if (activeToolName !== 'escape_collision' && movement.bodyIntersectsSolid(bot)) {
+        console.log(`[SAFETY_INTERRUPT] cancelling=${activeToolName || 'unknown'} danger=body-collision`);
+        pendingSafetyCall = toolRegistry.normalizeToolCall({
+            action: 'escape_collision',
+            reason: 'Solid block intersects the body; prevent suffocation immediately'
+        });
+        haltCurrentAction('body collision');
+        return;
+    }
+    if (activeToolName === 'escape_water') {
+        if (survival.needsAir(bot)) return;
+        const waterThreat = survival.nearestHostile(bot, 4);
+        if (!survival.shouldInterruptForThreat(bot, waterThreat)) return;
+        console.log(
+            `[SAFETY_INTERRUPT] surfaced near ${waterThreat.name}; ` +
+            `switching from water escape to combat`
+        );
+        pendingSafetyCall = toolRegistry.normalizeToolCall(
+            survival.chooseThreatAction(bot, waterThreat, bot.health)
+        );
+        haltCurrentAction(`water hostile ${waterThreat.name}`);
+        return;
+    }
+    if (['fight_mob', 'fight_player', 'evade_hostile'].includes(activeToolName)) return;
     // A completed refuge is safe. An unfinished refuge is still exposed and
     // must be interruptible when a hostile approaches during digging.
     if (survival.isEmergencyShelter(bot)) return;
     const threat = survival.nearestHostile(bot, 12);
     if (!survival.shouldInterruptForThreat(bot, threat)) return;
+    if (
+        activeToolName === 'find_food' &&
+        bot.health <= 10 &&
+        threat.distance > 4 &&
+        !['skeleton', 'stray', 'witch', 'creeper'].includes(threat.name)
+    ) return;
+    if (
+        activeToolName === 'find_food' &&
+        bot.health > 14 &&
+        threat.distance > 9 &&
+        ['skeleton', 'stray'].includes(threat.name)
+    ) return;
+    if (
+        activeToolName === 'find_food' &&
+        bot.health > 10 &&
+        !bot.inventory.items().some(item => food.foodScore({ [item.name]: item.count }) > 0) &&
+        threat.distance > 7 &&
+        ['skeleton', 'stray'].includes(threat.name)
+    ) return;
     if (activeToolName === 'return_base' && threat.distance > 3.2) return;
     if (activeToolName === 'emergency_shelter' && threat.distance > 3.2) return;
+    if (activeToolName === 'escape_pit' && threat.distance > 3.2) return;
 
     console.log(
         `[SAFETY_INTERRUPT] cancelling=${activeToolName || 'unknown'} ` +
@@ -336,6 +391,10 @@ const safetyWatchdog = setInterval(() => {
         survival.chooseThreatAction(bot, threat, bot.health)
     );
     haltCurrentAction(`hostile ${threat.name}`);
+    if (threat.name === 'creeper') {
+        survival.emergencyCreeperDodge(bot, threat.entity)
+            .catch(error => console.log(`[SURVIVAL] immediate creeper dodge failed: ${error.message}`));
+    }
 }, 300);
 safetyWatchdog.unref();
 
@@ -1263,7 +1322,7 @@ function choosePassiveSafetyAction(observation, level) {
     if (!action) return null;
     const call = toolRegistry.normalizeToolCall(action);
     const passiveSafetyTools = new Set([
-        'escape_water', 'fight_mob', 'evade_hostile', 'eat_food', 'escape_pit'
+        'escape_water', 'fight_mob', 'evade_hostile', 'eat_food', 'escape_pit', 'escape_collision'
     ]);
     return passiveSafetyTools.has(call?.tool) ? action : null;
 }

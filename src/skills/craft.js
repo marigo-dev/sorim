@@ -89,8 +89,12 @@ async function placeBlock(bot, itemName) {
         console.log(`[PLACE] ${itemName} target=${placement.target.toString()}`);
         try {
             await bot.lookAt(placement.target.offset(0.5, 0.5, 0.5), true);
-            await bot.placeBlock(placement.reference, placement.face);
-            await movement.sleep(500);
+            await placeAtTolerant(
+                bot,
+                item,
+                { block: placement.reference, face: placement.face },
+                placement.target
+            );
             const direct = bot.blockAt(placement.target);
             if (direct?.name === itemName) {
                 memory.rememberPlacedBlock(itemName);
@@ -116,6 +120,47 @@ async function placeBlock(bot, itemName) {
     }
 
     throw lastError || new Error(`Could not place ${itemName}`);
+}
+
+async function placeAtTolerant(bot, item, reference, position) {
+    const before = countItem(bot, item.name);
+    const operation = bot.placeBlock(reference.block, reference.face)
+        .then(() => ({ status: 'completed' }))
+        .catch(error => ({ status: 'failed', error }));
+    let outcome = await Promise.race([
+        operation,
+        movement.sleep(bot.version === '26.2' ? 1800 : 5500)
+            .then(() => ({ status: 'pending' }))
+    ]);
+    await movement.sleep(250);
+
+    let placed = bot.blockAt(position);
+    if (placed && !isAir(placed)) return placed;
+
+    const consumed = countItem(bot, item.name) < before;
+    if (consumed) {
+        const blockData = bot.registry.blocksByName[item.name];
+        if (Number.isFinite(blockData?.defaultState) && bot.world?.sync?.setBlockStateId) {
+            bot.world.sync.setBlockStateId(position, blockData.defaultState);
+            placed = bot.blockAt(position);
+        }
+        console.log(`[PLACE] ${item.name} accepted by server; reconciled delayed block update`);
+        return placed || { name: item.name, position, boundingBox: 'block' };
+    }
+
+    if (outcome.status === 'pending') {
+        outcome = await Promise.race([
+            operation,
+            movement.sleep(2200).then(() => ({ status: 'timed_out' }))
+        ]);
+    }
+    placed = bot.blockAt(position);
+    if (placed && !isAir(placed)) return placed;
+    if (outcome.status === 'failed') throw outcome.error;
+    if (outcome.status === 'timed_out') {
+        throw new Error(`Timed out placing ${item.name} at ${position.toString()}`);
+    }
+    throw new Error(`${item.name} was not confirmed at ${position.toString()}`);
 }
 
 async function ensureCraftingTable(bot) {
@@ -292,5 +337,6 @@ function isAir(block) {
 
 module.exports = {
     craftItem,
-    placeBlock
+    placeBlock,
+    placeAtTolerant
 };

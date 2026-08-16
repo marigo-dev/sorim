@@ -79,4 +79,13 @@ assert.equal(
     true,
     'A genuinely enclosed position below base elevation must still recover before returning'
 );
+const oneBlockLowPitBot = {
+    ...lowerClosedPitBot,
+    entity: { position: new Vec3(0.5, 63, 0.5) }
+};
+assert.equal(
+    shelter.needsPitRecoveryBeforeReturn(oneBlockLowPitBot, base),
+    true,
+    'A one-block-low enclosed doorway approach must recover before attempting entry'
+);
 console.log('5x5 shelter geometry passed.');

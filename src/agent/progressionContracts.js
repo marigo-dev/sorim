@@ -17,16 +17,18 @@ function assessMiningKit(observation = {}) {
     const torches = count(inventory, 'torch');
     const support = count(inventory, 'cobblestone') + count(inventory, 'dirt');
     const foodCount = food.foodCount(inventory);
+    const foodReady = foodCount >= 16 || observation.foodUnavailable === true;
     return {
         ready: furnaceReady && fuelReady && pickaxeReady && weaponReady &&
-            torches >= 16 && support >= 16 && foodCount >= 16,
+            torches >= 16 && support >= 16 && foodReady,
         furnaceReady,
         fuelReady,
         pickaxeReady,
         weaponReady,
         torches,
         support,
-        foodCount
+        foodCount,
+        foodReady
     };
 }
 

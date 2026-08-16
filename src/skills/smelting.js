@@ -24,11 +24,13 @@ const FUEL_ITEMS = [
 ];
 const CHARCOAL_STARTER_FUEL_ITEMS = FUEL_ITEMS.filter(name => !name.endsWith('_log'));
 
-async function ensureFurnace(bot) {
-    const nearby = findNearbyBlock(bot, 'furnace', 16);
-    if (nearby) {
-        memory.rememberPlacedBlock('furnace');
-        return nearby;
+async function ensureFurnace(bot, options = {}) {
+    const reuseDistance = options.preferLocal ? 5 : 16;
+    for (const nearby of findNearbyBlocks(bot, 'furnace', reuseDistance)) {
+        if (!options.preferLocal || blockReachDistance(bot, nearby) <= 4.5) {
+            memory.rememberPlacedBlock('furnace');
+            return nearby;
+        }
     }
 
     if (countItem(bot, 'furnace') <= 0) {
@@ -72,9 +74,9 @@ async function ensureFurnace(bot) {
     throw new Error('Furnace yerlestirilemedi');
 }
 
-async function smeltItem(bot, inputName, outputName, count = 1) {
+async function smeltItem(bot, inputName, outputName, count = 1, options = {}) {
     const actionVersion = actionControl.snapshot(bot);
-    const furnaceBlock = await ensureFurnace(bot);
+    const furnaceBlock = await ensureFurnace(bot, options);
     actionControl.assertActive(bot, actionVersion);
 
     const furnace = await openFurnaceSafely(bot, furnaceBlock);
@@ -89,9 +91,10 @@ async function smeltItem(bot, inputName, outputName, count = 1) {
         await clearDifferentInput(furnace, inputName);
         await ensureInput(furnace, input, count);
         actionControl.assertActive(bot, actionVersion);
-        await ensureFuel(bot, furnace);
+        await ensureFuel(bot, furnace, count);
         await waitForOutput(bot, furnace, outputName, count, actionVersion);
     } finally {
+        await reclaimUnusedFuel(furnace);
         furnace.close();
         await movement.sleep(750);
     }
@@ -197,13 +200,29 @@ async function ensureInput(furnace, input, count) {
     await furnace.putInput(input.type, null, Math.min(input.count, needed));
 }
 
-async function ensureFuel(bot, furnace) {
+async function ensureFuel(bot, furnace, outputCount = 1) {
     if (furnace.fuelItem()) return;
     const fuel = FUEL_ITEMS
         .map(name => bot.inventory.items().find(item => item.name === name))
         .find(Boolean);
     if (!fuel) throw new Error('Eritme icin yakit yok');
-    await furnace.putFuel(fuel.type, null, fuel.count);
+    const units = requiredFuelUnits(fuel.name, outputCount);
+    await furnace.putFuel(fuel.type, null, Math.min(fuel.count, units));
+}
+
+function requiredFuelUnits(name, outputCount) {
+    if (name === 'coal' || name === 'charcoal') return Math.max(1, Math.ceil(outputCount / 8));
+    if (name.endsWith('_planks')) return Math.max(1, Math.ceil(outputCount / 1.5));
+    if (name.endsWith('_log')) return Math.max(1, Math.ceil(outputCount / 1.5));
+    return Math.max(1, Math.ceil(outputCount));
+}
+
+async function reclaimUnusedFuel(furnace) {
+    try {
+        if (furnace.fuelItem()) await furnace.takeFuel();
+    } catch (error) {
+        console.log(`[SMELT] unused fuel recovery delayed: ${error.message}`);
+    }
 }
 
 function hasSmeltingFuel(bot) {
@@ -282,9 +301,19 @@ function findPlacementReference(bot, target) {
 }
 
 function findNearbyBlock(bot, name, maxDistance) {
+    return findNearbyBlocks(bot, name, maxDistance)[0] || null;
+}
+
+function findNearbyBlocks(bot, name, maxDistance) {
     const id = bot.registry.blocksByName[name]?.id;
-    if (!id) return null;
-    return bot.findBlock({ matching: id, maxDistance });
+    if (!id) return [];
+    return bot.findBlocks({ matching: id, maxDistance, count: 16 })
+        .map(position => bot.blockAt(position))
+        .filter(Boolean)
+        .sort((left, right) =>
+            left.position.distanceTo(bot.entity.position) -
+            right.position.distanceTo(bot.entity.position)
+        );
 }
 
 function countItem(bot, itemName) {
@@ -304,5 +333,6 @@ module.exports = {
     ensureFurnace,
     smeltItem,
     hasSmeltingFuel,
-    hasCharcoalStarterFuel
+    hasCharcoalStarterFuel,
+    requiredFuelUnits
 };
