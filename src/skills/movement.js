@@ -11,7 +11,7 @@ function configure(bot) {
     movements.canDig = false;
     movements.allow1by1towers = false;
     movements.allowFreeMotion = false;
-    movements.allowParkour = false;
+    movements.allowParkour = true;
     movements.allowSprinting = false;
     movements.maxDropDown = 1;
     movements.infiniteLiquidDropdownDistance = false;
@@ -36,7 +36,7 @@ function resyncCollision(bot) {
     if (!bot.entity?.position || typeof bot.blockAt !== 'function') return false;
     const feet = bot.entity.position.floored();
     if (bodyIntersectsSolid(bot)) {
-        stop(bot);
+        softStop(bot);
         console.log(`[MOVE] body collision detected at ${feet.toString()}; controls released for physical recovery`);
         return true;
     }
@@ -58,7 +58,7 @@ async function followPlayer(bot, username, options = {}) {
     const actionVersion = Number(bot.sorimActionVersion || 0);
     const distance = bot.entity?.position?.distanceTo(player.position) ?? Infinity;
     if (distance <= range) {
-        stop(bot);
+        softStop(bot);
         await sleep(Math.min(durationMs, 600));
         return { status: 'near', username, distance };
     }
@@ -191,7 +191,7 @@ async function navigate(bot, goal, target, timeoutMs, timeoutMessage) {
             break;
         }
     }
-    stop(bot);
+    hardStop(bot);
     clearMovementIntent(bot);
     throw lastError || new Error(timeoutMessage);
 }
@@ -224,13 +224,13 @@ async function advanceLocallyToGoal(bot, goal, target, budgetMs, actionVersion) 
 
 function assertActionVersion(bot, expected) {
     if (Number(bot.sorimActionVersion || 0) !== expected) {
-        stop(bot);
+        hardStop(bot);
         throw new Error(`Action cancelled: ${bot.sorimCancelReason || 'safety override'}`);
     }
 }
 
 function beginNavigation(bot) {
-    stop(bot);
+    hardStop(bot);
     const version = (navigationVersions.get(bot) || 0) + 1;
     navigationVersions.set(bot, version);
     return version;
@@ -251,7 +251,7 @@ async function explore(bot, action = {}) {
     const abortWhen = typeof action.abortWhen === 'function' ? action.abortWhen : null;
     const initiallyVisible = stopWhen ? stopWhen() : null;
     if (initiallyVisible) {
-        stop(bot);
+        hardStop(bot);
         console.log(`[MOVE] Exploration target already visible: ${target}.`);
         return { found: initiallyVisible, reached: false, initiallyVisible: true };
     }
@@ -310,7 +310,7 @@ async function explore(bot, action = {}) {
             'Exploration timed out'
         );
         if (outcome?.type === 'found') {
-            stop(bot);
+            hardStop(bot);
             completeExplorationWaypoint(bot, target);
             console.log(`[MOVE] Exploration found ${target} while walking.`);
             return { found: outcome.value, reached: false };
@@ -318,7 +318,7 @@ async function explore(bot, action = {}) {
         completeExplorationWaypoint(bot, target);
         return { found: null, reached: true };
     } catch (error) {
-        stop(bot);
+        hardStop(bot);
         console.log(`[MOVE] Exploration could not complete: ${error.message}`);
         if (error.code === 'EXPLORATION_ABORTED') {
             return { found: null, reached: false, recovered: false, guarded: true, error };
@@ -506,13 +506,13 @@ function withExplorationGuard(bot, navigation, minimumY, maximumY, abortWhen = n
         timer = setInterval(() => {
             const y = bot.entity?.position?.y;
             if (Number.isFinite(y) && (y < minimumY || y > maximumY)) {
-                stop(bot);
+                hardStop(bot);
                 reject(new Error(`Exploration left safe Y range (${y.toFixed(1)})`));
                 return;
             }
             const abortReason = abortWhen?.();
             if (!abortReason) return;
-            stop(bot);
+            hardStop(bot);
             const error = new Error(
                 typeof abortReason === 'string' ? abortReason : 'Exploration entered a protected area'
             );
@@ -544,7 +544,7 @@ async function walkToward(bot, position, options = {}) {
     const origin = bot.entity.position.clone();
     const deadline = Date.now() + durationMs;
     let stopReason = 'duration';
-    stop(bot);
+    softStop(bot);
     markMovementIntent(bot, 'manual-walk', position);
     try {
         if (bodyIntersectsSolid(bot)) {
@@ -613,7 +613,7 @@ async function walkToward(bot, position, options = {}) {
         }
     } finally {
         clearMovementIntent(bot);
-        stop(bot);
+        softStop(bot);
     }
     if (!bot.entity.onGround) await waitForStableGround(bot, 700);
     const moved = bot.entity.position.distanceTo(origin);
@@ -657,7 +657,7 @@ async function stepUpToward(bot, position) {
     let top = contact.position.offset(0, 1, 0);
     let reachedJumpHeight = false;
     let crossedOntoStep = false;
-    stop(bot);
+    softStop(bot);
     try {
         // A player pressed directly against a full block cannot gain horizontal
         // momentum before the jump clears its top edge. Create a small run-up
@@ -665,7 +665,7 @@ async function stepUpToward(bot, position) {
         await bot.lookAt(top.offset(0.5, 0.7, 0.5), true);
         bot.setControlState('back', true);
         await sleep(140);
-        stop(bot);
+        softStop(bot);
         contact = contactObstacle(bot, position);
         if (contact.type !== 'step' || !contact.position) contact = initialContact;
         top = contact.position.offset(0, 1, 0);
@@ -690,12 +690,12 @@ async function stepUpToward(bot, position) {
             if (crossedOntoStep) break;
             await sleep(50);
         }
-        stop(bot);
+        softStop(bot);
         let stable = await waitForStableGround(bot, 1200);
         if (!stable && bot.entity.position.y >= origin.y + 0.7) {
             bot.setControlState('forward', true);
             await sleep(300);
-            stop(bot);
+            softStop(bot);
             stable = await waitForStableGround(bot, 1400);
         }
         if (!stable) {
@@ -714,7 +714,7 @@ async function stepUpToward(bot, position) {
         );
         return climbed;
     } finally {
-        stop(bot);
+        softStop(bot);
     }
 }
 
@@ -738,6 +738,7 @@ async function waitForStepLanding(bot, expectedY, timeoutMs) {
 }
 
 function synchronizeGroundedState(bot) {
+    if (bot.pathfinder?.goal) return;
     const position = bot.entity.position;
     const feet = bot.blockAt(position.floored());
     if (
@@ -843,11 +844,11 @@ async function moveTowardSafely(bot, target, maxSteps = 12, isActive = null, abo
         .slice(0, maxSteps);
     for (const next of route) {
         if (isActive && !isActive()) {
-            stop(bot);
+            softStop(bot);
             return false;
         }
         if (abortWhen?.()) {
-            stop(bot);
+            softStop(bot);
             return false;
         }
         const current = bot.entity.position.floored();
@@ -882,7 +883,7 @@ async function escapeLocalDeadEnd(bot, isActive = null, abortWhen = null) {
     const origin = bot.entity.position.clone();
     for (const candidate of localEscapeCandidates(bot)) {
         if ((isActive && !isActive()) || abortWhen?.()) {
-            stop(bot);
+            softStop(bot);
             return false;
         }
         const attemptOrigin = bot.entity.position.clone();
@@ -974,477 +975,3 @@ async function centerForLocalRoute(bot) {
     const center = cell.offset(0.5, 0, 0.5);
     const offset = horizontalDistance(bot.entity.position, center);
     if (offset < 0.16 && !bodyIntersectsSolid(bot)) return;
-
-    const feet = bot.blockAt(cell);
-    const head = bot.blockAt(cell.offset(0, 1, 0));
-    const floor = bot.blockAt(cell.offset(0, -1, 0));
-    if (!isPassable(feet) || !isPassable(head) || !isSolid(floor)) return;
-
-    const before = bot.entity.position.clone();
-    await walkToward(bot, center, { durationMs: 650, arrivalRange: 0.12 });
-    if (horizontalDistance(before, bot.entity.position) >= 0.12) {
-        console.log(`[MOVE] centered local route origin ${cell.toString()}`);
-    }
-}
-
-async function descendFromCanopy(bot, maxSteps = 28, isActive = null) {
-    const origin = bot.entity.position.floored();
-    const support = bot.blockAt(origin.offset(0, -1, 0));
-    const canopySupport = support?.name?.endsWith('_leaves') ||
-        support?.name?.endsWith('_log') || support?.name?.endsWith('_wood');
-    if (!canopySupport) return false;
-
-    const route = (await findCanopyExitRoute(bot, origin, 12, 300)).slice(0, maxSteps);
-    if (route.length === 0) {
-        console.log(`[MOVE] no safe canopy descent found support=${support.name}`);
-        return carveLeafDescent(bot, origin, isActive);
-    }
-    console.log(`[MOVE] canopy descent route steps=${route.length}`);
-    for (const next of route) {
-        if (isActive && !isActive()) {
-            stop(bot);
-            return false;
-        }
-        const current = bot.entity.position.floored();
-        const moved = next.y > current.y
-            ? await stepUpToward(bot, next)
-            : await walkToward(bot, next, { durationMs: 1200 });
-        if (!moved) break;
-        const floor = bot.blockAt(bot.entity.position.floored().offset(0, -1, 0));
-        if (floor?.boundingBox === 'block' && !floor.name.endsWith('_leaves')) {
-            console.log(`[MOVE] descended from canopy to ${bot.entity.position.floored().toString()}`);
-            return true;
-        }
-    }
-    return false;
-}
-
-async function carveLeafDescent(bot, origin, isActive) {
-    const landing = findNonLeafLanding(bot, origin, 8);
-    if (!landing) return false;
-    console.log(`[MOVE] controlled leaf descent landingY=${landing.y}`);
-    for (let layer = 0; layer < 8 && bot.entity.position.y > landing.y + 1.1; layer++) {
-        if (isActive && !isActive()) return false;
-        const feet = bot.entity.position.floored();
-        const support = bot.blockAt(feet.offset(0, -1, 0));
-        if (!support?.name?.endsWith('_leaves') || !bot.canDigBlock?.(support)) break;
-        await bot.lookAt(support.position.offset(0.5, 0.5, 0.5), true);
-        await withTimeout(bot.dig(support), 8000, 'Timed out opening canopy descent');
-        const beforeY = bot.entity.position.y;
-        const deadline = Date.now() + 4500;
-        while (Date.now() < deadline && bot.entity.position.y >= beforeY - 0.7) {
-            await sleep(50);
-        }
-        while (Date.now() < deadline && !bot.entity.onGround) await sleep(50);
-        await sleep(200);
-    }
-    const floor = bot.blockAt(bot.entity.position.floored().offset(0, -1, 0));
-    const descended = bot.entity.position.y <= origin.y - 1 &&
-        floor?.boundingBox === 'block' && !floor.name.endsWith('_leaves');
-    if (descended) console.log(`[MOVE] descended through canopy to ${bot.entity.position.floored().toString()}`);
-    return descended;
-}
-
-function findNonLeafLanding(bot, origin, maxDepth) {
-    for (let depth = 2; depth <= maxDepth; depth++) {
-        const block = bot.blockAt(origin.offset(0, -depth, 0));
-        if (!block || ['water', 'lava', 'powder_snow'].includes(block.name)) return null;
-        if (block.boundingBox !== 'block' || block.name.endsWith('_leaves')) continue;
-        return block.position;
-    }
-    return null;
-}
-
-async function findCanopyExitRoute(bot, origin, radius, maxNodes) {
-    const originKey = origin.toString();
-    const queue = [origin];
-    const parents = new Map([[originKey, null]]);
-    const positions = new Map([[originKey, origin]]);
-    let cursor = 0;
-    let exit = null;
-
-    while (cursor < queue.length && positions.size < maxNodes) {
-        if (cursor > 0 && cursor % 50 === 0) await new Promise(resolve => setImmediate(resolve));
-        const current = queue[cursor++];
-        const floor = bot.blockAt(current.offset(0, -1, 0));
-        if (
-            current.y <= origin.y - 2 &&
-            floor?.boundingBox === 'block' &&
-            !floor.name.endsWith('_leaves')
-        ) {
-            exit = current;
-            break;
-        }
-        for (const next of localWalkableSteps(bot, current)) {
-            if (horizontalDistance(next, origin) > radius) continue;
-            if (Math.abs(next.y - origin.y) > 12) continue;
-            const key = next.toString();
-            if (parents.has(key)) continue;
-            parents.set(key, current.toString());
-            positions.set(key, next);
-            queue.push(next);
-        }
-    }
-    if (!exit) return [];
-    const route = [];
-    let key = exit.toString();
-    while (key && key !== originKey) {
-        route.push(positions.get(key));
-        key = parents.get(key);
-    }
-    return route.reverse();
-}
-
-function findLocalRoute(bot, origin, target, radius, maxNodes) {
-    const originKey = origin.toString();
-    const queue = [origin];
-    const parents = new Map([[originKey, null]]);
-    const positions = new Map([[originKey, origin]]);
-    let cursor = 0;
-    let best = origin;
-
-    while (cursor < queue.length && positions.size < maxNodes) {
-        const current = queue[cursor++];
-        if (localTargetDistance(current, target) < localTargetDistance(best, target)) best = current;
-        if (isNearLocalTarget(current, target)) {
-            best = current;
-            break;
-        }
-        for (const next of localWalkableSteps(bot, current)) {
-            if (horizontalDistance(next, origin) > radius) continue;
-            if (Math.abs(next.y - origin.y) > 8) continue;
-            const key = next.toString();
-            if (parents.has(key)) continue;
-            parents.set(key, current.toString());
-            positions.set(key, next);
-            queue.push(next);
-        }
-    }
-
-    if (best.equals(origin)) return [];
-    const route = [];
-    let key = best.toString();
-    while (key && key !== originKey) {
-        route.push(positions.get(key));
-        key = parents.get(key);
-    }
-    route.reverse();
-    console.log(
-        `[MOVE] local route nodes=${positions.size} steps=${route.length} ` +
-        `distance=${localTargetDistance(origin, target).toFixed(1)}->${localTargetDistance(best, target).toFixed(1)}`
-    );
-    return route;
-}
-
-function localTargetDistance(left, right) {
-    return horizontalDistance(left, right) + Math.abs(left.y - right.y) * 1.5;
-}
-
-function isNearLocalTarget(left, right) {
-    return horizontalDistance(left, right) <= 2 && Math.abs(left.y - right.y) <= 1.5;
-}
-
-async function clearStepToward(bot, target, maxReach = 3, canClear = () => true) {
-    const origin = bot.entity.position.floored();
-    const deltaX = target.x - origin.x;
-    const deltaZ = target.z - origin.z;
-    const dx = Math.abs(deltaX) >= Math.abs(deltaZ) ? Math.sign(deltaX) : 0;
-    const dz = dx === 0 ? Math.sign(deltaZ) : 0;
-    if (dx === 0 && dz === 0) return false;
-
-    for (let distance = 1; distance <= maxReach; distance++) {
-        const feet = origin.offset(dx * distance, 0, dz * distance);
-        const floor = bot.blockAt(feet.offset(0, -1, 0));
-        const obstacles = [bot.blockAt(feet), bot.blockAt(feet.offset(0, 1, 0))]
-            .filter(block => block?.boundingBox === 'block');
-        if (obstacles.length === 0) continue;
-        if (!isSolid(floor)) return false;
-        if (obstacles.some(block => ['bedrock', 'barrier'].includes(block.name))) return false;
-        if (obstacles.some(block => !canClear(block))) return false;
-
-        let dug = 0;
-        for (const block of obstacles) {
-            if (!bot.canDigBlock?.(block)) return false;
-            await bot.lookAt(block.position.offset(0.5, 0.5, 0.5), true);
-            await withTimeout(bot.dig(block), 12000, `Timed out clearing ${block.name}`);
-            dug++;
-            await sleep(150);
-        }
-        if (dug > 0) {
-            console.log(`[MOVE] opened traversal step ${feet.toString()} blocks=${dug}`);
-            return feet;
-        }
-    }
-    return false;
-}
-
-async function clearNearbyFoliage(bot, target, maxBlocks = 2) {
-    const origin = bot.entity.position.floored();
-    const towardX = Math.sign(target.x - origin.x);
-    const towardZ = Math.sign(target.z - origin.z);
-    const candidates = [];
-    for (let dx = -1; dx <= 1; dx++) {
-        for (let dz = -1; dz <= 1; dz++) {
-            if (dx === 0 && dz === 0) continue;
-            for (let dy = 0; dy <= 1; dy++) {
-                const block = bot.blockAt(origin.offset(dx, dy, dz));
-                if (!block?.name?.endsWith('_leaves')) continue;
-                candidates.push({ block, score: dx * towardX + dz * towardZ });
-            }
-        }
-    }
-    let cleared = 0;
-    for (const { block } of candidates.sort((a, b) => b.score - a.score)) {
-        if (cleared >= maxBlocks || !bot.canDigBlock?.(block)) break;
-        await bot.lookAt(block.position.offset(0.5, 0.5, 0.5), true);
-        await withTimeout(bot.dig(block), 8000, `Timed out clearing ${block.name}`);
-        cleared++;
-        await sleep(120);
-    }
-    if (cleared > 0) console.log(`[MOVE] cleared adjacent foliage blocks=${cleared}`);
-    return cleared > 0;
-}
-
-function localWalkableSteps(bot, origin) {
-    const directions = [
-        [1, 0], [-1, 0], [0, 1], [0, -1],
-        [1, 1], [1, -1], [-1, 1], [-1, -1]
-    ];
-    const candidates = [];
-    for (const [dx, dz] of directions) {
-        for (const dy of [0, 1, -1]) {
-            const position = origin.offset(dx, dy, dz);
-            const feet = bot.blockAt(position);
-            const head = bot.blockAt(position.offset(0, 1, 0));
-            const floor = bot.blockAt(position.offset(0, -1, 0));
-            if (!isPassable(feet) || !isPassable(head) || !isSolid(floor)) continue;
-            if (dx !== 0 && dz !== 0 && !hasDiagonalClearance(bot, origin, dx, dz, dy)) {
-                continue;
-            }
-            candidates.push(position);
-            break;
-        }
-    }
-    return candidates;
-}
-
-function hasDiagonalClearance(bot, origin, dx, dz, dy) {
-    return [origin.offset(dx, dy, 0), origin.offset(0, dy, dz)].every(position =>
-        isPassable(bot.blockAt(position)) &&
-        isPassable(bot.blockAt(position.offset(0, 1, 0)))
-    );
-}
-
-function horizontalDistance(left, right) {
-    return Math.hypot(left.x - right.x, left.z - right.z);
-}
-
-function isUnsafeFrontDrop(bot, target = null) {
-    const direction = horizontalUnitToward(bot, target);
-    if (!direction) return false;
-    const centerX = bot.entity.position.x + direction.x * 0.75;
-    const centerZ = bot.entity.position.z + direction.z * 0.75;
-    const y = bot.entity.position.floored().y;
-    for (const [x, z] of collisionCells(centerX, centerZ)) {
-        const feet = new Vec3(x, y, z);
-        if (isSolid(bot.blockAt(feet))) return false;
-        for (let depth = 1; depth <= 2; depth++) {
-            if (isSolid(bot.blockAt(feet.offset(0, -depth, 0)))) return false;
-        }
-    }
-    return true;
-}
-
-function bodyIntersectsSolid(bot) {
-    return bodyCollisionBlocks(bot).length > 0;
-}
-
-function bodyCollisionBlocks(bot) {
-    if (!bot.entity?.position || typeof bot.blockAt !== 'function') return [];
-    const position = bot.entity.position;
-    const y = position.floored().y;
-    const blocks = [];
-    const seen = new Set();
-    for (const [x, z] of collisionCells(position.x, position.z)) {
-        for (const blockY of [y + 1, y]) {
-            const blockPosition = new Vec3(x, blockY, z);
-            const block = bot.blockAt(blockPosition);
-            if (!blockIntersectsBody(block, position, blockPosition)) continue;
-            const key = `${x},${blockY},${z}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            blocks.push(block);
-        }
-    }
-    return blocks;
-}
-
-function blockIntersectsBody(block, bodyPosition, fallbackPosition) {
-    if (!block || block.boundingBox !== 'block' || !Array.isArray(block.shapes)) return false;
-    const position = block.position || fallbackPosition;
-    const body = {
-        minX: bodyPosition.x - 0.3,
-        maxX: bodyPosition.x + 0.3,
-        minY: bodyPosition.y + 0.001,
-        maxY: bodyPosition.y + 1.799,
-        minZ: bodyPosition.z - 0.3,
-        maxZ: bodyPosition.z + 0.3
-    };
-    return block.shapes.some(shape => {
-        if (!Array.isArray(shape) || shape.length < 6) return false;
-        const minX = position.x + Number(shape[0]);
-        const minY = position.y + Number(shape[1]);
-        const minZ = position.z + Number(shape[2]);
-        const maxX = position.x + Number(shape[3]);
-        const maxY = position.y + Number(shape[4]);
-        const maxZ = position.z + Number(shape[5]);
-        return maxX > body.minX && minX < body.maxX &&
-            maxY > body.minY && minY < body.maxY &&
-            maxZ > body.minZ && minZ < body.maxZ;
-    });
-}
-
-function hasGroundSupport(bot) {
-    const position = bot.entity.position;
-    const y = Math.floor(position.y - 0.05);
-    return collisionCells(position.x, position.z).some(([x, z]) =>
-        isSolid(bot.blockAt(new Vec3(x, y, z)))
-    );
-}
-
-function isSuspendedAgainstWall(bot) {
-    const velocityY = Math.abs(bot.entity.velocity?.y || 0);
-    return !bot.entity.onGround && velocityY < 0.03 &&
-        !hasGroundSupport(bot) && bodyIntersectsSolid(bot);
-}
-
-async function releaseWallContact(bot, target) {
-    stop(bot);
-    try {
-        await bot.lookAt(targetAimPoint(target).offset(0, 0.5, 0), true);
-        bot.setControlState('back', true);
-        bot.setControlState('sprint', false);
-        bot.setControlState('jump', false);
-        await sleep(300);
-    } finally {
-        stop(bot);
-    }
-    await sleep(200);
-}
-
-function isSolid(block) {
-    return block && !['air', 'cave_air', 'void_air'].includes(block.name) && block.boundingBox === 'block';
-}
-
-function isPassable(block) {
-    if (!block || ['water', 'lava', 'powder_snow', 'fire', 'soul_fire'].includes(block.name)) {
-        return false;
-    }
-    if (block.name.endsWith('_leaves')) return false;
-    if (block.boundingBox !== 'block') return true;
-    if (!Array.isArray(block.shapes) || block.shapes.length === 0) return false;
-    const maximumHeight = Math.max(...block.shapes.map(shape => Number(shape[4] || 0)));
-    return maximumHeight <= 0.25;
-}
-
-function stop(bot) {
-    navigationVersions.set(bot, (navigationVersions.get(bot) || 0) + 1);
-    bot.pathfinder?.setGoal?.(null);
-    bot.clearControlStates?.();
-}
-
-function markMovementIntent(bot, kind, target) {
-    bot.sorimMovementIntent = {
-        kind,
-        target: target ? { x: target.x, y: target.y, z: target.z } : null,
-        at: Date.now()
-    };
-}
-
-function clearMovementIntent(bot) {
-    bot.sorimMovementIntent = null;
-}
-
-function withTimeout(promise, timeoutMs, message) {
-    let timer = null;
-    const timeout = new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-    });
-    return Promise.race([promise, timeout])
-        .finally(() => clearTimeout(timer));
-}
-
-function withNavigationWatchdog(bot, promise, timeoutMs, message, stallMs = 1800) {
-    let timeout = null;
-    let monitor = null;
-    let anchor = bot.entity.position.clone();
-    let lastProgressAt = Date.now();
-    const deadline = new Promise((_, reject) => {
-        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
-        monitor = setInterval(() => {
-            if (!bot.entity?.position) {
-                reject(new Error('Pathfinder lost the controlled entity'));
-                return;
-            }
-            const commanded = ['forward', 'back', 'left', 'right', 'jump']
-                .some(control => bot.controlState?.[control]);
-            if (!commanded) {
-                anchor = bot.entity.position.clone();
-                lastProgressAt = Date.now();
-                return;
-            }
-            if (horizontalDistance(anchor, bot.entity.position) >= 0.15) {
-                anchor = bot.entity.position.clone();
-                lastProgressAt = Date.now();
-                return;
-            }
-            if (Date.now() - lastProgressAt < stallMs) return;
-            const error = new Error('Pathfinder commanded movement without progress');
-            error.code = 'PATHFINDER_STALLED';
-            reject(error);
-        }, 100);
-    });
-    return Promise.race([promise, deadline])
-        .finally(() => {
-            clearTimeout(timeout);
-            clearInterval(monitor);
-        });
-}
-
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-module.exports = {
-    configure,
-    resyncCollision,
-    bodyIntersectsSolid,
-    bodyCollisionBlocks,
-    moveNear,
-    followPlayer,
-    moveBlock,
-    moveNearXZ,
-    moveOutOfWater,
-    centerInCurrentCell,
-    explore,
-    manualNudge,
-    moveTowardDirectly,
-    walkToward,
-    stepUpToward,
-    frontObstacle,
-    moveTowardSafely,
-    escapeLocalDeadEnd,
-    clearStepToward,
-    clearNearbyFoliage,
-    descendFromCanopy,
-    selectExplorationWaypoint,
-    completeExplorationWaypoint,
-    noteExplorationProgress,
-    hasWaterBarrier,
-    squareSpiralCell,
-    localDetourCandidates,
-    localEscapeCandidates,
-    stop,
-    sleep,
-    withTimeout
-};
