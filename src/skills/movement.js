@@ -2,6 +2,18 @@ const { goals, Movements } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
 const memory = require('./memory');
 
+function bodyIntersectsSolid(bot) {
+    if (!bot.entity?.position || typeof bot.blockAt !== 'function') return false;
+    const position = bot.entity.position;
+    const feet = position.floored();
+    const samples = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]];
+    for (const [dx, dz] of samples) {
+        const block = bot.blockAt(feet.offset(dx, 0, dz));
+        if (isSolid(block)) return true;
+    }
+    return false;
+}
+
 const explorationSessions = new WeakMap();
 const navigationVersions = new WeakMap();
 const groundedSynchronizers = new WeakMap();
