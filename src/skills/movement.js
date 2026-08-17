@@ -987,3 +987,4 @@ async function centerForLocalRoute(bot) {
     const center = cell.offset(0.5, 0, 0.5);
     const offset = horizontalDistance(bot.entity.position, center);
     if (offset < 0.16 && !bodyIntersectsSolid(bot)) return;
+}
