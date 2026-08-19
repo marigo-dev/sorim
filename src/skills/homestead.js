@@ -272,8 +272,9 @@ async function huntSheep(bot, sheep) {
             const before = bot.entity.position.clone();
             try {
                 await movement.moveNear(bot, live.position, 1, 5000);
-            } catch {
-                await nudgeToward(bot, live.position);
+            } catch (error) {
+                console.log(`[HOMESTEAD] sheep path failed: ${error.message}`);
+                stalled++;
             }
             if (bot.entity.position.distanceTo(before) < 0.4) stalled++;
             else stalled = 0;
@@ -602,8 +603,8 @@ async function collectNearbyDrops(bot, attempts, fallbackPosition = null) {
     if (fallbackPosition) {
         try {
             await movement.moveNear(bot, fallbackPosition, 1, 5000);
-        } catch {
-            await nudgeToward(bot, fallbackPosition);
+        } catch (error) {
+            console.log(`[HOMESTEAD] fallback pickup path failed: ${error.message}`);
         }
         await movement.sleep(500);
     }
@@ -622,8 +623,9 @@ async function collectNearbyDrops(bot, attempts, fallbackPosition = null) {
         }
         try {
             await movement.moveNear(bot, drop.position, 1, 4000);
-        } catch {
-            await nudgeToward(bot, drop.position);
+        } catch (error) {
+            console.log(`[HOMESTEAD] drop pickup path failed: ${error.message}`);
+            break;
         }
         await movement.sleep(250);
     }
@@ -640,21 +642,10 @@ async function sweepDropArea(bot, center) {
     for (const stand of stands) {
         try {
             await movement.moveNear(bot, stand, 1, 2500);
-        } catch {
-            await nudgeToward(bot, stand);
+        } catch (error) {
+            console.log(`[HOMESTEAD] sweep path failed at ${stand.toString()}: ${error.message}`);
         }
         await movement.sleep(250);
-    }
-}
-
-async function nudgeToward(bot, position) {
-    try {
-        await bot.lookAt(position.offset(0, 0.5, 0), true);
-        bot.setControlState('forward', true);
-        bot.setControlState('jump', true);
-        await movement.sleep(700);
-    } finally {
-        movement.stop(bot);
     }
 }
 

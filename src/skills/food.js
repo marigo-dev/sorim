@@ -411,7 +411,6 @@ async function moveToCropStand(bot, cropPosition) {
             return;
         } catch (error) {
             lastError = error;
-            if (await walkToCropStand(bot, stand)) return;
         }
     }
     throw lastError || new Error(`No crop stand near ${cropPosition.toString()}`);
@@ -424,23 +423,6 @@ function cropReachDistance(bot, position) {
 
 function cropStandPenalty(bot, position) {
     return bot.blockAt(position.offset(0, -1, 0))?.name === 'farmland' ? 1 : 0;
-}
-
-async function walkToCropStand(bot, stand) {
-    const deadline = Date.now() + 6500;
-    try {
-        while (Date.now() < deadline && bot.entity.position.distanceTo(stand) > 1.6) {
-            await bot.lookAt(stand.offset(0.5, 0.3, 0.5), true);
-            bot.setControlState('forward', true);
-            bot.setControlState('sprint', true);
-            bot.setControlState('jump', true);
-            await movement.sleep(250);
-        }
-    } finally {
-        movement.stop(bot);
-    }
-    console.log(`[FOOD] manual approach ended at=${bot.entity.position.floored().toString()} target=${stand.toString()}`);
-    return bot.entity.position.distanceTo(stand) <= 1.9;
 }
 
 async function digCropPacket(bot, block) {
@@ -549,8 +531,9 @@ async function collectNearbyDrops(bot) {
         }
         try {
             await movement.moveNear(bot, drop.position, 1, 4000);
-        } catch {
-            await movement.manualNudge?.(bot, 800);
+        } catch (error) {
+            console.log(`[FOOD] drop pickup path failed: ${error.message}`);
+            break;
         }
     }
 }
@@ -630,18 +613,6 @@ function countItem(bot, itemName) {
     return bot.inventory.items()
         .filter(item => item.name === itemName)
         .reduce((total, item) => total + item.count, 0);
-}
-
-async function nudgeToward(bot, position) {
-    try {
-        await bot.lookAt(position.offset(0, 0.5, 0), true);
-        bot.setControlState('forward', true);
-        bot.setControlState('sprint', true);
-        bot.setControlState('jump', true);
-        await movement.sleep(900);
-    } finally {
-        bot.clearControlStates();
-    }
 }
 
 function isAir(block) {

@@ -83,20 +83,8 @@ async function buildSafeShelter(bot) {
                 origin = bot.entity.position.floored();
                 pendingShelterSite = null;
             } catch (error) {
-                console.log(`[SHELTER] site approach failed, trying local traversal: ${error.message}`);
-                await clearFoliageTowardSite(bot, site.position);
-                await movement.moveTowardSafely(bot, site.position, 20);
-                const horizontal = Math.hypot(
-                    bot.entity.position.x - (site.position.x + 0.5),
-                    bot.entity.position.z - (site.position.z + 0.5)
-                );
-                if (horizontal > 2.5 || Math.abs(bot.entity.position.y - site.position.y) > 1.2) {
-                    pendingShelterSite = null;
-                    throw new Error('Could not reach the selected flat shelter site');
-                }
-                selectedBase = site.position;
-                origin = bot.entity.position.floored();
                 pendingShelterSite = null;
+                throw new Error(`Could not reach the selected flat shelter site: ${error.message}`);
             }
         }
         if (!selectedBase) {
@@ -115,16 +103,6 @@ async function buildSafeShelter(bot) {
             await movement.moveNear(bot, base, 3, 30000);
         } catch (error) {
             movement.stop(bot);
-            for (let attempt = 0; attempt < 3; attempt++) {
-                await movement.escapeLocalDeadEnd(bot, () => actionControl.snapshot(bot) === actionVersion);
-                await movement.moveTowardSafely(bot, base, 24);
-                if (bot.entity.position.distanceTo(base.offset(0.5, 0, 0.5)) <= 5) break;
-                try {
-                    await movement.moveNearXZ(bot, base, 4, 15000);
-                } catch {
-                    movement.stop(bot);
-                }
-            }
             if (bot.entity.position.distanceTo(base.offset(0.5, 0, 0.5)) > 5) {
                 throw new Error(`Could not return to shelter construction: ${error.message}`);
             }
@@ -261,26 +239,7 @@ async function returnToBase(bot, actionVersion = actionControl.snapshot(bot)) {
             actionControl.assertActive(bot, actionVersion);
         } catch (error) {
             actionControl.assertActive(bot, actionVersion);
-            console.log(`[SHELTER] base path fallback: ${error.message}`);
-            for (let attempt = 0; attempt < 10 && bot.entity.position.distanceTo(target) > 5; attempt++) {
-                const before = horizontalDistance(bot.entity.position, approachCenter);
-                await movement.moveTowardSafely(bot, approach, 16);
-                actionControl.assertActive(bot, actionVersion);
-                const after = horizontalDistance(bot.entity.position, approachCenter);
-                if (after >= before - 0.5) {
-                    await movement.clearNearbyFoliage(bot, approach, 2);
-                    await movement.clearStepToward(
-                        bot,
-                        approach,
-                        3,
-                        block => isTraversalFoliage(block)
-                    );
-                }
-            }
-            if (bot.entity.position.distanceTo(target) > 5) {
-                await walkTowardBase(bot, approach, target);
-                actionControl.assertActive(bot, actionVersion);
-            }
+            throw new Error(`Pathfinder could not reach shelter approach: ${error.message}`);
         }
     }
     if (bot.entity.position.distanceTo(target) <= 7) {
@@ -333,15 +292,10 @@ async function descendFromShelterWall(bot, base) {
     else outwardZ = Math.sign(relativeZ) * 4;
     const frontYard = base.offset(outwardX + 0.5, 0, outwardZ - 4.5);
     try {
-        await bot.lookAt(frontYard.offset(0, 1, 0), true);
-        bot.setControlState('forward', true);
-        bot.setControlState('sprint', true);
-        bot.setControlState('jump', false);
-        await movement.sleep(1800);
-        await movement.sleep(500);
+        await movement.moveNear(bot, frontYard, 1, 7000);
         console.log(`[SHELTER] descended from wall toward ${frontYard.floored().toString()}`);
-    } finally {
-        movement.stop(bot);
+    } catch (error) {
+        console.log(`[SHELTER] wall descent path unavailable: ${error.message}`);
     }
 }
 
@@ -394,7 +348,7 @@ async function enterShelter(bot, base, actionVersion = actionControl.snapshot(bo
     actionControl.assertActive(bot, actionVersion);
     const outside = base.offset(0, 0, -3);
     const staging = base.offset(0.5, 0, -3.5);
-    await movement.walkToward(bot, staging, { durationMs: 1800 });
+    await movement.moveNear(bot, staging, 1, 6000);
     await climbDoorApproach(bot, outside, base.y);
     actionControl.assertActive(bot, actionVersion);
     const releasedCorner = await releaseDoorCorner(bot, base);
@@ -403,7 +357,7 @@ async function enterShelter(bot, base, actionVersion = actionControl.snapshot(bo
         ? [base.offset(side * 2, 0, -1), base.offset(side, 0, -1), base]
         : [base.offset(0, 0, -1), base];
     for (const inside of insideTargets) {
-        await movement.walkToward(bot, inside, { durationMs: 2200 });
+        await movement.moveNear(bot, inside, 1, 6000);
         actionControl.assertActive(bot, actionVersion);
         if (isInsideShelter(bot.entity.position, base)) {
             const repairPositions = side !== 0
@@ -414,21 +368,10 @@ async function enterShelter(bot, base, actionVersion = actionControl.snapshot(bo
         }
     }
     const center = base.offset(0.5, 0, 0.5);
-    const deadline = Date.now() + 3000;
     try {
-        await bot.lookAt(center.offset(0, 1, 0), true);
-        bot.setControlState('forward', true);
-        while (Date.now() < deadline && !isInsideShelter(bot.entity.position, base)) {
-            syncGroundedPhysics(bot);
-            const feet = bot.entity.position.floored();
-            const ahead = movement.frontObstacle(bot, center);
-            bot.setControlState('jump', ahead === 'step' || bot.entity.position.y < base.y - 0.1);
-            await movement.sleep(75);
-            actionControl.assertActive(bot, actionVersion);
-            if (bot.entity.position.floored().equals(feet) && Date.now() + 150 >= deadline) break;
-        }
-    } finally {
-        movement.stop(bot);
+        await movement.moveNear(bot, center, 1, 5000);
+    } catch (error) {
+        console.log(`[SHELTER] final entrance path failed: ${error.message}`);
     }
     if (isInsideShelter(bot.entity.position, base)) return true;
     return false;
@@ -479,21 +422,10 @@ async function restoreDoorCorner(bot, positions) {
 
 async function climbDoorApproach(bot, outside, floorY) {
     const center = outside.offset(0.5, 0, 0.5);
-    const deadline = Date.now() + 4200;
     try {
-        await bot.lookAt(center.offset(0, 1.1, 0), true);
-        bot.setControlState('forward', true);
-        bot.setControlState('sprint', true);
-        while (Date.now() < deadline) {
-            const close = horizontalDistance(bot.entity.position, center) <= 1.25;
-            const onThreshold = bot.entity.position.y >= floorY - 0.1;
-            if (close && onThreshold) return true;
-            syncGroundedPhysics(bot);
-            bot.setControlState('jump', bot.entity.position.y < floorY - 0.1);
-            await movement.sleep(75);
-        }
-    } finally {
-        movement.stop(bot);
+        await movement.moveNear(bot, outside, 1, 7000);
+    } catch (error) {
+        console.log(`[SHELTER] door approach path failed: ${error.message}`);
     }
     return horizontalDistance(bot.entity.position, center) <= 1.5 &&
         bot.entity.position.y >= floorY - 0.1;
@@ -519,17 +451,10 @@ function isSupportedStand(bot, position) {
 }
 
 async function walkTowardBase(bot, target, base = target) {
-    const deadline = Date.now() + 18000;
     try {
-        while (Date.now() < deadline && bot.entity.position.distanceTo(target) > 1.5) {
-            await bot.lookAt(target.offset(0.5, 0.5, 0.5), true);
-            bot.setControlState('forward', true);
-            bot.setControlState('sprint', true);
-            bot.setControlState('jump', false);
-            await movement.sleep(300);
-        }
-    } finally {
-        movement.stop(bot);
+        await movement.moveNear(bot, target, 1, 18000);
+    } catch (error) {
+        throw new Error(`Could not return to base through Pathfinder: ${error.message}`);
     }
     if (bot.entity.position.distanceTo(base) > 5) {
         throw new Error(`Could not return to base from ${bot.entity.position.floored().toString()}`);
@@ -589,11 +514,10 @@ async function leaveBase(bot) {
     }
     if (isClearOfShelter(bot.entity.position, base)) return;
 
-    movement.stop(bot);
     await ensureEntranceFloor(bot, base);
     await walkToDoorway(bot, base);
     const doorwayExit = base.offset(0, 0, -3);
-    await jumpToward(bot, doorwayExit);
+    await movement.moveNear(bot, doorwayExit, 1, 6000);
     await movement.sleep(300);
     if (isClearOfShelter(bot.entity.position, base)) {
         await ensureEntranceFloor(bot, base);
@@ -609,8 +533,8 @@ async function leaveBase(bot) {
     for (const target of candidates) {
         try {
             await movement.moveBlock(bot, target, 5000);
-        } catch {
-            await jumpToward(bot, target);
+        } catch (error) {
+            console.log(`[SHELTER] exterior path rejected ${target.toString()}: ${error.message}`);
         }
         await movement.sleep(300);
         if (isClearOfShelter(bot.entity.position, base)) {
@@ -644,30 +568,14 @@ async function carveExitTrench(bot, base) {
             await bot.dig(block);
             await movement.sleep(200);
         }
-        syncGroundedPhysics(bot);
-        try {
-            await bot.lookAt(front.offset(0.5, 0.4, 0.5), true);
-            bot.setControlState('forward', true);
-            bot.setControlState('sprint', true);
-            await movement.sleep(850);
-        } finally {
-            movement.stop(bot);
-        }
+        await movement.moveNear(bot, front, 1, 5000);
     }
     return isClearOfShelter(bot.entity.position, base);
 }
 
 async function walkToDoorway(bot, base) {
     const threshold = base.offset(0, 0, -2);
-    try {
-        syncGroundedPhysics(bot);
-        await bot.lookAt(threshold.offset(0.5, 0.4, 0.5), true);
-        bot.setControlState('forward', true);
-        bot.setControlState('sprint', true);
-        await movement.sleep(1100);
-    } finally {
-        movement.stop(bot);
-    }
+    await movement.moveNear(bot, threshold, 1, 6000);
 }
 
 function syncGroundedPhysics(bot) {
@@ -742,11 +650,6 @@ function isClearOfShelter(position, base) {
     const relativeX = Math.abs(position.x - (base.x + 0.5));
     const relativeZ = Math.abs(position.z - (base.z + 0.5));
     return Math.max(relativeX, relativeZ) >= 2.75;
-}
-
-async function jumpToward(bot, target) {
-    syncGroundedPhysics(bot);
-    await movement.walkToward(bot, target, { durationMs: 1200 });
 }
 
 async function ensureDoor(bot) {
@@ -837,8 +740,8 @@ async function moveForUtilityPlacement(bot, base, utilityPosition) {
     }
     try {
         await movement.moveNear(bot, utilityPosition, 2, 8000);
-    } catch {
-        await jumpToward(bot, utilityPosition);
+    } catch (error) {
+        throw new Error(`Could not reach utility placement position: ${error.message}`);
     }
 }
 

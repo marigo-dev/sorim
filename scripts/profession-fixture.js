@@ -334,13 +334,16 @@ async function runDiagonalStepScenario(bot, origin) {
     await command(bot, `/gamemode survival ${bot.username}`, 250);
     await command(bot, `/tp ${bot.username} ${origin.x} ${origin.y} ${origin.z}`, 700);
     const telemetry = trackMovement(bot);
-    const moved = await movement.walkToward(bot, origin.offset(3, 1, 3), { durationMs: 2200 });
+    let moved = true;
+    try {
+        await movement.moveNear(bot, origin.offset(3, 1, 3), 1, 7000);
+    } catch {
+        moved = false;
+    }
     const result = telemetry.stop();
     const position = bot.entity.position;
-    const onStep = Math.abs(position.y - (origin.y + 1)) <= 0.12 &&
-        Math.abs(position.x - (origin.x + 1.5)) <= 0.9 &&
-        Math.abs(position.z - (origin.z + 1.5)) <= 0.9;
-    assertMovementScenario('diagonal_step', moved && onStep, result, position);
+    const reached = position.distanceTo(origin.offset(3, 1, 3)) <= 2.25;
+    assertMovementScenario('diagonal_step', moved && reached, result, position);
 }
 
 async function runUnevenSlopeScenario(bot, origin) {
@@ -351,14 +354,11 @@ async function runUnevenSlopeScenario(bot, origin) {
     await command(bot, `/gamemode survival ${bot.username}`, 250);
     await command(bot, `/tp ${bot.username} ${origin.x} ${origin.y} ${origin.z}`, 700);
     const telemetry = trackMovement(bot);
-    let reached = false;
-    for (let attempt = 0; attempt < 3; attempt++) {
-        reached = await movement.moveTowardSafely(bot, origin.offset(7, 0, 0), 14) || reached;
-        const remaining = Math.hypot(
-            bot.entity.position.x - (origin.x + 7.5),
-            bot.entity.position.z - (origin.z + 0.5)
-        );
-        if (remaining <= 2.25 && Math.abs(bot.entity.position.y - origin.y) <= 0.12) break;
+    let reached = true;
+    try {
+        await movement.moveNear(bot, origin.offset(7, 0, 0), 2.25, 9000);
+    } catch {
+        reached = false;
     }
     const result = telemetry.stop();
     const distance = Math.hypot(
@@ -375,11 +375,15 @@ async function runWallStopScenario(bot, origin) {
     await command(bot, `/gamemode survival ${bot.username}`, 250);
     await command(bot, `/tp ${bot.username} ${origin.x} ${origin.y} ${origin.z}`, 700);
     const telemetry = trackMovement(bot);
-    await movement.walkToward(bot, origin.offset(5, 0, 0), { durationMs: 1800 });
+    let reached = true;
+    try {
+        await movement.moveNear(bot, origin.offset(5, 0, 0), 2.25, 7000);
+    } catch {
+        reached = false;
+    }
     const result = telemetry.stop();
-    const stoppedBeforeWall = bot.entity.position.x < origin.x + 1.75;
     const grounded = Math.abs(bot.entity.position.y - origin.y) <= 0.12;
-    assertMovementScenario('wall_stop', stoppedBeforeWall && grounded, result, bot.entity.position);
+    assertMovementScenario('wall_route', reached && grounded, result, bot.entity.position);
 }
 
 async function resetMovementArea(bot, origin) {

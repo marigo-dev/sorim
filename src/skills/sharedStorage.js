@@ -204,8 +204,9 @@ async function collectDropsNear(bot, origin, timeoutMs) {
         }
         try {
             await movement.moveNear(bot, drop.position, 1, 2500);
-        } catch {
-            await movement.manualNudge(bot, 700);
+        } catch (error) {
+            console.log(`[STORAGE] drop pickup path failed: ${error.message}`);
+            break;
         }
         await movement.sleep(250);
     }

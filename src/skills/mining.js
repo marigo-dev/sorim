@@ -361,8 +361,8 @@ async function mineOre(bot, ore) {
     await equipPickaxe(bot);
     try {
         await movement.moveNear(bot, ore.position, 3, 8000);
-    } catch {
-        await nudgeToward(bot, ore.position);
+    } catch (error) {
+        throw new Error(`Pathfinder could not reach iron ore: ${error.message}`);
     }
 
     const current = bot.blockAt(ore.position);
@@ -458,8 +458,8 @@ async function returnTowardBase(bot, start) {
     }
     try {
         await movement.moveNear(bot, start, 2, 15000);
-    } catch {
-        await nudgeToward(bot, start);
+    } catch (error) {
+        console.log(`[IRON_MINE] base return path failed: ${error.message}`);
     }
 }
 
@@ -472,9 +472,8 @@ async function returnMiningRoute(bot, route, actionVersion) {
     if (!bot.entity.position.floored().equals(anchor)) {
         try {
             await movement.moveBlock(bot, anchor, 6500);
-        } catch {
-            movement.stop(bot);
-            await nudgeToward(bot, anchor);
+        } catch (error) {
+            console.log(`[IRON_MINE] route anchor path failed: ${error.message}`);
         }
         if (bot.entity.position.distanceTo(anchor.offset(0.5, 0, 0.5)) > 2.5) {
             console.log(`[IRON_MINE] could not reconnect to route at ${anchor.toString()}`);
@@ -487,9 +486,8 @@ async function returnMiningRoute(bot, route, actionVersion) {
         const target = new Vec3(route[index].x, route[index].y, route[index].z);
         try {
             await movement.moveBlock(bot, target, 6500);
-        } catch {
-            movement.stop(bot);
-            await nudgeToward(bot, target);
+        } catch (error) {
+            console.log(`[IRON_MINE] route point path failed: ${error.message}`);
         }
         if (bot.entity.position.distanceTo(target.offset(0.5, 0, 0.5)) > 2.5) {
             console.log(`[IRON_MINE] route return paused at ${bot.entity.position.floored().toString()}`);
@@ -602,24 +600,11 @@ async function collectLooseDrops(bot, maximum) {
         if (!drop) return;
         try {
             await movement.moveBlock(bot, drop.position.floored(), 3500);
-        } catch {
-            movement.stop(bot);
-            await nudgeToward(bot, drop.position);
+        } catch (error) {
+            console.log(`[MINING] loose drop path failed: ${error.message}`);
+            break;
         }
         await movement.sleep(350);
-    }
-}
-
-async function nudgeToward(bot, position) {
-    try {
-        await bot.lookAt(position.offset(0.5, 0.5, 0.5), true);
-        if (position.y > bot.entity.position.y + 0.4) primeGroundedJump(bot);
-        bot.setControlState('forward', true);
-        bot.setControlState('jump', true);
-        bot.setControlState('sprint', true);
-        await movement.sleep(1600);
-    } finally {
-        bot.clearControlStates();
     }
 }
 

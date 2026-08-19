@@ -189,7 +189,7 @@ async function openNaturalTraversalExit(bot, target) {
             }
 
             const before = bot.entity.position.clone();
-            await movement.walkToward(bot, cell, { durationMs: 1800 });
+            await movement.moveNear(bot, cell, 1, 3000);
             if (bot.entity.position.distanceTo(before) < 0.4) break;
             progressed++;
         }
@@ -233,7 +233,7 @@ async function carveNaturalAscent(bot, target, actionVersion) {
         const beforeY = bot.entity.position.y;
         let climbed = await movement.stepUpToward(bot, stand);
         if (!climbed) {
-            await movement.walkToward(bot, stand, { durationMs: 1800 });
+            await movement.moveNear(bot, stand, 1, 3000);
             climbed = bot.entity.position.y >= beforeY + 0.7;
         }
         if (!climbed) break;
@@ -374,9 +374,10 @@ async function chopTree(bot, baseBlock, expectedDrop, actionVersion = actionCont
         await equipBestTool(bot, current);
         try {
             await approachBlock(bot, current);
-        } catch {
+        } catch (error) {
             actionControl.assertActive(bot, actionVersion);
-            await nudgeToward(bot, current.position);
+            console.log(`[TREE] pathfinder could not reach trunk block: ${error.message}`);
+            continue;
         }
 
         console.log(`[MINE] ${current.name} ${current.position.toString()}`);
@@ -441,14 +442,10 @@ async function approachTreeEntry(bot, block) {
         if (bot.entity.position.distanceTo(center) <= 2.6 || bot.canDigBlock(block)) return;
     }
 
-    await clearTreeFoliageToward(bot, block.position);
-    await movement.moveTowardSafely(bot, block.position, 8);
-    if (bot.entity.position.distanceTo(center) <= 2.8 || bot.canDigBlock(block)) return;
-
     try {
         await movement.moveNear(bot, block.position, 1, 5000);
-    } catch {
-        movement.stop(bot);
+    } catch (error) {
+        throw new Error(`Could not enter pickup range for ${block.name}: ${error.message}`);
     }
     if (bot.entity.position.distanceTo(center) > 2.8 && !bot.canDigBlock(block)) {
         throw new Error(`Could not enter pickup range for ${block.name} at ${block.position.toString()}`);
@@ -742,11 +739,10 @@ function hasNearbyDrop(bot, origin, radius) {
 async function patrolTreeDrops(bot, itemName, before, base) {
     const deadline = Date.now() + 12000;
     const visited = new Set();
-    try {
-        await movement.moveNear(bot, base, 1, 2600);
-    } catch {
-        movement.stop(bot);
-        await nudgeToward(bot, base);
+        try {
+            await movement.moveNear(bot, base, 1, 2600);
+    } catch (error) {
+        console.log(`[TREE] drop patrol base path failed: ${error.message}`);
     }
     await movement.sleep(500);
     await collectLooseDrops(bot, itemName, before, base, 18, deadline, visited);
@@ -761,9 +757,8 @@ async function patrolTreeDrops(bot, itemName, before, base) {
         if (Date.now() >= deadline) break;
         try {
             await movement.moveNear(bot, point, 1, 1400);
-        } catch {
-            movement.stop(bot);
-            await nudgeToward(bot, point);
+        } catch (error) {
+            console.log(`[TREE] drop patrol path failed at ${point.toString()}: ${error.message}`);
         }
         await movement.sleep(300);
         await collectLooseDrops(bot, itemName, before, base, 18, deadline, visited);
@@ -812,8 +807,8 @@ async function digStaircaseForStone(bot) {
 
         try {
             await movement.moveNear(bot, down, 1, 8000);
-        } catch {
-            await nudgeToward(bot, down);
+        } catch (error) {
+            throw new Error(`Could not reach staircase step: ${error.message}`);
         }
     }
 
@@ -932,22 +927,12 @@ async function repositionForTreeBlock(bot, block, attempt) {
             3500,
             'Timed out repositioning for tree block'
         );
-    } catch {
-        await nudgeToward(bot, target);
+    } catch (error) {
+        throw new Error(`Could not reposition for tree block: ${error.message}`);
     }
 
     await bot.lookAt(target.offset(0.5, 0.5, 0.5), true);
-    if (attempt > 0 && target.y > bot.entity.position.y + 1.4) {
-        bot.setControlState('jump', true);
-        await movement.sleep(350);
-        bot.setControlState('jump', false);
-    } else {
-        await movement.sleep(250);
-    }
-}
-
-async function nudgeToward(bot, position) {
-    await movement.walkToward(bot, position, { durationMs: 900 });
+    await movement.sleep(attempt > 0 && target.y > bot.entity.position.y + 1.4 ? 350 : 250);
 }
 
 function hasOpenFace(bot, position) {

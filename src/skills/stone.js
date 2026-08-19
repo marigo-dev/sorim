@@ -224,11 +224,6 @@ async function findReachableSupportedStand(bot, origin, radius) {
 }
 
 async function moveToSupportedStand(bot, stand) {
-    const before = bot.entity.position.distanceTo(stand.offset(0.5, 0, 0.5));
-    await movement.moveTowardSafely(bot, stand, 16);
-    const after = bot.entity.position.distanceTo(stand.offset(0.5, 0, 0.5));
-    if (after < 1.8) return true;
-    if (after >= before - 0.5) return false;
     try {
         await movement.moveBlock(bot, stand, 5000);
         return true;
@@ -236,9 +231,9 @@ async function moveToSupportedStand(bot, stand) {
         try {
             await movement.moveNear(bot, stand, 1, 3000);
             return true;
-        } catch {
-            await jumpToward(bot, stand);
-            return bot.entity.position.distanceTo(stand.offset(0.5, 0, 0.5)) < 1.8;
+        } catch (error) {
+            console.log(`[STONE] supported stand path failed ${stand.toString()}: ${error.message}`);
+            return false;
         }
     }
 }
@@ -294,85 +289,19 @@ async function carveStep(bot, current, standAt) {
 }
 
 async function stepTo(bot, position) {
-    const before = bot.entity.position.clone();
-    if (await finishSafeDescent(bot, position)) {
-        const moved = bot.entity.position.distanceTo(before);
-        console.log(
-            `[STONE] direct descent target=${position.toString()} ` +
-            `position=${bot.entity.position.floored().toString()} movement=${moved.toFixed(2)}`
-        );
-        return moved;
-    }
     try {
         await movement.moveBlock(bot, position, 7000);
-    } catch {
+    } catch (error) {
         try {
             await movement.moveNear(bot, position, 1, 4000);
-        } catch {
-            await jumpToward(bot, position);
+        } catch (fallbackError) {
+            throw new Error(`Pathfinder could not reach staircase step: ${fallbackError.message}`);
         }
     }
-
     if (!reachedStand(bot.entity.position, position)) {
-        await movement.walkToward(bot, position, {
-            durationMs: 1800,
-            arrivalRange: 0.15
-        });
-        await movement.sleep(200);
+        throw new Error(`Pathfinder stopped before staircase step ${position.toString()}`);
     }
-    if (!reachedStand(bot.entity.position, position)) {
-        await finishSafeDescent(bot, position);
-    }
-
-    const after = bot.entity.position;
-    const moved =
-        Math.abs(after.x - before.x) +
-        Math.abs(after.y - before.y) +
-        Math.abs(after.z - before.z);
-    console.log(
-        `[STONE] step target=${position.toString()} ` +
-        `position=${after.floored().toString()} movement=${moved.toFixed(2)}`
-    );
-    if (!reachedStand(after, position)) {
-        console.log(
-            `[STONE] rejected horizontal-only step target=${position.toString()} ` +
-            `actual=${after.toString()}`
-        );
-        return 0;
-    }
-    return moved;
-}
-
-async function finishSafeDescent(bot, position) {
-    if (position.y >= bot.entity.position.y - 0.45) return false;
-    const feet = bot.blockAt(position);
-    const head = bot.blockAt(position.offset(0, 1, 0));
-    const floor = bot.blockAt(position.offset(0, -1, 0));
-    if (!isAir(feet) || !isAir(head) || !floor || floor.boundingBox !== 'block') return false;
-
-    const center = position.offset(0.5, 0, 0.5);
-    const horizontal = Math.hypot(
-        bot.entity.position.x - center.x,
-        bot.entity.position.z - center.z
-    );
-    if (horizontal > 1.6) return false;
-
-    movement.stop(bot);
-    try {
-        await bot.lookAt(
-            new Vec3(center.x, bot.entity.position.y + 1.6, center.z),
-            true
-        );
-        bot.setControlState('forward', true);
-        bot.setControlState('sprint', false);
-        bot.setControlState('jump', false);
-        const duration = Math.max(180, Math.min(500, ((horizontal + 0.15) / 4.3) * 1000));
-        await movement.sleep(duration);
-    } finally {
-        movement.stop(bot);
-    }
-    await movement.sleep(500);
-    return reachedStand(bot.entity.position, position);
+    return true;
 }
 
 function reachedStand(actual, expected) {
@@ -388,24 +317,16 @@ async function returnToSurface(bot, start, shaft, timeoutMs = 30000) {
         if (Date.now() >= deadline) break;
         try {
             await movement.moveBlock(bot, point, Math.min(5000, deadline - Date.now()));
-        } catch {
-            movement.stop(bot);
-            if (Date.now() >= deadline) break;
-            try {
-                await movement.moveNear(bot, point, 1, Math.min(3500, deadline - Date.now()));
-            } catch {
-                movement.stop(bot);
-                if (Date.now() >= deadline) break;
-                await jumpToward(bot, point);
-            }
+        } catch (error) {
+            console.log(`[STONE] route point path failed: ${error.message}`);
+            break;
         }
     }
     if (Date.now() < deadline) {
         try {
             await movement.moveNear(bot, start, 2, Math.min(7000, deadline - Date.now()));
-        } catch {
-            movement.stop(bot);
-            if (Date.now() < deadline) await jumpToward(bot, start);
+        } catch (error) {
+            console.log(`[STONE] surface path failed: ${error.message}`);
         }
     }
     movement.stop(bot);
@@ -594,10 +515,6 @@ function isSupportedPickupStand(bot, position) {
     const floor = bot.blockAt(position.offset(0, -1, 0));
     return isAir(feet) && isAir(head) && floor?.boundingBox === 'block' &&
         !['water', 'lava', 'magma_block'].includes(floor.name);
-}
-
-async function jumpToward(bot, position) {
-    await movement.walkToward(bot, position, { durationMs: 1200 });
 }
 
 async function equipToolForBlock(bot, block) {

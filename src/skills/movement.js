@@ -2,6 +2,14 @@ const { goals, Movements } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
 const memory = require('./memory');
 
+class CardinalMovements extends Movements {
+    getNeighbors(node) {
+        return super.getNeighbors(node).filter(next =>
+            !(Math.abs(next.x - node.x) === 1 && Math.abs(next.z - node.z) === 1)
+        );
+    }
+}
+
 function isSolid(block) {
     const shapes = Array.isArray(block?.shapes) ? block.shapes : [];
     const top = shapes.length
@@ -111,11 +119,14 @@ const navigationVersions = new WeakMap();
 const groundedSynchronizers = new WeakMap();
 
 function configure(bot) {
-    const movements = new Movements(bot);
+    const movements = new CardinalMovements(bot);
     movements.canDig = false;
     movements.allow1by1towers = false;
     movements.allowFreeMotion = false;
-    movements.allowParkour = false;
+    // A one-block obstacle requires Pathfinder's normal jump transition.
+    // Keep manual controls out of ordinary navigation while allowing this
+    // vanilla movement primitive.
+    movements.allowParkour = true;
     movements.allowSprinting = false;
     movements.maxDropDown = 1;
     movements.infiniteLiquidDropdownDistance = false;
@@ -131,8 +142,9 @@ function configure(bot) {
     if (!groundedSynchronizers.has(bot)) {
         const synchronize = () => synchronizeGroundedState(bot);
         groundedSynchronizers.set(bot, synchronize);
-        if (typeof bot.prependListener === 'function') bot.prependListener('physicsTick', synchronize);
-        else bot.on('physicsTick', synchronize);
+        // Run after Pathfinder's tick so the compatibility correction is
+        // visible to its next jump decision on Paper 26.2.
+        bot.on('physicsTick', synchronize);
     }
 }
 
@@ -267,7 +279,8 @@ async function navigate(bot, goal, target, timeoutMs, timeoutMessage) {
                 timeoutMessage
             );
             if (!goalReached(goal, bot.entity?.position)) {
-                const error = new Error('Pathfinder completed without reaching the goal');
+                const actual = bot.entity?.position?.toString?.() || 'unknown';
+                const error = new Error(`Pathfinder completed without reaching the goal actual=${actual}`);
                 error.code = 'PATHFINDER_FALSE_SUCCESS';
                 throw error;
             }
@@ -862,7 +875,7 @@ async function waitForStepLanding(bot, expectedY, timeoutMs) {
 }
 
 function synchronizeGroundedState(bot) {
-    if (bot.pathfinder?.goal) return;
+    if (!bot.entity?.position || typeof bot.blockAt !== 'function') return;
     const position = bot.entity.position;
     const feet = bot.blockAt(position.floored());
     if (
@@ -873,9 +886,11 @@ function synchronizeGroundedState(bot) {
         return;
     }
     const floor = bot.blockAt(position.floored().offset(0, -1, 0));
-    const verticalVelocity = Math.abs(bot.entity.velocity?.y || 0);
     const closeToBlockTop = Math.abs(position.y - Math.round(position.y)) <= 0.08;
-    if (isSolid(floor) && verticalVelocity <= 0.08 && closeToBlockTop) {
+    // Paper 26.2 may report a small residual Y velocity while the actor is
+    // visibly standing on a block. Pathfinder must still be allowed to issue
+    // its normal jump transition in that state.
+    if (isSolid(floor) && closeToBlockTop) {
         bot.entity.onGround = true;
     }
 }
@@ -1078,6 +1093,7 @@ function withNavigationWatchdog(bot, promise, timeoutMs, message, stallMs = 1800
         timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
         monitor = setInterval(() => {
             if (!bot.entity?.position) return;
+            synchronizeGroundedState(bot);
             const commanded = ['forward', 'back', 'left', 'right', 'jump']
                 .some(control => bot.controlState?.[control]);
             if (!commanded) {
@@ -1091,7 +1107,15 @@ function withNavigationWatchdog(bot, promise, timeoutMs, message, stallMs = 1800
                 return;
             }
             if (Date.now() - lastProgressAt >= stallMs) {
-                const error = new Error('Pathfinder commanded movement without progress');
+                const controls = ['forward', 'back', 'left', 'right', 'jump']
+                    .filter(control => bot.controlState?.[control])
+                    .join(',') || 'none';
+                const error = new Error(
+                    `Pathfinder commanded movement without progress ` +
+                    `position=${bot.entity.position.toString()} controls=${controls} ` +
+                    `onGround=${bot.entity.onGround} yaw=${Number(bot.entity.yaw || 0).toFixed(2)} ` +
+                    `floor=${bot.blockAt?.(bot.entity.position.floored().offset(0, -1, 0))?.name || 'unknown'}`
+                );
                 error.code = 'PATHFINDER_STALLED';
                 reject(error);
             }

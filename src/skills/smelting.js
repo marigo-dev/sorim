@@ -132,27 +132,18 @@ async function moveWithinFurnaceReach(bot, furnaceBlock, attempt) {
     if (target) {
         try {
             await movement.moveBlock(bot, target, 7000);
-        } catch {
-            movement.stop(bot);
-            await approachFurnaceDirectly(bot, furnaceBlock);
+        } catch (error) {
+            throw new Error(`Could not reach furnace stand: ${error.message}`);
         }
     } else {
         try {
             await movement.moveNear(bot, furnaceBlock.position, 2, 8000);
-        } catch {
-            movement.stop(bot);
-            await approachFurnaceDirectly(bot, furnaceBlock);
+        } catch (error) {
+            throw new Error(`Could not reach furnace: ${error.message}`);
         }
     }
     if (blockReachDistance(bot, furnaceBlock) > 4.5) {
         throw new Error(`Furnace interaction out of reach (${blockReachDistance(bot, furnaceBlock).toFixed(2)})`);
-    }
-}
-
-async function approachFurnaceDirectly(bot, furnaceBlock) {
-    for (let step = 0; step < 6 && blockReachDistance(bot, furnaceBlock) > 4.3; step++) {
-        await bot.lookAt(furnaceBlock.position.offset(0.5, 0.8, 0.5), true);
-        await movement.manualNudge(bot, 900);
     }
 }
 
