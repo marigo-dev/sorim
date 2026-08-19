@@ -33,6 +33,7 @@ async function collectStone(bot, count = 16) {
     let cursor = start;
     let stuckSteps = 0;
     let noProgressMines = 0;
+    const previousMaxDropDown = movement.setMaxDropDown(bot, 2);
 
     console.log(`[STONE] target cobblestone=${target}, start=${start.toString()} direction=${direction.toString()}`);
     try {
@@ -88,6 +89,7 @@ async function collectStone(bot, count = 16) {
     } finally {
         const wasCancelled = actionControl.snapshot(bot) !== actionVersion;
         movement.stop(bot);
+        movement.restoreMaxDropDown(bot, previousMaxDropDown);
         if (wasCancelled) {
             throw new Error(`Action cancelled: ${bot.sorimCancelReason || 'safety override'}`);
         }

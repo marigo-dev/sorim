@@ -65,15 +65,15 @@ async function mineBlock(bot, action) {
             try {
                 reached = await approachTreeByWaypoints(bot, visibleLog, actionVersion);
             } catch (error) {
-                if (horizontalDistance(bot.entity.position, failedTreePosition) > 8) {
-                    markFailedTree(failedTreePosition);
-                }
+                // A Pathfinder failure is enough evidence to quarantine this
+                // tree for the current search window. Otherwise L1 retries
+                // the same unreachable trunk forever from a slightly new
+                // position.
+                markFailedTree(failedTreePosition);
                 throw error;
             }
             if (!reached) {
-                if (horizontalDistance(bot.entity.position, failedTreePosition) > 8) {
-                    markFailedTree(failedTreePosition);
-                }
+                markFailedTree(failedTreePosition);
                 throw new Error(`Could not reach ${visibleLog.name} at ${visibleLog.position.toString()}`);
             }
             const currentLog = bot.blockAt(visibleLog.position);

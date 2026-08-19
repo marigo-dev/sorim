@@ -148,6 +148,20 @@ function configure(bot) {
     }
 }
 
+function setMaxDropDown(bot, maxDropDown) {
+    const movements = bot.pathfinder?.movements;
+    if (!movements || !Number.isFinite(maxDropDown)) return null;
+    const previous = movements.maxDropDown;
+    movements.maxDropDown = maxDropDown;
+    return previous;
+}
+
+function restoreMaxDropDown(bot, previous) {
+    if (previous === null || previous === undefined) return;
+    const movements = bot.pathfinder?.movements;
+    if (movements) movements.maxDropDown = previous;
+}
+
 function resyncCollision(bot) {
     if (!bot.entity?.position || typeof bot.blockAt !== 'function') return false;
     const feet = bot.entity.position.floored();
@@ -1238,6 +1252,8 @@ module.exports = {
     clearNearbyFoliage,
     descendFromCanopy,
     configure,
+    setMaxDropDown,
+    restoreMaxDropDown,
     resyncCollision,
     moveNear,
     followPlayer,
