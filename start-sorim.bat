@@ -6,9 +6,9 @@ title Sorim AI Bot Launcher
 
 if not defined SORIM_SERVER_DIR (
     set "SORIM_SERVER_DIR=%CD%\mc-server-run"
-    if not defined MC_PORT set "MC_PORT=25565"
 )
 
+if not defined MC_PORT set "MC_PORT=25565"
 if not defined MC_HOST set "MC_HOST=127.0.0.1"
 if not defined MC_USERNAME set "MC_USERNAME=marigo"
 if not defined MC_VERSION set "MC_VERSION=26.2"
@@ -42,6 +42,11 @@ if not exist "!SORIM_SERVER_DIR!\server.jar" if not exist "%CD%\mc-server-26-2-t
     echo Put the Paper 26.2 server jar in mc-server-26-2-test as server.jar.
     pause
     exit /b 1
+)
+
+if not exist "!SORIM_SERVER_DIR!" (
+    echo [SORIM] Creating server directory !SORIM_SERVER_DIR!.
+    mkdir "!SORIM_SERVER_DIR!"
 )
 
 powershell -NoProfile -Command "if (Get-NetTCPConnection -State Listen -LocalPort $env:MC_PORT -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }" >nul 2>&1

@@ -1,5 +1,6 @@
 const { Vec3 } = require('vec3');
 const movement = require('./movement');
+const miningTools = require('./miningTools');
 const mine = require('./mine');
 const memory = require('./memory');
 const actionControl = require('./actionControl');
@@ -584,32 +585,7 @@ function digTimeoutMs(bot, block) {
 }
 
 async function collectNearby(bot, itemName, before, origin) {
-    for (let i = 0; i < 4; i++) {
-        if (countItem(bot, itemName) > before) return;
-        const drop = Object.values(bot.entities || {})
-            .filter(entity => entity.name === 'item')
-            .filter(entity => entity.position.distanceTo(origin) <= 6)
-            .sort((a, b) =>
-                a.position.distanceTo(bot.entity.position) -
-                b.position.distanceTo(bot.entity.position)
-            )[0];
-        if (drop) {
-            const distance = drop.position.distanceTo(bot.entity.position);
-            const obstacle = movement.frontObstacle(bot, drop.position);
-            if (distance <= 4 && obstacle === 'clear') {
-                await movement.walkToward(bot, drop.position, { durationMs: 1600 });
-            }
-        } else if (i === 1 && isSupportedPickupStand(bot, origin)) {
-            try {
-                await movement.moveNear(bot, origin, 1, 2500);
-            } catch {
-                await movement.walkToward(bot, origin.offset(0.5, 0, 0.5), {
-                    durationMs: 1200
-                });
-            }
-        }
-        await movement.sleep(250);
-    }
+    return miningTools.collectDrop(bot, itemName, before, origin, { radius: 8, timeoutMs: 5000 });
 }
 
 function isSupportedPickupStand(bot, position) {
@@ -625,20 +601,7 @@ async function jumpToward(bot, position) {
 }
 
 async function equipToolForBlock(bot, block) {
-    if (!requiresPickaxe(block.name)) {
-        if (bot.heldItem?.name?.endsWith('_pickaxe')) await bot.unequip('hand');
-        return;
-    }
-
-    const tool = ['iron_pickaxe', 'stone_pickaxe', 'wooden_pickaxe']
-        .map(name => inventorySlots(bot).find(item => item.name === name))
-        .find(Boolean);
-    if (!tool) throw new Error(`No pickaxe available for ${block.name}`);
-    await bot.equip(tool, 'hand');
-    await movement.sleep(250);
-    if (bot.heldItem?.name !== tool.name) {
-        throw new Error(`Pickaxe equip was not confirmed for ${block.name}`);
-    }
+    return miningTools.equipForBlock(bot, block);
 }
 
 function requiresPickaxe(name) {

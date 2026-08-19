@@ -5,6 +5,7 @@ const actionControl = require('./actionControl');
 const shelter = require('./shelter');
 const memory = require('./memory');
 const blockPolicy = require('../safety/blockPolicy');
+const miningTools = require('./miningTools');
 
 const LOGS = new Set([
     'oak_log',
@@ -127,131 +128,23 @@ function protectedMineOpeningReason(bot) {
 async function approachTreeByWaypoints(bot, treeBlock, actionVersion) {
     const root = lowestLogInTrunk(bot, treeBlock);
     const workPositions = findWorkPositions(bot, root.position);
-    const position = workPositions[0] || root.position;
-    const initialDistance = horizontalDistance(bot.entity.position, position);
-    const approachBudget = Math.min(90000, Math.max(35000, initialDistance * 1200));
-    const deadline = Date.now() + approachBudget;
     const reachedTree = () => {
         const current = bot.blockAt(root.position);
         return current?.name === root.name && isWithinDigReach(bot, current);
     };
-
-    const initialWorkPositions = initialDistance <= 12
-        ? workPositions.slice(0, 3)
-        : workPositions.slice(0, 1);
-    for (const work of initialWorkPositions) {
+    const candidates = workPositions.length > 0 ? workPositions : [root.position];
+    for (const work of candidates.slice(0, 4)) {
+        actionControl.assertActive(bot, actionVersion);
         try {
-            const timeout = initialDistance <= 12 ? 5500 : 12000;
-            await movement.moveNear(bot, work, 0.8, Math.min(timeout, deadline - Date.now()));
+            await movement.moveNear(bot, work, 1, 10000);
             if (reachedTree()) return true;
         } catch (error) {
             actionControl.assertActive(bot, actionVersion);
             movement.stop(bot);
-            console.log(`[TREE] work position blocked ${work.toString()}: ${error.message}`);
-        }
-        if (Date.now() >= deadline) return false;
-    }
-
-    if (horizontalDistance(bot.entity.position, position) <= 15) {
-        try {
-            await movement.moveNear(bot, position, 1.2, Math.min(7000, deadline - Date.now()));
-            if (reachedTree()) return true;
-        } catch (error) {
-            actionControl.assertActive(bot, actionVersion);
-            movement.stop(bot);
-            console.log(`[TREE] primary path failed, using local traversal: ${error.message}`);
+            console.log(`[TREE] pathfinder rejected work position ${work.toString()}: ${error.message}`);
         }
     }
-    if (horizontalDistance(bot.entity.position, position) <= 12) {
-        return approachTreeDirectly(bot, position, actionVersion, root.position);
-    }
-    let stalled = 0;
-    let previousDistance = horizontalDistance(bot.entity.position, position);
-    for (let step = 0; step < 16 && previousDistance > 10 && Date.now() < deadline; step++) {
-        actionControl.assertActive(bot, actionVersion);
-        const origin = bot.entity.position;
-        const dx = position.x - origin.x;
-        const dz = position.z - origin.z;
-        const distance = Math.hypot(dx, dz);
-        const stride = Math.min(16, Math.max(6, distance - 7));
-        const waypoint = new Vec3(
-            Math.round(origin.x + dx / distance * stride),
-            Math.floor(origin.y),
-            Math.round(origin.z + dz / distance * stride)
-        );
-        try {
-            await movement.moveNearXZ(bot, waypoint, 3, Math.min(6000, deadline - Date.now()));
-        } catch (error) {
-            actionControl.assertActive(bot, actionVersion);
-            movement.stop(bot);
-            console.log(`[TREE] waypoint delayed ${waypoint.toString()}: ${error.message}`);
-            movement.resyncCollision(bot);
-            const beforeFallback = bot.entity.position.clone();
-            await clearTreeFoliageToward(bot, position);
-            await movement.moveTowardDirectly(bot, position, 3200);
-            movement.resyncCollision(bot);
-            if (bot.entity.position.distanceTo(beforeFallback) < 1) {
-                await movement.moveTowardSafely(bot, waypoint, 12);
-            }
-        }
-
-        const nextDistance = horizontalDistance(bot.entity.position, position);
-        stalled = nextDistance >= previousDistance - 1 ? stalled + 1 : 0;
-        previousDistance = nextDistance;
-        if (stalled >= 2) {
-            movement.resyncCollision(bot);
-            const beforeRecovery = horizontalDistance(bot.entity.position, position);
-            await clearTreeFoliageToward(bot, position);
-            const opened = await openNaturalTraversalExit(bot, position);
-            if (opened) {
-                if (reachedTree()) {
-                    console.log('[TREE] enclosure exit reached the tree work area');
-                    return true;
-                }
-                const exitDistance = horizontalDistance(bot.entity.position, position);
-                console.log(`[TREE] enclosure escaped; continuing same tree distance=${exitDistance.toFixed(1)}`);
-                if (exitDistance < beforeRecovery - 0.5) {
-                    previousDistance = exitDistance;
-                    stalled = 0;
-                    continue;
-                }
-            }
-            const climbed = await carveNaturalAscent(bot, position, actionVersion);
-            if (climbed) {
-                const climbDistance = horizontalDistance(bot.entity.position, position);
-                console.log(`[TREE] climbed out of the enclosure; continuing same tree distance=${climbDistance.toFixed(1)}`);
-                if (climbDistance < beforeRecovery - 0.5) {
-                    previousDistance = climbDistance;
-                    stalled = 0;
-                    continue;
-                }
-            }
-            await movement.moveTowardDirectly(bot, position, 3200);
-            movement.resyncCollision(bot);
-            const afterRecovery = horizontalDistance(bot.entity.position, position);
-            console.log(
-                `[TREE] stalled recovery distance=${beforeRecovery.toFixed(1)}->${afterRecovery.toFixed(1)}`
-            );
-            if (afterRecovery > beforeRecovery - 0.25) return false;
-            previousDistance = afterRecovery;
-            stalled = 0;
-        }
-    }
-
-    if (Date.now() >= deadline) return false;
-
-    try {
-        await movement.moveNear(bot, position, 3, 12000);
-        const finalDistance = bot.entity.position.distanceTo(position.offset(0.5, 0, 0.5));
-        if (reachedTree()) return true;
-        console.log(`[TREE] path resolved before arrival distance=${finalDistance.toFixed(1)}`);
-        return approachTreeDirectly(bot, position, actionVersion, root.position);
-    } catch (error) {
-        actionControl.assertActive(bot, actionVersion);
-        movement.stop(bot);
-        console.log(`[TREE] final path approach failed, trying direct movement: ${error.message}`);
-        return approachTreeDirectly(bot, position, actionVersion, root.position);
-    }
+    return false;
 }
 
 function canClearNaturalTraversalBlock(bot, block) {
@@ -367,33 +260,14 @@ async function approachTreeDirectly(bot, position, actionVersion, rootPosition =
         const current = bot.blockAt(rootPosition);
         return current && LOGS.has(current.name) && isWithinDigReach(bot, current);
     };
-    let previousDistance = Infinity;
-    for (let attempt = 0; attempt < 5; attempt++) {
-        actionControl.assertActive(bot, actionVersion);
-        const distance = bot.entity.position.distanceTo(position.offset(0.5, 0, 0.5));
-        if (reachedTree() || distance <= 1.4) return true;
-        await nudgeToward(bot, position);
-        const nextDistance = bot.entity.position.distanceTo(position.offset(0.5, 0, 0.5));
-        if (nextDistance >= previousDistance - 0.2 && attempt >= 1) break;
-        previousDistance = nextDistance;
+    actionControl.assertActive(bot, actionVersion);
+    try {
+        await movement.moveNear(bot, position, 1, 7000);
+    } catch (error) {
+        movement.stop(bot);
+        console.log(`[TREE] pathfinder could not reach direct work position: ${error.message}`);
+        return false;
     }
-    if (reachedTree() || bot.entity.position.distanceTo(position.offset(0.5, 0, 0.5)) <= 1.4) return true;
-
-    const opened = await openNaturalTraversalExit(bot, position);
-    if (opened) {
-        if (reachedTree()) return true;
-        let previousExitDistance = horizontalDistance(bot.entity.position, position);
-        for (let attempt = 0; attempt < 6; attempt++) {
-            actionControl.assertActive(bot, actionVersion);
-            await clearTreeFoliageToward(bot, position);
-            await nudgeToward(bot, position);
-            if (reachedTree()) return true;
-            const exitDistance = horizontalDistance(bot.entity.position, position);
-            if (exitDistance >= previousExitDistance - 0.2 && attempt >= 1) break;
-            previousExitDistance = exitDistance;
-        }
-    }
-    await carveNaturalAscent(bot, position, actionVersion);
     return reachedTree() || bot.entity.position.distanceTo(position.offset(0.5, 0, 0.5)) <= 1.4;
 }
 
@@ -823,14 +697,7 @@ async function approachBlock(bot, block) {
 }
 
 async function equipBestTool(bot, block) {
-    const suffix = LOGS.has(block.name) ? '_axe' : '_pickaxe';
-    const tiers = ['netherite', 'diamond', 'iron', 'stone', 'wooden'];
-    const candidates = tiers
-        .map(tier => `${tier}${suffix}`)
-        .map(name => inventorySlots(bot).find(item => item.name === name))
-        .filter(Boolean);
-    const tool = candidates.find(item => toolRemainingDurability(bot, item) > 8) || candidates[0];
-    if (tool) await bot.equip(tool, 'hand');
+    return miningTools.equipForBlock(bot, block);
 }
 
 function toolRemainingDurability(bot, item) {
@@ -842,36 +709,8 @@ function toolRemainingDurability(bot, item) {
 }
 
 async function collectDrop(bot, itemName, before, origin) {
-    for (let attempt = 0; attempt < 6; attempt++) {
-        if (countItem(bot, itemName) > before) return;
-
-        const drop = Object.values(bot.entities || {})
-            .filter(entity => entity.name === 'item')
-            .filter(entity => entity.position.distanceTo(origin) <= 14)
-            .sort((a, b) =>
-                a.position.distanceTo(bot.entity.position) -
-                b.position.distanceTo(bot.entity.position)
-            )[0];
-
-        if (drop) {
-            try {
-                await movement.moveBlock(bot, drop.position.floored(), 2200);
-            } catch {
-                movement.stop(bot);
-                await nudgeToward(bot, drop.position);
-            }
-        } else {
-            await nudgeToward(bot, origin);
-        }
-        await movement.sleep(350);
-    }
-
-    if (countItem(bot, itemName) <= before) {
-        if (hasNearbyDrop(bot, origin, 14)) {
-            throw new Error(`${itemName} was broken but did not enter inventory`);
-        }
-        throw new Error(`${itemName} drop disappeared without a server inventory update`);
-    }
+    const collected = await miningTools.collectDrop(bot, itemName, before, origin);
+    if (!collected) throw new Error(`${itemName} drop was not verified in inventory`);
 }
 
 async function collectLooseDrops(bot, itemName, before, origin, radius = 8, deadline = Infinity, visited = new Set()) {

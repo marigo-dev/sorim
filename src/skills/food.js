@@ -141,14 +141,10 @@ async function findFood(bot, options = {}) {
             await movement.moveNear(bot, wildFood.position, 2, 8000);
         } catch (error) {
             actionControl.assertActive(bot, actionVersion);
-            console.log(`[FOOD] wild food path blocked; trying local traversal: ${error.message}`);
-            await movement.clearNearbyFoliage(bot, wildFood.position, 2);
-            await movement.moveTowardSafely(bot, wildFood.position, 24);
-            if (bot.entity.position.distanceTo(wildFood.position) > 4) {
-                movement.noteExplorationProgress(bot, 'food', false);
-                const unavailable = await markFailedSearch(bot);
-                return { status: unavailable ? 'unavailable' : 'failed', target: wildFood.name };
-            }
+            console.log(`[FOOD] wild food path blocked; no manual movement fallback: ${error.message}`);
+            movement.noteExplorationProgress(bot, 'food', false);
+            const unavailable = await markFailedSearch(bot);
+            return { status: unavailable ? 'unavailable' : 'failed', target: wildFood.name };
         }
         actionControl.assertActive(bot, actionVersion);
         if (wildFood.name === 'melon') {
@@ -181,17 +177,8 @@ async function findFood(bot, options = {}) {
         return searchForFood(bot, actionVersion);
     }
     if (animal.position.distanceTo(bot.entity.position) > 4) {
-        for (let attempt = 0; attempt < 3 && animal.isValid !== false; attempt++) {
-            const beforeMove = animal.position.distanceTo(bot.entity.position);
-            await movement.moveTowardSafely(bot, animal.position, 18);
-            actionControl.assertActive(bot, actionVersion);
-            if (animal.position.distanceTo(bot.entity.position) <= 3) break;
-            if (animal.position.distanceTo(bot.entity.position) >= beforeMove - 0.5) break;
-        }
-        if (animal.isValid !== false && animal.position.distanceTo(bot.entity.position) > 4) {
-            const unavailable = await markFailedSearch(bot);
-            return { status: unavailable ? 'unavailable' : 'failed' };
-        }
+        const unavailable = await markFailedSearch(bot);
+        return { status: unavailable ? 'unavailable' : 'failed' };
     }
 
     const before = foodScore(countInventory(bot));
@@ -201,8 +188,9 @@ async function findFood(bot, options = {}) {
         if (distance > 3) {
             try {
                 await movement.moveNear(bot, animal.position, 1, 4000);
-            } catch {
-                await nudgeToward(bot, animal.position);
+            } catch (error) {
+                console.log(`[FOOD] moving animal target lost: ${error.message}`);
+                break;
             }
         }
         await bot.lookAt(animal.position.offset(0, 0.8, 0), true);

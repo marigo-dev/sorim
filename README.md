@@ -528,6 +528,13 @@ Verification evidence includes inventory deltas, positions, player and hostile
 distance, oxygen, daylight, equipment, storage contents, placed blocks, farm
 state, and dynamic-skill world assertions as appropriate for each tool.
 
+Mining and harvesting follow the same conservative rule: if Minecraft data says a
+block is harvestable by hand, Sorim unequips its held item and uses its hand. If a
+tool is required, it selects a compatible tool from `harvestTools`, checks remaining
+durability, and refuses to mine when no suitable tool exists. After a break, nearby
+drops are collected through Pathfinder and the inventory delta is verified; a block
+breaking without the expected inventory gain is treated as a failed task.
+
 The Paper 26.2 world-state verification fixture builds a catalog blueprint through
 the normal dispatcher, checks every expected block, and confirms that an unknown
 world mutation cannot pass task verification:

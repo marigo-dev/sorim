@@ -108,7 +108,19 @@ function chooseImmediateAction(bot, observation, level = null) {
                 : 'In water during surface work; reach dry ground'
         };
     }
-    if (movement.bodyIntersectsSolid(bot)) {
+    const collisionThreat = nearestHostile(bot, 3.5);
+    const canCounterCollisionThreat = collisionThreat &&
+        MELEE_HOSTILES.has(collisionThreat.name) &&
+        hasCombatWeapon(bot) &&
+        observation.health > 8;
+    if (movement.bodyIntersectsSolid(bot) && !canCounterCollisionThreat) {
+        const bodyBlock = bot.blockAt(bot.entity.position.floored());
+        if (bodyBlock?.name === 'stone' && isInPit(bot)) {
+            return {
+                action: 'escape_pit',
+                reason: 'Body is inside a sealed cell; use the pit recovery route instead of walking into the wall'
+            };
+        }
         return {
             action: 'escape_collision',
             reason: 'Body intersects a solid block; clear breathing space immediately'

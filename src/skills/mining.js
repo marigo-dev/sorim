@@ -10,6 +10,7 @@ const memory = require('./memory');
 const actionControl = require('./actionControl');
 const survival = require('./survival');
 const blockPolicy = require('../safety/blockPolicy');
+const miningTools = require('./miningTools');
 const { assessMiningKit } = require('../agent/progressionContracts');
 
 const IRON_ORES = ['iron_ore', 'deepslate_iron_ore'];
@@ -586,24 +587,7 @@ function digTimeoutMs(bot, block) {
 }
 
 async function collectNearby(bot, itemName, before, origin) {
-    for (let i = 0; i < 12; i++) {
-        if (countItem(bot, itemName) > before) return;
-        const drop = Object.values(bot.entities || {})
-            .filter(entity => entity.name === 'item')
-            .filter(entity => entity.position.distanceTo(origin) <= 8)
-            .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))[0];
-        if (drop) {
-            try {
-                await movement.moveNear(bot, drop.position, 1, 3500);
-            } catch {
-                movement.stop(bot);
-                await nudgeToward(bot, drop.position);
-            }
-        } else if (i < 3) {
-            await nudgeToward(bot, origin);
-        }
-        await movement.sleep(350);
-    }
+    return miningTools.collectDrop(bot, itemName, before, origin, { radius: 8, timeoutMs: 9000 });
 }
 
 async function collectLooseDrops(bot, maximum) {
@@ -710,10 +694,8 @@ async function moveToSafeMineEntrance(bot) {
     if (!entrance) throw new Error('No policy-safe supported mine entrance found outside base');
     try {
         await movement.moveNear(bot, entrance, 1, 20000);
-    } catch {
-        for (let attempt = 0; attempt < 3 && bot.entity.position.distanceTo(entrance) > 2; attempt++) {
-            await movement.moveTowardSafely(bot, entrance, 18);
-        }
+    } catch (error) {
+        throw new Error(`Pathfinder could not reach safe mine entrance: ${error.message}`);
     }
     if (bot.entity.position.distanceTo(center) <= 10.5) {
         throw new Error(`Mine entrance remained inside base protection at ${bot.entity.position.floored().toString()}`);

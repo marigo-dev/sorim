@@ -203,6 +203,22 @@ async function main() {
     };
     assert.equal(movement.frontObstacle(wallBot, new Vec3(4, 64, 0)), 'wall');
 
+    let clearedSuccessfulGoal = false;
+    const successfulBot = {
+        entity: { position: new Vec3(0, 64, 0), yaw: 0, onGround: true, velocity: new Vec3(0, 0, 0) },
+        controlState: {},
+        blockAt: () => ({ name: 'air', boundingBox: 'empty' }),
+        pathfinder: {
+            goto: async () => {
+                successfulBot.entity.position = new Vec3(3, 64, 0);
+            },
+            setGoal: goal => { if (goal === null) clearedSuccessfulGoal = true; }
+        },
+        clearControlStates() {}
+    };
+    await movement.moveNear(successfulBot, new Vec3(3, 64, 0), 1, 1000);
+    assert.equal(clearedSuccessfulGoal, true, 'a completed path must release the pathfinder goal');
+
     let cancelledGoal = false;
     let clearedControls = false;
     const noPathBot = {

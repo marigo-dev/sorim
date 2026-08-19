@@ -99,12 +99,19 @@ let autonomousMode = process.env.AUTONOMOUS_ON_START === 'true';
 let cancelRequested = false;
 let lastError = null;
 let activeToolName = null;
+let lastDecisionTool = null;
+let lastDecisionSource = null;
+let lastDecisionReason = null;
 let pendingSafetyCall = null;
 let activeBehaviorSource = null;
 let currentLevelId = 'BOOT';
 let lastIpcTelemetryAt = 0;
 let lastPhysicsPosition = null;
 let lastKnownInventoryCount = 0;
+let lastBehaviorSignature = null;
+let lastBehaviorLogAt = 0;
+let behaviorRepeatCount = 0;
+let behaviorStartedAt = 0;
 
 process.on('message', message => {
     if (message?.type !== 'sorimControl' || message.command !== 'setAutonomous') return;
@@ -158,8 +165,9 @@ bot.on('physicsTick', () => {
             health: bot.health,
             food: bot.food,
             inventory,
-            activeTool: activeToolName,
-            behaviorSource: activeBehaviorSource
+            activeTool: activeToolName || lastDecisionTool,
+            behaviorSource: activeBehaviorSource || lastDecisionSource,
+            actionReason: lastDecisionReason
         }
     });
 });
@@ -486,7 +494,7 @@ async function loop() {
             });
             const decision = treeResult.value;
             activeBehaviorSource = decision?.source || null;
-            console.log(`[BEHAVIOR] source=${activeBehaviorSource} level=${level.id} tool=${JSON.stringify(decision?.toolCall)} inv=${observation.inventoryText}`);
+            logBehaviorDecision(level, decision, observation);
             const beforeTask = activeBehaviorSource === 'task' ? taskVerifier.capture(bot, observation) : null;
             const executionResult = activeBehaviorSource === 'task'
                 ? await executeTaskTool(decision?.toolCall)
@@ -584,6 +592,49 @@ function observe() {
         profession: professionManager.current(),
         activeTask: taskQueue.summary()
     });
+}
+
+function logBehaviorDecision(level, decision, observation) {
+    const call = decision?.toolCall || null;
+    const tool = call?.tool || 'none';
+    lastDecisionTool = tool;
+    lastDecisionSource = activeBehaviorSource || 'none';
+    lastDecisionReason = call?.reason || decision?.reason || null;
+    const signature = `${activeBehaviorSource || 'none'}|${level.id}|${tool}|${JSON.stringify(call?.args || {})}`;
+    const now = Date.now();
+    if (signature !== lastBehaviorSignature) {
+        lastBehaviorSignature = signature;
+        lastBehaviorLogAt = now;
+        behaviorStartedAt = now;
+        behaviorRepeatCount = 1;
+        console.log(
+            `[BEHAVIOR] source=${activeBehaviorSource} level=${level.id} ` +
+            `tool=${JSON.stringify(call)} inv=${observation.inventoryText}`
+        );
+        return;
+    }
+
+    behaviorRepeatCount++;
+    const heartbeatMs = tool === 'wait_safe' || tool === 'idle' ? 30000 : 12000;
+    if (now - lastBehaviorLogAt < heartbeatMs) return;
+    lastBehaviorLogAt = now;
+    console.log(
+        `[BEHAVIOR_HEARTBEAT] level=${level.id} tool=${tool} ` +
+        `for=${formatDuration(now - behaviorStartedAt)} repeats=${behaviorRepeatCount} ` +
+        `pos=${formatPosition(bot.entity?.position)} health=${Number(bot.health || 0).toFixed(1)} ` +
+        `food=${bot.food ?? 'n/a'} inv=${observation.inventoryText}`
+    );
+}
+
+function formatDuration(ms) {
+    const seconds = Math.max(0, Math.floor(ms / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    return `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, '0')}s`;
+}
+
+function formatPosition(position) {
+    if (!position) return 'unknown';
+    return `${Math.floor(position.x)},${Math.floor(position.y)},${Math.floor(position.z)}`;
 }
 
 function install26_2AttackShim(bot) {

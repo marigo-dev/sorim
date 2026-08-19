@@ -11,6 +11,7 @@
     "fixture:movement": "set PROFESSION_FIXTURE=movement&& node scripts/profession-fixture.js",
     "benchmark:movement": "node scripts/movement-benchmark.js",
     "run:watchdog": "node scripts/survival-run-watchdog.js",
+    "status": "node scripts/survival-status.js",
     "lab:movement": "node scripts/movement-lab-replay.js",
     "fixture:knockback": "node scripts/knockback-fixture.js",
     "fixture:pvp-command": "node scripts/pvp-command-fixture.js",

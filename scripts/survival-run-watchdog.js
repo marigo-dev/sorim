@@ -32,8 +32,20 @@ const report = {
     milestones: [],
     incidents: [],
     samples: [],
-    latest: null
+    latest: null,
+    runtime: {
+        botConnected: false,
+        lastTelemetryAt: null,
+        telemetryAgeMs: null,
+        currentAction: null,
+        actionReason: null,
+        actionSince: null,
+        actionDurationMs: 0,
+        idle: false
+    }
 };
+let lastActionSignature = null;
+let lastReportWriteAt = 0;
 
 function main() {
     fs.mkdirSync(OUTPUT, { recursive: true });
@@ -59,8 +71,12 @@ function main() {
     child.on('message', onMessage);
     child.once('exit', (code, signal) => finish(code === 0 ? 'completed' : 'bot_exited', { code, signal }));
     report.status = 'running';
+    report.runtime.botConnected = false;
     writeReport();
-    setInterval(writeReport, 5000).unref();
+    setInterval(() => {
+        refreshRuntimeStatus();
+        writeReport();
+    }, 5000).unref();
     setTimeout(() => finish('timeout', { maxMs: MAX_MS }), MAX_MS).unref();
 }
 
@@ -80,6 +96,31 @@ function onMessage(message) {
     if (message?.type !== 'sorimTelemetry' || !message.sample) return;
     const sample = message.sample;
     report.latest = sample;
+    const now = Number(sample.at || Date.now());
+    const actionSignature = `${sample.level || 'unknown'}|${sample.activeTool || 'none'}|${sample.behaviorSource || 'none'}`;
+    if (actionSignature !== lastActionSignature) {
+        lastActionSignature = actionSignature;
+        report.runtime.actionSince = new Date(now).toISOString();
+        report.runtime.actionDurationMs = 0;
+    } else if (report.runtime.actionSince) {
+        report.runtime.actionDurationMs = Math.max(0, now - Date.parse(report.runtime.actionSince));
+    }
+    report.runtime = {
+        ...report.runtime,
+        botConnected: true,
+        lastTelemetryAt: new Date(now).toISOString(),
+        telemetryAgeMs: 0,
+        level: sample.level,
+        currentAction: sample.activeTool || null,
+        actionReason: sample.actionReason || null,
+        behaviorSource: sample.behaviorSource || null,
+        actionDurationMs: report.runtime.actionDurationMs,
+        idle: ['wait_safe', 'idle'].includes(sample.activeTool),
+        position: sample.position || null,
+        health: sample.health,
+        food: sample.food,
+        inventory: sample.inventory || {}
+    };
     report.samples.push(sample);
     if (report.samples.length > 1200) report.samples.splice(0, report.samples.length - 1200);
     updateMilestones(sample);
@@ -144,8 +185,32 @@ function recordIncident(type, message, details = {}) {
 
 function writeReport() {
     fs.mkdirSync(OUTPUT, { recursive: true });
-    fs.writeFileSync(path.join(OUTPUT, 'current.json'), `${JSON.stringify(report, null, 2)}\n`);
+    const current = {
+        ...report,
+        updatedAt: new Date().toISOString(),
+        runtime: {
+            ...report.runtime,
+            telemetryAgeMs: report.runtime.lastTelemetryAt
+                ? Date.now() - Date.parse(report.runtime.lastTelemetryAt)
+                : null
+        }
+    };
+    fs.writeFileSync(path.join(OUTPUT, 'current.json'), `${JSON.stringify(current, null, 2)}\n`);
     fs.writeFileSync(path.join(OUTPUT, 'current.md'), markdownReport());
+    lastReportWriteAt = Date.now();
+}
+
+function refreshRuntimeStatus() {
+    const lastTelemetryAt = report.runtime.lastTelemetryAt;
+    const age = lastTelemetryAt ? Date.now() - Date.parse(lastTelemetryAt) : null;
+    report.runtime.telemetryAgeMs = age;
+    if (age !== null && age > 10000) {
+        report.runtime.botConnected = false;
+        if (report.status === 'running') report.status = 'telemetry_stale';
+    } else if (age !== null && report.status === 'telemetry_stale') {
+        report.runtime.botConnected = true;
+        report.status = 'running';
+    }
 }
 
 function markdownReport() {
@@ -156,14 +221,36 @@ function markdownReport() {
         `Started: ${report.startedAt}`,
         `Target: ${report.target}`,
         `Server: ${HOST}:${PORT}`,
+        `Updated: ${new Date().toISOString()}`,
+        '',
+        '## Live State',
+        `- Connection: ${report.runtime.botConnected ? 'connected' : 'waiting for telemetry'}`,
+        `- Level: ${report.runtime.level || 'unknown'}`,
+        `- Action: ${report.runtime.currentAction || 'none'}`,
+        `- Reason: ${report.runtime.actionReason || 'n/a'}`,
+        `- Action duration: ${formatDuration(report.runtime.actionDurationMs)}`,
+        `- Idle/waiting: ${report.runtime.idle ? 'yes' : 'no'}`,
+        `- Position: ${formatPoint(report.runtime.position)}`,
+        `- Health/Food: ${report.runtime.health ?? 'n/a'} / ${report.runtime.food ?? 'n/a'}`,
         '',
         '## Milestones',
         ...report.milestones.map(item => `- ${item.level}: ${item.durationMs ?? 'active'} ms`),
         '',
         '## Incidents',
-        ...report.incidents.map(item => `- ${item.at} ${item.type}: ${item.message}`),
+        `Total: ${report.incidents.length}`,
+        ...report.incidents.slice(-20).map(item => `- ${item.at} ${item.type}: ${item.message}`),
         ''
     ].join('\n');
+}
+
+function formatDuration(ms) {
+    const seconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    return `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, '0')}s`;
+}
+
+function formatPoint(point) {
+    return point ? `${point.x},${point.y},${point.z}` : 'unknown';
 }
 
 function finish(status, details = {}) {
